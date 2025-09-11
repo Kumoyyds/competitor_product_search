@@ -1,13 +1,5 @@
-
-import os
-from pathlib import Path
-BASE_DIR = Path(__file__).resolve().parent
-os.chdir(BASE_DIR)
-
-
-
-from prompt import gen_prompt
-from other_func import check_url
+from .prompt import gen_prompt
+from .other_func import check_url
 
 from dotenv import load_dotenv
 import os
@@ -24,7 +16,6 @@ load_dotenv()
 llm_key = os.getenv('QWEN_KEY')
 serper_key = os.getenv('SERPER_KEY')
 
-
 # initialize llm, qwen by default
 llm = ChatOpenAI(
     api_key=llm_key,
@@ -34,7 +25,7 @@ llm = ChatOpenAI(
     extra_body={"enable_search": False}
     )
 
-def do_product_searching(product_name, mkt_plc, country='de', search_k=5):
+def do_product_searching(product_name, mkt_plc, country='uk', search_k=5):
   mkt_plc = mkt_plc.lower()
   initial_query = f"{product_name}, site: {mkt_plc}"
   @tool
