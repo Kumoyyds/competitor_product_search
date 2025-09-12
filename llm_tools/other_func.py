@@ -24,3 +24,12 @@ def check_url(input_str, pattern):
         return True
 
     return False
+
+
+
+def get_split_num(num):
+  i = 1
+  while num // 10 > 0:
+    num = num // 10
+    i *= 10
+  return num * i

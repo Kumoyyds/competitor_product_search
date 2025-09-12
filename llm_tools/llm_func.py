@@ -92,3 +92,16 @@ def do_product_searching(product_name, mkt_plc, country='uk', search_k=5):
 
 
 
+### combine it into df
+
+def find_url_llm(df, name_col,  country, web_col='web_1', url_col_name='url_search_1'):
+#def find_the_url(df, name_col='item_sku_name_en', web_col='web_1', country='uk', url_col_name='url_search_1'):
+  result = []
+  df.reset_index(drop=True, inplace=True)
+  for i in range(df.shape[0]):
+    product_name = df.loc[i, name_col]
+    mkt_plc = df.loc[i, web_col]
+    r = do_product_searching(product_name, mkt_plc, country=country)
+    result.append(r)
+  df[url_col_name] = result
+  return df
