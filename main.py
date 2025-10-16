@@ -51,7 +51,7 @@ split_num = get_split_num(file.shape[0])
 files = np.array_split(file, split_num)
 
 
-round = split_num//1000 + 1
+round = split_num//500 + 1
 chunk = int(split_num/round)
 for i in range(round):
   print(f"round {i+1} begins, left:{round-i-1}")
