@@ -1,5 +1,5 @@
 from .prompt import gen_prompt
-from .other_func import check_url
+from .other_func import check_url, get_pro_name, remove_accents, get_brand, check_found_brand
 
 from dotenv import load_dotenv
 import os
@@ -33,20 +33,29 @@ def do_product_searching(product_name, mkt_plc, country='uk', search_k=5):
       """!don't use it if not necessary ,refined search for inapproriate initial search result"""
       search = GoogleSerperAPIWrapper(serper_api_key=serper_key, gl=country, k=search_k)
       results = search.results(query)
-
       # Format results as markdown
       formatted_results = []
       if 'organic' in results:
-          for idx, item in enumerate(results['organic'][:5], 1):  # Top 5 results
+          for idx, item in enumerate(results['organic'][:search_k], 1):
               formatted_results.append(
                   f"**{idx}. [{item['title']}]({item['link']})**\n"
                   f"{item.get('snippet', 'No description available')}"
               )
+
+      brands = get_brand(product_name)
+      print(brands)
       if not formatted_results:
         return "No results found"
       else:
+        # url filtering
         formatted_results = [i for i in formatted_results if check_url(i, mkt_plc)]
-        return "\n\n".join(formatted_results) if formatted_results else "No results found"
+        if not formatted_results:
+          return "No results found"
+        else:
+          names = [get_pro_name(i) for i in formatted_results]
+          # brand filtering
+          formatted_results = [i for i, j in zip(formatted_results, names) if check_found_brand(remove_accents(j[0]), brands) or check_found_brand(remove_accents(j[1]), brands)]
+          return "\n\n".join(formatted_results) if formatted_results else "No results found"
 
   initial_result = search_refine(initial_query)
 

@@ -23,111 +23,16 @@ file = pd.read_excel(input_path)
 output_p_root = os.path.join(os.getcwd(), "output/output_partitions/")
 
 
-use_match = config.get('use_match', None)
-if use_match not in [0, 1]:
-    raise ValueError("Please set the use_match parameter to 0 or 1 in the config.yaml file.")
-
-if use_match == 0:
-    print("\n\n no semantic matching mode \n\n")
-else:
-    print("\n\n semantic matching mode \n\n")
-
-match_file_path = config.get('match_file', None)
-if use_match==1 and not match_file_path:
-    raise ValueError("Please provide the match_file in the config.yaml file if using match.")
-
-if use_match:
-
-    match_file_path = os.path.join(os.getcwd(), f"input/{match_file_path}")
-    match_file = pd.read_excel(match_file_path)
-    # make sure the category and web col name unified as well 
-    web_col = config.get('match_web_col', None)
-    cate_col = config.get('match_cate_col', None)
-    if not web_col or not cate_col:
-        raise ValueError("Please provide the match_web_col and match_cate_col in the config.yaml file if using match.")
-    match_file.rename(columns={web_col: 'web', cate_col: 'Category'}, inplace=True)
-    match_file['Category'] = match_file['Category'].apply(lambda x: x.strip())
-    # the cate used to do match should be defined as well 
-
-    match_dict = {}
-    for i in range(match_file.shape[0]):
-        match_dict[match_file.iloc[i, 0]] = list(match_file.iloc[i, 1:])
-
-else:
-    # be in the yaml
-    web = config.get('web', None)
-    if not web:
-        raise ValueError("Please provide the web name in the config.yaml file if not using match.")
-
-    file['web_1'] = web
 
 
-if use_match:
-    print('\nloading the semantic matching model\n')
-    from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2')
-    def embedding_one(text):
-        return model.encode(text)
-    print("\nloading done\n")
-# the categories associated with files
-    file_cate = config.get('input_cate_col', None)
-    if not file_cate:
-        raise ValueError("Please provide the input_cate_col in the config.yaml file if using match.")
-    file.rename(columns={file_cate: 'suggest_cate_1'}, inplace=True)
-    file_embedding = {}
-    print("\nstart embedding for the file category\n")
-    for i in tqdm(set(file['suggest_cate_1']), total=len(set(file['suggest_cate_1']))):
-        file_embedding[i] = embedding_one(i)
-    print("\n embedding done\n")
+# be in the yaml
+web = config.get('web', None)
+if not web:
+    raise ValueError("Please provide the web name in the config.yaml file if not using match.")
 
-# the categories associated with the web
-    cate_embedding = {}
-    print("\nstart embedding for the match_file category\n")
-    for i in tqdm(match_dict, total=len(match_dict)):
-        cate_embedding[i] = embedding_one(i)
-    print("\n embedding done\n")
-    cate_list = [i for i in match_dict]
-    cate_matrix = np.vstack([cate_embedding[i] for i in cate_list])
-
-    file.reset_index(drop=True, inplace=True)
-
-    cate_col = 'suggest_cate_1'
-    n_web = len(match_dict[list(match_dict.keys())[0]])
-
-    results = [[] for i in range(n_web)]
-    match_c = []
-    sim_v = []
-    for i in range(file.shape[0]):
-        v = file_embedding[file.loc[i, cate_col]]
-    # the similarity
-    sim = cate_matrix @ v
-
-    # max similarity
-    sim_max_i = np.argmax(sim)
-
-    # matched_cate
-    c = cate_list[sim_max_i]
-
-    sim_v.append(sim[sim_max_i])
-
-    match_c.append(c)
-    item = match_dict[c]
-    for j in range(n_web):
-        results[j].append(item[j])
-
-    file['match_c'] = match_c
-    file['sim'] = sim_v
-    for i in range(n_web):
-        file[f"web_{i+1}"] = results[i]   
+file['web_1'] = web
 
 
-    ### setting in yaml
-    sim_cri = config.get('sim_cri', 0.5)
-    mask = (file['sim']>sim_cri) 
-    # done
-    file = file.loc[mask]
-    file.reset_index(drop=True, inplace=True)
-    
 
 name_col = config.get('input_sku_name_col', None)
 country = config.get('country', None)

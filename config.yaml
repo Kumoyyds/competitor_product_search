@@ -21,16 +21,6 @@ use_match: 0   # 0 for no, 1 for yes
 web: amazon.de
 
 
-#############################  only needed when  use_match is 1  #######################################
-match_file: de_cate_match.xlsx
-#### declare the category and web col name in the match file
-match_cate_col: Category
-match_web_col: web
-#### declare the category col to be matched in the input file # it's ok to give the english sku name if no other choice
-input_cate_col: item_sku_name_en
-#### 0.5 by default  set the similarity thredshold of keeping the match (0-1, larger the more similar)
-sim_cri: 0.40
-
 
 
 
