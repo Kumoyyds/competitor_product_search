@@ -25,6 +25,7 @@ This is to help online retailer find the url of product on competitor  platforms
     things to check:
     - **sku name**, you should test which language works well, ex: for amazon.fr, most product names are in French, and after testing on google, french product name is indeed easier to be reached. then we should use french sku name. 
     - **target web**, ex: amazon.fr, tesco.com, etc. make sure you give the right one, and make sure the suffix is correct.
+    - **be in .xlsx**
 
 5. put your file in the **input/** directory  
 6. set the **config.yaml** following the instruction inside. 

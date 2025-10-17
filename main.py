@@ -16,6 +16,8 @@ with open("config.yaml", "r", encoding="utf-8") as f:
 
 # input path
 input_file_name = config['input_file']
+if not input_file_name:
+    raise ValueError("Please provide the input_file in the config.yaml file.")
 input_path = os.path.join(os.getcwd(), f"input/{input_file_name}")
 file = pd.read_excel(input_path)
 
