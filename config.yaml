@@ -3,7 +3,7 @@
 
 
 #############################  the parameters in the input file  #######################################  
-input_file: 
+input_file: amazon_de_url.xlsx
 
 input_sku_name_col: item_sku_name_de # the language is better to be consistent with the web region
 country: de    # uk fr de nl ... the country code of the web, refer to serper

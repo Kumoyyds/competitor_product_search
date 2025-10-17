@@ -43,7 +43,6 @@ def do_product_searching(product_name, mkt_plc, country='uk', search_k=5):
               )
 
       brands = get_brand(product_name)
-      print(brands)
       if not formatted_results:
         return "No results found"
       else:
