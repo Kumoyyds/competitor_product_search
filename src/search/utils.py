@@ -56,7 +56,7 @@ def get_pro_name(string):
 
 # never change the banrd name
 
-brand_path = os.path.join(os.getcwd(), f"llm_tools/brand.xlsx")
+brand_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brand.xlsx")
 print(brand_path)
 brands = pd.read_excel(brand_path)
 brands_set = set(brands['brandname_en']) | set(brands['brandname_cn']) | set(brands['brandname_full'])

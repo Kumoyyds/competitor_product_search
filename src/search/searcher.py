@@ -1,5 +1,5 @@
-from .prompt import gen_prompt
-from .other_func import check_url, get_pro_name, remove_accents, get_brand, check_found_brand
+from .prompts import gen_prompt
+from .utils import check_url, get_pro_name, remove_accents, get_brand, check_found_brand
 
 from dotenv import load_dotenv
 import os
