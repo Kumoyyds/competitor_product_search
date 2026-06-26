@@ -1,0 +1,89 @@
+search:
+  provider: serper
+  k: 10
+  query_variants: [raw, with_retailer_kw, strip_parens]
+  retailer_keywords:
+    tesco: Tesco
+    argos: Argos
+    amazon: Amazon
+
+domain_map:
+  tesco:  tesco.com
+  argos:  argos.co.uk
+  amazon: amazon.co.uk
+
+brand:
+  fuzzy_same_threshold: 88
+  fuzzy_differ_threshold: 40
+
+numeric:
+  continuous_tolerance: 0.10
+  entity_to_attr:
+    volume: volume_ml
+    mass: weight_g
+    "digital storage": storage_gb
+    length: length_mm
+    dimensionless: count
+  unit_conversions:
+    volume_ml:
+      l: 1000
+      litre: 1000
+      litres: 1000
+      ml: 1
+      millilitre: 1
+      millilitres: 1
+      cl: 10
+      centilitre: 10
+    weight_g:
+      kg: 1000
+      kilogram: 1000
+      kilograms: 1000
+      g: 1
+      gram: 1
+      grams: 1
+      mg: 0.001
+      milligram: 0.001
+      milligrams: 0.001
+    storage_gb:
+      gb: 1
+      gigabyte: 1
+      gigabytes: 1
+      tb: 1024
+      terabyte: 1024
+      terabytes: 1024
+      mb: 0.001
+      megabyte: 0.001
+      megabytes: 0.001
+    length_mm:
+      mm: 1
+      millimetre: 1
+      millimetres: 1
+      cm: 10
+      centimetre: 10
+      centimetres: 10
+      m: 1000
+      metre: 1000
+      metres: 1000
+    count:
+      "": 1
+      pack: 1
+      x: 1
+  discrete_attrs: [storage_gb, ram_gb, count, screen_inch, voltage_v, abv_percent]
+  ambiguity_window_chars: 20
+  ambiguity_rules:
+    "digital storage":
+      ram: ram_gb
+      memory: ram_gb
+      storage: storage_gb
+      ssd: storage_gb
+      hdd: storage_gb
+
+llm:
+  provider: qwen
+  model: qwen-flash
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  temperature: 0.1
+  timeout_s: 60
+
+cache:
+  sqlite_path: .cache/base_extraction.sqlite

@@ -1,83 +1,91 @@
+from __future__ import annotations
+
+import os
 import re
 import unicodedata
+from functools import lru_cache
+
 import pandas as pd
-import os
-
-def check_url(input_str, pattern):
-    def make_regex_literal(s):
-        return re.escape(s)
-
-    pattern = make_regex_literal(pattern)
-    input_lower = input_str.lower()
-
-    match_inner = re.search(r'\*\*(.*?)\*\*', input_lower)
-    if not match_inner:
-        return False
-
-    inner_content = match_inner.group(1)
-
-    p_url = r'\(https?://(.*?)\)'
-    url_match = re.search(p_url, inner_content)
-    if not url_match:
-        return False
-
-    url = url_match.group(1)
-
-    if re.search(pattern, url):
-        return True
-
-    return False
-
-def get_split_num(num):
-  i = 1
-  while num // 10 > 0:
-    num = num // 10
-    i *= 10
-  return num * i
-
-# to remove accent 
-def remove_accents(input_str):
-    nfkd_form = unicodedata.normalize('NFD', input_str)
-    # Filter out combining characters (diacritics)
-    return ''.join([c for c in nfkd_form if not unicodedata.combining(c)])
-
-# extract the product name and descrition from google search results for later filtering based on brand name
-def get_pro_name(string):
-  pattern = r'\[(.*?)\]'
-  match_inner = re.search(pattern, string)
-  product_name = match_inner.group(1)
-
-  try:
-    description = string.split(")**\n")[-1]
-  except:
-    description = " "
-  return product_name, description
 
 
-# never change the banrd name
+# Maintained file — edit via Excel. See "Files to maintain" in src/search/README.md.
+_BRAND_XLSX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maintain", "brand.xlsx")
 
-brand_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brand.xlsx")
-print(brand_path)
-brands = pd.read_excel(brand_path)
-brands_set = set(brands['brandname_en']) | set(brands['brandname_cn']) | set(brands['brandname_full'])
 
-# only check
+def remove_accents(s: str) -> str:
+    nfkd = unicodedata.normalize("NFD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
 
-def get_brand(name1, brand_set=brands_set):
-  result = []
-  for brand in brand_set:
-    pattern = rf"\b{brand}\b"
-    if re.search(pattern.lower(), name1.lower()):
-      result.append(brand)
-  return result
 
-# only found
-def check_found_brand(name2, checked_brands):
-  if not checked_brands:
-    return True
-  else:
-    for brand in checked_brands:
-      pattern = rf"\b{brand}\b"
-      if re.search(pattern.lower(), name2.lower()):
-        return True
-    return False
+def normalize(s: str) -> str:
+    return remove_accents(s).lower().strip()
+
+
+@lru_cache(maxsize=1)
+def load_brands_all() -> tuple[str, ...]:
+    df = pd.read_excel(_BRAND_XLSX)
+    series = df["brandname_en"].dropna().astype(str).str.strip()
+    series = series[series != ""]
+    return tuple(sorted(set(series.tolist()), key=lambda x: (-len(x), x.lower())))
+
+
+@lru_cache(maxsize=1)
+def load_brands_fuzzy_safe() -> tuple[str, ...]:
+    return tuple(b for b in load_brands_all() if len(b) >= 4 and re.search(r"[A-Za-z]", b))
+
+
+@lru_cache(maxsize=1)
+def _literal_brand_regex() -> tuple[re.Pattern, dict[str, str]]:
+    norm_to_original: dict[str, str] = {}
+    for b in load_brands_all():
+        nb = normalize(b)
+        if not nb:
+            continue
+        prev = norm_to_original.get(nb)
+        if prev is None or len(b) > len(prev):
+            norm_to_original[nb] = b
+    keys = sorted(norm_to_original.keys(), key=lambda s: (-len(s), s))
+    pattern = r"(?<!\w)(" + "|".join(re.escape(k) for k in keys) + r")(?!\w)"
+    return re.compile(pattern), norm_to_original
+
+
+def find_literal_brands(text: str) -> list[str]:
+    """Return ALL brands literally mentioned in `text`, in order of first appearance.
+
+    Returning the full set (rather than picking one) lets the comparison layer
+    handle noisy titles where descriptors collide with the brand list — e.g.
+    "Tetley 20 Supergreen Vitamin C Tropical Tea 40g" yields ["Tetley", "Tropical"]
+    so a downstream "any-pair-matches" rule can recover the real brand.
+    Deduped, preserving original casing.
+    """
+    if not text:
+        return []
+    regex, mapping = _literal_brand_regex()
+    norm = normalize(text)
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in regex.finditer(norm):
+        nb = m.group(1)
+        original = mapping.get(nb, nb)
+        if original not in seen:
+            seen.add(original)
+            out.append(original)
+    return out
+
+
+def find_literal_brand(text: str) -> str | None:
+    """Backwards-compat shim: first brand by appearance, or None.
+
+    Prefer find_literal_brands for matching logic — single-pick is only useful
+    for legacy callers.
+    """
+    brands = find_literal_brands(text)
+    return brands[0] if brands else None
+
+
+def get_split_num(num: int) -> int:
+    i = 1
+    while num // 10 > 0:
+        num = num // 10
+        i *= 10
+    return num * i

@@ -4,7 +4,5 @@ __pycache__/
 *.pyo
 .env
 .DS_Store
-*.ipynb
-.ipynb_checkpoints/
-output/
-input/
+*.xlsx
+*.json
