@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.search.layers.numeric import extract_numerics  # noqa: E402
 from src.search.models import FinalVerdict  # noqa: E402
 from src.search.pipeline import match_product  # noqa: E402
-from src.search.providers import SerperProvider  # noqa: E402
+from src.search.providers import make_provider  # noqa: E402
 from src.search.providers.base import BudgetExhausted  # noqa: E402
 
 
@@ -60,7 +60,7 @@ def print_numeric_prepass(rows: pd.DataFrame) -> None:
 
 
 async def _run_pipeline(rows: pd.DataFrame, budget: int, country: str) -> tuple[list[dict], int]:
-    provider = SerperProvider(max_calls=budget)
+    provider = make_provider("duckduckgo", max_calls=budget)
     out: list[dict] = []
     budget_hit = False
     try:

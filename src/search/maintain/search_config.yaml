@@ -1,29 +1,55 @@
+# ============================================================
+# Pipeline configuration for the product-URL matching system.
+# Edit for tuning — not per-run. Per-run settings live in
+# config_search.yaml at the repo root.
+# ============================================================
+
 search:
-  provider: serper
+  # Search engine backend: "serper" (Google via Serper API, needs SERPER_KEY)
+  # or "duckduckgo" (free, no API key, ~1s rate limit between calls)
+  provider: duckduckgo
+  # Max number of results to request per search query
   k: 10
+  # Query rewriting strategies applied to each product name:
+  #   raw            – use the product name as-is
+  #   with_retailer_kw – append the retailer keyword (e.g. "Tesco")
+  #   strip_parens   – remove parenthesised text from the name
   query_variants: [raw, with_retailer_kw, strip_parens]
+  # Keyword appended to queries when using the "with_retailer_kw" variant.
+  # Keyed by the website code used in config_search.yaml.
   retailer_keywords:
     tesco: Tesco
     argos: Argos
     amazon: Amazon
 
+# Maps website codes to expected host domains.
+# The domain_filter layer kills candidates whose URL host doesn't match.
 domain_map:
   tesco:  tesco.com
   argos:  argos.co.uk
   amazon: amazon.co.uk
 
 brand:
+  # RapidFuzz score >= this → brands considered the same (pass)
   fuzzy_same_threshold: 88
+  # RapidFuzz score <= this → brands considered different (fail)
+  # Scores between the two thresholds → unknown
   fuzzy_differ_threshold: 40
 
 numeric:
+  # Allowed relative difference for continuous attributes (e.g. weight, volume).
+  # 0.10 = ±10%. Values outside this range → fail.
   continuous_tolerance: 0.10
+  # Maps quantulum3 entity names to canonical attribute names used internally.
   entity_to_attr:
     volume: volume_ml
     mass: weight_g
     "digital storage": storage_gb
     length: length_mm
     dimensionless: count
+  # Conversion factors to normalise parsed values into the canonical unit.
+  # Each sub-key is a recognised unit string; value is the multiplier
+  # to convert to the canonical unit (e.g. "kg: 1000" → 1 kg = 1000 g).
   unit_conversions:
     volume_ml:
       l: 1000
@@ -68,8 +94,13 @@ numeric:
       "": 1
       pack: 1
       x: 1
+  # Attributes compared with exact equality (not ±tolerance).
   discrete_attrs: [storage_gb, ram_gb, count, screen_inch, voltage_v, abv_percent]
+  # When a numeric entity is ambiguous (e.g. "256GB" could be RAM or storage),
+  # look this many chars around the number for a disambiguating keyword.
   ambiguity_window_chars: 20
+  # Disambiguation rules: if a keyword is found near an ambiguous entity,
+  # assign the value to the specified attribute instead of the default.
   ambiguity_rules:
     "digital storage":
       ram: ram_gb
@@ -79,11 +110,18 @@ numeric:
       hdd: storage_gb
 
 llm:
+  # LLM provider name (currently only "qwen" is wired up)
   provider: qwen
+  # Model identifier passed to the OpenAI-compatible endpoint
   model: qwen-flash
+  # OpenAI-compatible API base URL (DashScope for Qwen)
   base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  # Sampling temperature — lower = more deterministic
   temperature: 0.1
+  # HTTP timeout in seconds for LLM calls
   timeout_s: 60
 
 cache:
+  # Path to the SQLite file caching base extraction results (brand + numeric).
+  # Keyed on md5(title) — same title is never re-extracted within or across runs.
   sqlite_path: .cache/base_extraction.sqlite
