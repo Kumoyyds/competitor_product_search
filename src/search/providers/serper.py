@@ -49,7 +49,7 @@ class SerperProvider(SearchProvider):
     def calls_made(self) -> int:
         return self._calls
 
-    async def search(self, query: str, k: int = 10, country: str = "uk") -> list[RawCandidate]:
+    async def search(self, query: str, k: int = 10, country: str = "gb") -> list[RawCandidate]:
         await self._reserve_call()
         session = await self._ensure_session()
         payload: dict[str, Any] = {"q": query, "num": k, "gl": country}

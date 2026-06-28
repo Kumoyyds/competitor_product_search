@@ -38,7 +38,7 @@ pip install -r requirements.txt
 #    QWEN_KEY=...
 #    SERPER_KEY=...
 
-# 3. edit config.yaml — point input_file at your spreadsheet, set web/country/output_file
+# 3. edit config_search.yaml — point input_file at your spreadsheet, set web/country/output_file
 
 # 4. run
 python run.py
@@ -78,12 +78,11 @@ Stratified sample from `src/0_Data/tesco_algo.xlsx`, capped at 50 Serper calls. 
 
 ### Batch mode
 
-- **Where**: `input/{input_file}.xlsx` (filename set in [config.yaml](../../config.yaml))
-- **Required columns** (names configurable):
-  - `item_sku_name_en_new` (or whatever you set as `input_sku_name_col`) — the product name string
-  - `web_1` — target marketplace (`Tesco` / `Argos` / `Amazon`). If absent in the file, `main.py` fills it from the `web` field in `config.yaml`.
-- **config.yaml keys consumed**:
-  - `input_file`, `input_sku_name_col`, `country` (Serper country code like `uk` / `de`), `web`, `output_file`
+- **Where**: `input/{input_file}.xlsx` (filename set in [config_search.yaml](../../config_search.yaml))
+- **Required columns** (name configurable):
+  - `item_sku_name_de` (or whatever you set as `input_sku_name_col`) — the product name string
+- **config_search.yaml keys consumed**:
+  - `input_file`, `input_sku_name_col`, `country` (Serper country code like `uk` / `de`), `web` (target marketplace, e.g. `amazon.de`), `output_file`
   - Optional: `serper_max_calls` (cap total Serper calls), `concurrency` (default 16), `search_provider` (default `serper`)
 
 ### Programmatic
@@ -132,7 +131,7 @@ Reads `src/0_Data/tesco_algo.xlsx` by default; override with `--input`.
 |---|---|
 | **[maintain/brand.xlsx](maintain/brand.xlsx)** | Add a row whenever a brand isn't being recognised; remove a row to drop a false-positive brand. Only the `brandname_en` column is read — other columns are ignored. After saving, **restart the Python process** (the brand list is `lru_cache`-d for the lifetime of the process; batch runs `python run.py` start fresh, so this is automatic). What's safe to add: normal brands ("Kopparberg"), short brands ("AEG", "7Up"), digit-bearing brands ("19 Crimes"), and even common English words ("Tropical", "Green") — the multi-brand any-pair-match comparison handles collisions correctly. Pure-numeric brands ("555") work but use sparingly — they may collide with codes/prices in titles. |
 | **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. Key sections: `domain_map` (add new marketplaces here), `search.retailer_keywords`, `brand.fuzzy_same_threshold` / `fuzzy_differ_threshold` (88 / 40 default), `numeric.continuous_tolerance` (±10%), `numeric.entity_to_attr` + `unit_conversions` + `discrete_attrs` (to support new attributes/units), `llm.model` (currently `qwen-flash`), `cache.sqlite_path`. Restart after editing. |
-| **[config.yaml](../../config.yaml)** (repo root) | Per-run job config: which input file, which marketplace, country code, output filename, optional Serper budget. |
+| **[config_search.yaml](../../config_search.yaml)** (repo root) | Per-run job config: which input file, which marketplace, country code, output filename, optional Serper budget. |
 
 ### Common maintenance tasks
 
@@ -164,6 +163,37 @@ Tests skip cleanly if a referenced brand was removed from `brand.xlsx` — so br
 
 - Code under `layers/`, `providers/`, `graph.py`, `pipeline.py` — only edit when changing algorithm behaviour.
 - The SQLite cache — auto-managed at `.cache/base_extraction.sqlite`.
+
+---
+
+## 6. Script map
+
+```
+[main.py] ──→ [pipeline.py] ──→ [graph.py] ──→ [layers/search] ──→ [layers/query_builder]
+   │               │                │              │
+   │               │                │              └──→ [providers/serper]
+   │               │                │
+   │               │                ├──→ [layers/domain_filter]
+   │               │                │
+   │               │                ├──→ [layers/base_match] ──→ [layers/brand]
+   │               │                │         │                    └──→ [utils.py]
+   │               │                │         ├──→ [layers/numeric]
+   │               │                │         └──→ [cache.py]
+   │               │                │
+   │               │                ├──→ [layers/distinguishing]
+   │               │                └──→ [layers/aggregate]
+   │               │
+   │               ├──→ [config.py] ──→ maintain/search_config.yaml
+   │               ├──→ [models.py]
+   │               └──→ [providers/__init__] ──→ [providers/serper]
+   │                                             └──→ [providers/duckduckgo]
+   │
+   └──→ [providers/__init__]  (make_provider for shared budget)
+
+[utils.py] ──→ maintain/brand.xlsx
+```
+
+Key: `──→` = imports/calls. `graph.py` wires the 5 layers via LangGraph conditional edges; `base_match` delegates brand+numeric to separate files and never imports `distinguishing`.
 
 ---
 
