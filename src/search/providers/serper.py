@@ -13,6 +13,31 @@ from .base import BudgetExhausted, SearchProvider, SearchProviderError
 
 _ENDPOINT = "https://google.serper.dev/search"
 
+# Map general country codes (from config_search.yaml) to Serper's ISO 3166-1 alpha-2 gl param.
+# Serper uses "gb" not "uk" for the United Kingdom.
+_COUNTRY_TO_GL: dict[str, str] = {
+    "uk": "gb",
+    "gb": "gb",
+    "de": "de",
+    "fr": "fr",
+    "nl": "nl",
+    "us": "us",
+    "es": "es",
+    "it": "it",
+    "jp": "jp",
+    "au": "au",
+    "ca": "ca",
+    "br": "br",
+    "pl": "pl",
+    "se": "se",
+    "pt": "pt",
+}
+
+
+def _to_gl(country: str) -> str:
+    code = country.lower().strip()
+    return _COUNTRY_TO_GL.get(code, code)
+
 
 class SerperProvider(SearchProvider):
     name = "serper"
@@ -52,7 +77,7 @@ class SerperProvider(SearchProvider):
     async def search(self, query: str, k: int = 10, country: str = "gb") -> list[RawCandidate]:
         await self._reserve_call()
         session = await self._ensure_session()
-        payload: dict[str, Any] = {"q": query, "num": k, "gl": country}
+        payload: dict[str, Any] = {"q": query, "num": k, "gl": _to_gl(country)}
         headers = {"X-API-KEY": self._api_key, "Content-Type": "application/json"}
         try:
             async with session.post(_ENDPOINT, json=payload, headers=headers) as resp:

@@ -5,9 +5,17 @@
 # ============================================================
 
 search:
-  # Search engine backend: "serper" (Google via Serper API, needs SERPER_KEY)
-  # or "duckduckgo" (free, no API key, ~1s rate limit between calls)
-  provider: duckduckgo
+  # Search engine strategy.
+  # A single name = use only that provider for every row (no escalation):
+  #     provider: serper          # Google via Serper API; needs SERPER_KEY
+  #     provider: duckduckgo      # free; no API key; ~1s rate limit between calls
+  # A list = ordered chain; if the prior yields NO_MATCH for a row,
+  # escalate to the next provider for that row:
+  #     provider: [duckduckgo, serper]   # cheap-first, paid fallback
+  #     provider: [serper, duckduckgo]   # paid-first
+  # Adding a third engine later (e.g. tavily) just extends the list:
+  #     provider: [duckduckgo, serper, tavily]
+  provider: [duckduckgo, serper]
   # Max number of results to request per search query
   k: 10
   # Query rewriting strategies applied to each product name:

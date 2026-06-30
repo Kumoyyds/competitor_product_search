@@ -44,6 +44,15 @@ def _to_region(country: str) -> str:
     return f"{code}-en"
 
 
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """Detect rate-limit-shaped errors from the ddgs library (HTTP 429 etc.)."""
+    msg = f"{type(exc).__name__}: {exc}".lower()
+    return any(
+        marker in msg
+        for marker in ("ratelimit", "rate limit", "429", "too many requests")
+    )
+
+
 class DuckDuckGoProvider(SearchProvider):
     """Search provider backed by DuckDuckGo (free — no API key required).
 
@@ -132,14 +141,30 @@ class DuckDuckGoProvider(SearchProvider):
         region = _to_region(country)
         ddgs = self._get_ddgs()
 
-        try:
-            results: list[dict[str, str]] = await asyncio.to_thread(
-                lambda: list(ddgs.text(query, max_results=k, region=region))
-            )
-        except Exception as exc:
+        # Retry up to 3 attempts on rate-limit errors (1s pause between).
+        # Non-rate-limit errors propagate immediately.
+        last_exc: BaseException | None = None
+        results: list[dict[str, str]] | None = None
+        for attempt in range(3):
+            try:
+                results = await asyncio.to_thread(
+                    lambda: list(ddgs.text(query, max_results=k, region=region))
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                if not _is_rate_limit_error(exc):
+                    raise SearchProviderError(
+                        f"duckduckgo search error: {type(exc).__name__}: {exc}"
+                    ) from exc
+                if attempt < 2:
+                    await asyncio.sleep(1.0)
+                    continue
+        if results is None:
             raise SearchProviderError(
-                f"duckduckgo search error: {type(exc).__name__}: {exc}"
-            ) from exc
+                f"duckduckgo rate-limit retry exhausted after 3 attempts: "
+                f"{type(last_exc).__name__}: {last_exc}"
+            ) from last_exc
 
         out: list[RawCandidate] = []
         for item in results:

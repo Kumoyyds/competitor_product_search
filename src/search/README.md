@@ -12,7 +12,7 @@ It replaces the old "let an LLM agent pick a URL" approach with a **5-layer pipe
 search  →  domain_filter  →  base_match  →  distinguishing  →  aggregate
 ```
 
-1. **search** — fires query variants at a search provider (Serper today, DuckDuckGo placeholder), dedups results by URL.
+1. **search** — fires query variants at the first provider in the chain (DuckDuckGo / Serper / custom), dedups results by URL.
 2. **domain_filter** — drops candidates whose host isn't the target marketplace (e.g. only keep `*.tesco.com` when targeting Tesco).
 3. **base_match** — for each surviving candidate, compares **brand** (rapidfuzz against `brand.xlsx`, three-state pass/fail/unknown) and **numeric attributes** (volume, weight, count, ABV, storage… extracted via quantulum3 + regex). Mismatches kill the candidate; missing info passes through as `unknown`.
 4. **distinguishing** — one batched LLM call (Qwen `qwen-flash`) decides which surviving candidate (if any) is the same SKU, catching variant differences the rules miss (flavour, colour, version, pack size).
@@ -82,9 +82,8 @@ Stratified sample from `src/0_Data/tesco_algo.xlsx`, capped at 50 Serper calls. 
 - **Required columns** (name configurable):
   - `item_sku_name_de` (or whatever you set as `input_sku_name_col`) — the product name string
 - **config_search.yaml keys consumed**:
-  - `input_file`, `input_sku_name_col`, `country` (Serper country code like `uk` / `de`), `web` (target marketplace, e.g. `amazon.de`), `output_file`
-  - Optional: `serper_max_calls` (cap total Serper calls), `concurrency` (default 16), `search_provider` (default `serper`)
-
+  - `input_file`, `input_sku_name_col`, `country` (general country code: `uk` / `fr` / `de` / `nl`; each search engine maps it internally), `web` (target marketplace, e.g. `amazon.de`), `output_file`
+  - Optional: `serper_max_calls` (cap total Serper calls), `concurrency` (default 16)
 ### Programmatic
 
 Whatever you pass to `match_product(product_name, website, brand=None, country="uk")`. `brand` is optional — if provided it skips brand extraction on the query side.
@@ -95,8 +94,8 @@ Reads `src/0_Data/tesco_algo.xlsx` by default; override with `--input`.
 
 ### Environment (`.env` at repo root)
 
-- `QWEN_KEY` — DashScope key for the Qwen LLM (distinguishing layer)
-- `SERPER_KEY` — google.serper.dev key for the search provider
+- `QWEN_KEY` — DashScope key for the Qwen LLM (distinguishing layer), required
+- `SERPER_KEY` — google.serper.dev key, only needed if Serper is in the provider chain
 
 ---
 
@@ -115,7 +114,7 @@ Reads `src/0_Data/tesco_algo.xlsx` by default; override with `--input`.
 
 ### Validation script
 
-`output/validation_report.xlsx` with columns: `product_name`, `legacy_url`, `new_verdict`, `new_url`, `layer_trace_json`, `candidates_considered`, `reason`. Console also prints the per-layer verdict counts and Serper calls used.
+`output/validation_report.xlsx` with columns: `product_name`, `legacy_url`, `new_verdict`, `new_url`, `layer_trace_json`, `candidates_considered`, `reason`. Console also prints the per-layer verdict counts and per-provider call counts.
 
 ### Cache (auto-managed)
 
@@ -171,7 +170,7 @@ Tests skip cleanly if a referenced brand was removed from `brand.xlsx` — so br
 ```
 [main.py] ──→ [pipeline.py] ──→ [graph.py] ──→ [layers/search] ──→ [layers/query_builder]
    │               │                │              │
-   │               │                │              └──→ [providers/serper]
+   │               │                │              └──→ [providers/serper]  (or [providers/duckduckgo])
    │               │                │
    │               │                ├──→ [layers/domain_filter]
    │               │                │
@@ -186,9 +185,11 @@ Tests skip cleanly if a referenced brand was removed from `brand.xlsx` — so br
    │               ├──→ [config.py] ──→ maintain/search_config.yaml
    │               ├──→ [models.py]
    │               └──→ [providers/__init__] ──→ [providers/serper]
-   │                                             └──→ [providers/duckduckgo]
+   │                                             ├──→ [providers/duckduckgo]
+   │                                             ├──→ make_provider()
+   │                                             └──→ make_provider_chain()
    │
-   └──→ [providers/__init__]  (make_provider for shared budget)
+   └──→ [providers/__init__]  (make_provider_chain for shared budget chain)
 
 [utils.py] ──→ maintain/brand.xlsx
 ```
@@ -204,7 +205,7 @@ Key: `──→` = imports/calls. `graph.py` wires the 5 layers via LangGraph co
 | [pipeline.py](pipeline.py) | Public `match_product(...)` entrypoint |
 | [graph.py](graph.py) | LangGraph wiring of the 5 layers |
 | [layers/](layers/) | One file per layer (`search`, `domain_filter`, `brand`, `numeric`, `base_match`, `distinguishing`, `aggregate`) + `query_builder` |
-| [providers/](providers/) | `SerperProvider` (active) + `DuckDuckGoProvider` (placeholder) — add new search providers here |
+| [providers/](providers/) | `DuckDuckGoProvider` (active, free) + `SerperProvider` (active, paid) — chainable; add new search providers here |
 | [models.py](models.py) | Data classes (`MatchResult`, `LayerTrace`, `CandidateEval`, …) |
 | [config.py](config.py) | Loader for `maintain/search_config.yaml` |
 | [cache.py](cache.py) | SQLite cache for base extraction |

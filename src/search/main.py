@@ -24,15 +24,16 @@ import pandas as pd
 import yaml
 from tqdm.asyncio import tqdm_asyncio
 
+from . import config as search_config
 from .pipeline import match_product
-from .providers import make_provider
+from .providers import make_provider_chain
 from .utils import get_split_num
 
 
-async def _run_row(provider, sem, name, web, country):
+async def _run_row(providers, sem, name, web, country):
     async with sem:
         try:
-            return await match_product(name, web, country=country, provider=provider)
+            return await match_product(name, web, country=country, provider=providers)
         except Exception as e:
             return {"_error": str(e)}
 
@@ -52,17 +53,18 @@ async def _amain():
     input_path = os.path.join(os.getcwd(), f"input/{input_file_name}")
     df = pd.read_excel(input_path)
 
-    provider_name = cfg.get("search_provider", "serper")
-    provider = make_provider(provider_name, max_calls=serper_max) if provider_name == "serper" \
-        else make_provider(provider_name)
+    # Chain order comes from maintain/search_config.yaml (str or list[str]).
+    spec = search_config.get("search", "provider", default="serper")
+    providers = make_provider_chain(spec, serper_max_calls=serper_max)
 
     sem = asyncio.Semaphore(concurrency)
     tasks = [
-        _run_row(provider, sem, str(df.loc[i, name_col]), web, country)
+        _run_row(providers, sem, str(df.loc[i, name_col]), web, country)
         for i in range(len(df))
     ]
     results = await tqdm_asyncio.gather(*tasks)
-    await provider.aclose()
+    for p in providers:
+        await p.aclose()
 
     urls, verdicts, traces, reasons = [], [], [], []
     for r in results:
@@ -86,7 +88,8 @@ async def _amain():
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     df.to_excel(out_path, index=False)
     print(f"saved -> {out_path}")
-    print(f"serper calls used: {provider.calls_made()}")
+    calls_summary = ", ".join(f"{p.name}={p.calls_made()}" for p in providers)
+    print(f"search calls used: {calls_summary}")
 
 
 if __name__ == "__main__":

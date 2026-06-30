@@ -24,10 +24,11 @@ import pandas as pd
 # allow `python scripts/validate_search.py` from repo root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.search import config as search_config  # noqa: E402
 from src.search.layers.numeric import extract_numerics  # noqa: E402
 from src.search.models import FinalVerdict  # noqa: E402
 from src.search.pipeline import match_product  # noqa: E402
-from src.search.providers import make_provider  # noqa: E402
+from src.search.providers import make_provider_chain  # noqa: E402
 from src.search.providers.base import BudgetExhausted  # noqa: E402
 
 
@@ -59,8 +60,11 @@ def print_numeric_prepass(rows: pd.DataFrame) -> None:
     print()
 
 
-async def _run_pipeline(rows: pd.DataFrame, budget: int, country: str) -> tuple[list[dict], int]:
-    provider = make_provider("duckduckgo", max_calls=budget)
+async def _run_pipeline(rows: pd.DataFrame, budget: int, country: str) -> tuple[list[dict], dict[str, int]]:
+    # Chain order comes from maintain/search_config.yaml (str or list[str]).
+    # --budget applies only to the Serper provider(s) in the chain.
+    spec = search_config.get("search", "provider", default="serper")
+    providers = make_provider_chain(spec, serper_max_calls=budget)
     out: list[dict] = []
     budget_hit = False
     try:
@@ -81,7 +85,7 @@ async def _run_pipeline(rows: pd.DataFrame, budget: int, country: str) -> tuple[
                 out.append(row)
                 continue
             try:
-                res = await match_product(name, web, country=country, provider=provider)
+                res = await match_product(name, web, country=country, provider=providers)
                 row["new_verdict"] = res.verdict.value
                 row["new_url"] = res.matched_candidate.url if res.matched_candidate else "not found"
                 row["layer_trace_json"] = json.dumps(res.layer_trace.to_dict())
@@ -96,13 +100,16 @@ async def _run_pipeline(rows: pd.DataFrame, budget: int, country: str) -> tuple[
                 row["reason"] = f"{type(e).__name__}: {e}"
             out.append(row)
     finally:
-        await provider.aclose()
-    return out, provider.calls_made()
+        for p in providers:
+            await p.aclose()
+    calls_per_provider = {p.name: p.calls_made() for p in providers}
+    return out, calls_per_provider
 
 
-def summarize(rows: list[dict], calls_used: int) -> None:
+def summarize(rows: list[dict], calls_per_provider: dict[str, int]) -> None:
     print("\n=== End-to-end summary ===")
-    print(f"rows processed: {len(rows)}    serper calls used: {calls_used}")
+    calls_summary = ", ".join(f"{name}={n}" for name, n in calls_per_provider.items())
+    print(f"rows processed: {len(rows)}    search calls used: {calls_summary}")
 
     verdict_counts = Counter(r["new_verdict"] for r in rows)
     print(f"verdict mix: {dict(verdict_counts)}")
@@ -139,8 +146,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", default=DEFAULT_INPUT)
     ap.add_argument("--report", default=DEFAULT_REPORT)
-    ap.add_argument("--sample", type=int, default=30)
-    ap.add_argument("--budget", type=int, default=50)
+    ap.add_argument("--sample", type=int, default=20)
+    ap.add_argument("--budget", type=int, default=40)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--country", default="uk")
     args = ap.parse_args()
@@ -153,7 +160,7 @@ def main() -> None:
 
     print_numeric_prepass(sampled)
 
-    rows, calls_used = asyncio.run(
+    rows, calls_per_provider = asyncio.run(
         _run_pipeline(sampled, budget=args.budget, country=args.country)
     )
 
@@ -162,7 +169,7 @@ def main() -> None:
     report_df.to_excel(args.report, index=False)
     print(f"\nreport saved -> {args.report}")
 
-    summarize(rows, calls_used)
+    summarize(rows, calls_per_provider)
 
 
 if __name__ == "__main__":
