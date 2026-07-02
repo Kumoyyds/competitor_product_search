@@ -14,9 +14,6 @@ output_file: result.xlsx
 #############################   declare the web, mandatory when use_match is  0   #########################
 web: amazon.de
 
-
-
-
 ##############################   the parameters for the search  ##########################################
 serper_max_calls: 2 
 
