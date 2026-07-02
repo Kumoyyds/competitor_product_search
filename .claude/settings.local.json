@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\Activate.ps1)",
+      "PowerShell(python -m pytest tests/unit/search/ -v)"
+    ]
+  }
+}
