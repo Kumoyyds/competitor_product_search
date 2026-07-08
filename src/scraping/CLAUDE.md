@@ -1,10 +1,10 @@
 # Scraping Module
 
-**Status**: M1–M5 implemented (core extraction pipeline). M6–M11 pending (parser list, sandbox, repair, golden set, fallback, cold start).
+**Status**: M1–M11 complete. Full Phase 0 lifecycle: extraction, invalid-target detection, ordered parser list, sandbox, Agent repair (DeepSeek), golden set + promote/prune, scraper-level fallback + escalation, and cold-start CLI. All 172 verification checks pass — see `src/scraping/tests/`.
 
 ## Responsibility
 
-Extracts structured product data from marketplace pages. Takes `(url, website)` as input, returns `ProductData` (Pydantic model), `InvalidTargetResult` (not-a-product sentinel), or raises `ScrapeFailed`.
+Extracts structured product data from marketplace pages. Takes `(url, website)` as input, returns `ProductData` (Pydantic model), `InvalidTargetResult` (not-a-product sentinel), or raises `ScrapeFailed` (terminal, all scrapers exhausted).
 
 ## Design Spec
 
@@ -14,15 +14,17 @@ Full spec: `scraping_module_spec_v1_2.md` (v1.2, 510 lines). Key decisions are n
 
 ### Data Flow
 
-`Router.scrape(url)` → host→site→ordered scraper list (two-hop dispatch) → try each scraper:
-- **HTMLScraper route** (Tesco, Argos): BrightData Web Unlocker → HTML → invalid target detection → parser list (M6) → two gates → ProductData
-- **DirectAPIScraper route** (Amazon, Tesco DCA backup): BrightData Datasets/DCA API → JSON → field mapping → two gates → ProductData
+`Router.scrape(url)` → host→site→ordered scraper list (two-hop) → try each scraper:
+- **HTMLScraper route** (Tesco, Argos): BrightData Web Unlocker → HTML → invalid-target pre-detection → ordered parser list (sandbox-executed) → two gates → success → ProductData. On failure: **Agent repair ladder** (3 attempts, flash→flash→pro) → candidate parser → sandbox + golden test → promote if passes.
+- **DirectAPIScraper route** (Amazon, Tesco DCA backup): BrightData Datasets/DCA API → JSON → field mapping → two gates. On gate failure: **restricted JSON self-healing** (D25 red line — remaps existing keys only, never fabricates).
+
+On terminal failure of a scraper: Router tries the next in the list; when exhausted → `EscalationStore.upsert(signature, reason, snapshot)` with reason ∈ `{parser_broken, api_malformed, infra_failure, mass_invalid_target}`.
 
 ### Class Hierarchy
 
 ```
 BaseScraper (ABC)
-  ├── HTMLScraper (Template Method)
+  ├── HTMLScraper (Template Method with M6/M8/M9 hooks)
   │     ├── TescoScraper     (Web Unlocker, order=1)
   │     └── ArgosScraper     (Web Unlocker, order=1)
   └── DirectAPIScraper
@@ -35,78 +37,110 @@ BaseScraper (ABC)
 - Gate 1: Pydantic type/structure validation (`price` optional at this layer)
 - Gate 2: `feasible_check` cross-field semantics (`in_stock=True + price=None` → fault)
 
+### Repair Ladder (§5.5)
+
+Each attempt (up to 3, shared budget):
+1. **Turn A — no_product judgment**: LLM decides if HTML is a real product page. If not, backfill phrase to `invalid_target_phrases` and return `InvalidTargetResult`. Does NOT consume budget.
+2. **Turn B — source_absence** (attempt 2 only): distinguishes "hard-to-parse product page" (solvable) vs "no data on page" (source_absent → terminal, skip attempt 3).
+3. **Turn C — parser generation**: LLM produces `def parse(html, url) -> dict` → sandbox → gates → `promote_candidate()` (golden test) → active parser row inserted.
+
 ## File Structure
 
 ```
 src/scraping/
-├── __init__.py          # Public API: scrape(), ProductData, ScrapeFailed
-├── config.py            # ScrapingConfig (pydantic-settings, spec §7)
-├── exceptions.py        # ScrapeFailed, BrightDataInfraError
-├── detection.py         # Invalid page detection (JSON-LD, status, multi-absence, keywords)
-├── router.py            # Two-hop dispatch + scraper-level fallback
-├── registry.py          # @register_scraper decorator (D3)
-├── coldstart.py         # (placeholder, M11)
-├── models/
-│   ├── product_data.py  # ProductData Pydantic model (Decimal price, D1)
-│   ├── enums.py         # Outcome, EscalationReason, SourceType, etc.
-│   └── results.py       # InvalidTargetResult, ScrapeOutcome union
-├── validation/
-│   ├── gate1.py         # Pydantic type validation
-│   └── gate2.py         # feasible_check cross-field rules
+├── __init__.py             # Public API: scrape(), ProductData, ScrapeFailed
+├── config.py               # ScrapingConfig (spec §7)
+├── exceptions.py           # ScrapeFailed, BrightDataInfraError
+├── detection.py            # Invalid page detection (5 signals)
+├── router.py               # Two-hop dispatch + fallback loop + escalation writer (M10)
+├── registry.py             # @register_scraper decorator
+├── hosts.yaml              # host → site mapping (edit here to add sites)
+├── coldstart.py            # CLI cold start (M11)
+├── models/                 # ProductData, enums, InvalidTargetResult
+├── validation/             # gate1 (Pydantic), gate2 (feasible_check)
 ├── scrapers/
-│   ├── base.py          # BaseScraper ABC
-│   ├── html_scraper.py  # HTMLScraper Template Method
-│   ├── api_scraper.py   # DirectAPIScraper
-│   └── sites/
-│       ├── tesco.py     # TescoScraper (HTML, order=1)
-│       ├── tesco_dca.py # TescoDCAScraper (DCA, order=2)
-│       ├── argos.py     # ArgosScraper (HTML, order=1)
-│       └── amazon_uk.py # AmazonUKScraper (Datasets API)
+│   ├── base.py             # BaseScraper ABC
+│   ├── html_scraper.py     # HTMLScraper Template Method (M6 parser list + M8 hook + M9 seed + M10 signature)
+│   ├── api_scraper.py      # DirectAPIScraper + JSON healer integration + heal cache
+│   └── sites/              # Tesco / Argos / AmazonUK / TescoDCA
 ├── extraction/
-│   ├── bright_data.py   # BrightDataUnlocker / Datasets / DCA clients
-│   └── retry.py         # Extraction retry logic (D7)
-├── repair/              # (placeholders, M7-M8)
-│   ├── agent.py
-│   ├── sandbox.py
-│   ├── json_healer.py
-│   └── prompts.py
-└── storage/
-    ├── database.py      # SQLite 6-table DDL
-    ├── parser_store.py  # parsers table CRUD
-    ├── golden_store.py  # golden_samples table
-    ├── run_store.py     # scrape_runs table + dedup + hit rate
-    ├── result_store.py  # results table (append-only, D24)
-    ├── escalation_store.py  # escalations table (signature dedup)
-    └── phrase_store.py  # invalid_target_phrases table
+│   ├── bright_data.py      # Unlocker / Datasets / DCA async clients
+│   └── retry.py            # Extraction retry (D7)
+├── repair/
+│   ├── sandbox.py          # M7 — subprocess + AST scan + timeout + setrlimit (POSIX)
+│   ├── agent.py            # M8 — repair ladder (RepairContext, ladder driver, no_product/source_absence branches)
+│   ├── prompts.py          # M8 — prompt builders + SCHEMA_HINT + JSON-LD-aware excerpt
+│   ├── json_healer.py      # M8 — restricted JSON remap (D25 3-layer enforcement)
+│   └── golden.py           # M9 — classify_page_type, promote_candidate, prune_stale, hard-cap prune
+├── storage/                # 6 SQLite tables (parsers, golden_samples, scrape_runs, results, escalations, invalid_target_phrases)
+└── tests/                  # verify_mN.py + verify_mN_output.log per milestone
 ```
 
-## What's Implemented (M1–M5)
+## Milestone Status
 
-- **M1**: ProductData schema + two-gate validation
-- **M2**: BaseScraper ABC + Router two-hop + `@register_scraper` decorator
-- **M3**: SQLite 6 tables + ScrapingConfig
-- **M4**: DirectAPIScraper + AmazonUKScraper + TescoDCAScraper field mappings
-- **M5**: HTMLScraper extraction layer + invalid page detection tool (5 signal layers)
+| M | Component | Verified |
+|---|-----------|----------|
+| M1 | ProductData schema + two gates | ✔ verify_m1_m3.py |
+| M2 | BaseScraper + Router + Registry | ✔ verify_m1_m3.py |
+| M3 | SQLite 6 tables + config | ✔ verify_m1_m3.py |
+| M4 | DirectAPIScraper (Amazon + TescoDCA) | ✔ verify_m4_m5.py |
+| M5 | HTMLScraper extraction + invalid-page detection | ✔ verify_m4_m5.py |
+| M6 | Ordered parser list + scrape_runs writes | ✔ verify_m6.py |
+| M7 | Sandbox runner | ✔ verify_m7.py |
+| M8 | Agent repair ladder + JSON healer (real DeepSeek) | ✔ verify_m8.py |
+| M9 | Golden set + promote/prune | ✔ verify_m9.py |
+| M10 | Scraper-level fallback + escalation writing | ✔ verify_m10.py |
+| M11 | Cold start CLI (real DeepSeek) | ✔ verify_m11.py |
 
-## What's Pending (M6–M11)
+## Public API
 
-- **M6**: Ordered parser list match logic + scrape_runs/results writing in parsers
-- **M7**: Sandbox runner (subprocess + AST whitelist)
-- **M8**: Agent repair ladder (DeepSeek flash/pro) + phrase backfill
-- **M9**: Golden set + promote/prune lifecycle
-- **M10**: Scraper-level fallback driver + escalation (4 reason types)
-- **M11**: Cold start path end-to-end
+```python
+from src.scraping import scrape, ProductData, InvalidTargetResult, ScrapeFailed
 
-## Key Config
+result = await scrape("https://www.argos.co.uk/product/3284476")
+# result is either ProductData or InvalidTargetResult; ScrapeFailed raised on terminal failure
+```
 
-- `BRIGHT_DATA_KEY` — BrightData API key (required)
-- `DEEPSEEK_KEY` — DeepSeek API key (for repair, M8)
-- `SCRAPING_DB_PATH` — SQLite database path (default: `scraping.db`)
-- All spec §7 config items in `ScrapingConfig` (pydantic-settings)
+## Cold Start (new site)
+
+```bash
+python -m src.scraping.coldstart --site tesco --urls-file cold_urls.txt
+```
+
+Interactive: fetches all URLs → LLM generates first parser → user confirms each result (y/n/q) → seeds `parsers` + `golden_samples`. First-and-only manual step in the pipeline's lifetime.
+
+## Key Config (all in `ScrapingConfig`, spec §7)
+
+- `BRIGHT_DATA_KEY` / `DEEPSEEK_KEY` — API keys (loaded from `.env`)
+- `SCRAPING_DB_PATH` — SQLite path (default: `scraping.db`)
+- `repair_budget = 3`, `repair_model_ladder = [deepseek-chat, deepseek-chat, deepseek-reasoner]`
+- `json_heal_budget = 1`
+- `sandbox_timeout = 10s`, `sandbox_import_whitelist = [bs4, lxml, re, json]`
+- `prune_sliding_window = 50`, `per_site_parser_limit = 4`
+- `mass_invalid_target_ratio = 0.3`, `mass_invalid_target_absolute = 20`
+
+## Phase 0 Known Compromises
+
+- **Windows sandbox**: `resource.setrlimit` is POSIX-only. On Windows only the subprocess timeout provides isolation. Phase 2 will use Docker.
+- **JSON heal cache**: In-memory class-level dict (`DirectAPIScraper._json_heal_cache`), lost on process restart. Next scrape re-heals (~1 LLM call).
+- **INFRA ALERT**: Logged via `logger.error`, no email/IM. Phase 1 hook.
+- **LLM output variance**: Verify scripts test *machinery*, not exact parser code. Different runs may produce different (but correct) parsers.
 
 ## External Dependencies
 
-- **BrightData Web Unlocker** — raw HTML extraction (Tesco, Argos)
+- **BrightData Web Unlocker** — raw HTML (Tesco, Argos)
 - **BrightData Datasets API** — structured JSON (Amazon)
 - **BrightData DCA** — structured JSON (Tesco backup)
-- **DeepSeek** — repair LLM (M8, flash=deepseek-chat, pro=deepseek-reasoner)
+- **DeepSeek** (OpenAI-compatible endpoint) — repair LLM (flash=deepseek-chat, pro=deepseek-reasoner)
+
+## Verification Discipline (mandatory)
+
+Every milestone verification MUST leave persistent artifacts under `src/scraping/tests/`. Inline-only verification (bash `python -c "..."` output that disappears into chat history) is not acceptable — the user must be able to audit and re-run.
+
+For each new milestone:
+1. **Add a `verify_mN.py` script** — named checks with `[PASS]`/`[FAIL]` output, ends with `SUMMARY: N passed, M failed`, exits non-zero on failure.
+2. **Capture the output log** — run with `| tee src/scraping/tests/verify_mN_output.log`.
+3. **Update [tests/README.md](tests/README.md)** — add the new files to the table.
+4. **Prefer offline** — mock BrightData / LLM where possible. Real API only when strictly needed (e.g., LLM-generated parser correctness).
+
+See [tests/README.md](tests/README.md) for the full inventory (currently 172 checks across 8 log files).

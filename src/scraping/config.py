@@ -3,17 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
 class ScrapingConfig(BaseSettings):
     # --- Bright Data ---
-    bright_data_key: str = ""
+    bright_data_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("SCRAPING_BRIGHT_DATA_KEY", "BRIGHT_DATA_KEY"),
+    )
     bright_data_zone: str = "web_unlocker1"
 
     # --- DeepSeek (repair LLM) ---
-    deepseek_key: str = ""
+    deepseek_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("SCRAPING_DEEPSEEK_KEY", "DEEPSEEK_KEY"),
+    )
     deepseek_base_url: str = "https://api.deepseek.com/v1"
 
     # --- concurrency ---

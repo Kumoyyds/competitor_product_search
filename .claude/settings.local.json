@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "PowerShell(.\\\\.venv\\\\Scripts\\\\Activate.ps1)",
-      "PowerShell(python -m pytest tests/unit/search/ -v)"
+      "PowerShell(python -m pytest tests/unit/search/ -v)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python -m src.scraping.tests.verify_m6)",
+      "Bash(tee src/scraping/tests/verify_m6_output.log)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python -m src.scraping.tests.verify_m9)",
+      "Bash(tee src/scraping/tests/verify_m9_output.log)"
     ]
   }
 }

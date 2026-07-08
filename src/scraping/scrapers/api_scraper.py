@@ -3,8 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from abc import abstractmethod
-from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 from urllib.parse import urlparse
 
 from ..config import get_config
@@ -23,11 +22,18 @@ class DirectAPIScraper(BaseScraper):
 
     Subclasses implement:
       - _fetch_json(url): call BrightData API and return raw JSON dict
-      - _map_fields(json_data): map API JSON to ProductData-compatible dict
-      - _is_not_found(json_data): detect "product not found/delisted" response
+      - _map_fields(json_data, url): map API JSON to ProductData-compatible dict
+      - _is_not_found(json_data): detect "product not found/delisted" response (D25)
+
+    Includes restricted JSON self-healing (§5.14, D25) on gate failure.
     """
 
     source_type = "api"
+
+    # Class-level in-memory cache of {site: {target_field: source_dotted_path}}
+    # from a successful heal. Applied at top of scrape() before validation.
+    # In-memory only for Phase 0 — see coldstart doc.
+    _json_heal_cache: ClassVar[dict[str, dict[str, str]]] = {}
 
     @abstractmethod
     async def _fetch_json(self, url: str) -> dict[str, Any]:
@@ -54,6 +60,7 @@ class DirectAPIScraper(BaseScraper):
                 url=url,
                 scraper_name=self.__class__.__name__,
                 failed_stage="api_fetch",
+                signature=(self.site, "api_fetch", ""),
                 errors=[str(e)],
             )
 
@@ -65,6 +72,7 @@ class DirectAPIScraper(BaseScraper):
             )
 
         mapped = self._map_fields(json_data, url)
+        mapped = self._apply_heal_cache(json_data, mapped)
         product, errors = validate(mapped)
 
         if product is not None:
@@ -73,14 +81,60 @@ class DirectAPIScraper(BaseScraper):
             self._store_result(product)
             return product
 
-        # Gate failure -> terminal for API route (JSON self-healing placeholder for M8)
+        # Gate failure -> attempt restricted JSON self-healing (M8, spec §5.14)
+        from ..repair.json_healer import heal_json
+
+        healed = await heal_json(json_data, mapped, errors, self.site)
+        if healed is not None:
+            product, errors2 = validate(healed)
+            if product is not None:
+                self._cache_heal(json_data, mapped, healed)
+                latency = int((time.monotonic() - start) * 1000)
+                self._record_run(url, host, "success", "agent_repaired",
+                                 model_used="deepseek-chat", latency=latency)
+                self._store_result(product)
+                return product
+            errors.extend(errors2)
+
         raise ScrapeFailed(
             site=self.site,
             url=url,
             scraper_name=self.__class__.__name__,
-            failed_stage="gate_validation",
+            failed_stage="api_malformed",
+            signature=(self.site, "gate_validation", ""),
             errors=errors,
         )
+
+    def _apply_heal_cache(
+        self, json_data: dict[str, Any], mapped: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Apply any previously-healed field mapping for this site."""
+        cache = self._json_heal_cache.get(self.site)
+        if not cache:
+            return mapped
+
+        from ..repair.json_healer import _lookup_path
+
+        out = dict(mapped)
+        for target, source_path in cache.items():
+            if out.get(target) is None:
+                value = _lookup_path(json_data, source_path)
+                if value is not None:
+                    out[target] = value
+        return out
+
+    def _cache_heal(
+        self,
+        json_data: dict[str, Any],
+        pre_heal: dict[str, Any],
+        healed: dict[str, Any],
+    ) -> None:
+        """Extract the field mapping that made the heal succeed and cache it for future scrapes."""
+        # For each field that was None pre-heal and non-None post-heal, we don't know the
+        # exact source path used by the LLM, but we can search JSON for that value.
+        # Simpler: skip caching for Phase 0 and let each heal recompute.
+        # (Kept as a hook — actual caching implementation deferred to Phase 1.)
+        pass
 
     def _record_run(
         self,
@@ -88,6 +142,7 @@ class DirectAPIScraper(BaseScraper):
         host: str,
         outcome: str,
         path: str,
+        model_used: Optional[str] = None,
         latency: Optional[int] = None,
     ) -> None:
         try:
@@ -103,6 +158,7 @@ class DirectAPIScraper(BaseScraper):
                     scraper=self.__class__.__name__,
                     outcome=outcome,
                     path=path,
+                    model_used=model_used,
                     latency_ms=latency,
                 )
             db.close()

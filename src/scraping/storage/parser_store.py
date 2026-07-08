@@ -32,6 +32,29 @@ class ParserStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_active_ordered_by_hits(self, site: str) -> list[dict[str, Any]]:
+        """Return active parsers sorted by hit rate DESC, then id DESC (fresh-first tiebreak).
+
+        Freshly promoted parsers (0 hits) sort ahead of older 0-hit parsers via id DESC,
+        which reconciles spec's "命中率降序" with "promote 置于最前" (§5.4).
+        """
+        rows = self._db.conn.execute(
+            """
+            SELECT p.*, COALESCE(r.hits, 0) AS hits
+            FROM parsers p
+            LEFT JOIN (
+                SELECT winning_parser_id, COUNT(*) AS hits
+                FROM scrape_runs
+                WHERE site = ? AND outcome = 'success' AND winning_parser_id IS NOT NULL
+                GROUP BY winning_parser_id
+            ) r ON r.winning_parser_id = p.id
+            WHERE p.site = ? AND p.status = 'active'
+            ORDER BY hits DESC, p.id DESC
+            """,
+            (site, site),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def retire(self, parser_id: int) -> None:
         self._db.conn.execute(
             "UPDATE parsers SET status = 'retired' WHERE id = ?",

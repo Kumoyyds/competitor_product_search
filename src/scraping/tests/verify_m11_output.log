@@ -1,0 +1,132 @@
+
+======================================================================
+M11.1 - _read_urls parses text file
+======================================================================
+  [PASS] comment stripped
+  [PASS] 2 URLs read (blanks/comments skipped)  (['https://www.argos.co.uk/product/1', 'https://www.argos.co.uk/product/2'])
+
+======================================================================
+M11.2 - _pick_representative_html picks largest OK HTML
+======================================================================
+  [PASS] largest 200 OK returned  (len=500)
+  [PASS] None when no OK
+
+======================================================================
+M11.3 - Cold start with 'y y' accepts both URLs
+======================================================================
+
+== Cold start for site 'argos' ==
+Fetching 2 URLs via ArgosScraper...
+Fetched 2 pages (2 OK).
+
+Generating first-version parser via LLM...
+
+Running parser against all fetched HTMLs (sandbox)...
+
+2 candidates for review.
+
+
+[1/2] https://www.argos.co.uk/product/3284476
+  Extracted:
+    title        = Forest Pressure Treated Wooden Shed Base - 6 x 3ft
+    brand        = Forest Garden
+    price        = 52.20
+    currency     = GBP
+    list_price   = None
+    in_stock     = False
+    gtin         = 5013050000000
+  → accepted
+
+[2/2] https://www.argos.co.uk/product/8747437
+  Extracted:
+    title        = Grand Theft Auto VI Xbox Series X & S Game Pre-Order
+    brand        = Grand Theft Auto VI
+    price        = 69.99
+    currency     = GBP
+    list_price   = None
+    in_stock     = False
+    gtin         = 5026555370073
+  → accepted
+
+== Cold start complete ==
+  parser_id     = 1
+  goldens seeded = 2
+  [PASS] parser_id created  (id=1)
+  [PASS] 2 goldens seeded  (seeded=2)
+  [PASS] accepted count = 2  (2)
+  [PASS] not aborted
+  [PASS] parser row in DB (created_by=initial)  ([(1, 'initial')])
+  [PASS] goldens present in coverage  ({'out_of_stock': 2})
+
+======================================================================
+M11.4 - Cold start with 'q' aborts review loop
+======================================================================
+
+== Cold start for site 'argos' ==
+Fetching 2 URLs via ArgosScraper...
+Fetched 2 pages (2 OK).
+
+Generating first-version parser via LLM...
+
+Running parser against all fetched HTMLs (sandbox)...
+
+2 candidates for review.
+
+
+[1/2] https://www.argos.co.uk/product/3284476
+  ERROR: ['in_stock=True but price is missing'] — marking skipped
+
+[2/2] https://www.argos.co.uk/product/8747437
+  ERROR: ['in_stock=True but price is missing'] — marking skipped
+
+No confirmations — nothing seeded.
+  [PASS] q aborts: no parser seeded  (id=None)
+  [PASS] q aborts: no goldens seeded  (0)
+
+======================================================================
+M11.5 - Cold start with 'n y': one accepted, one skipped
+======================================================================
+
+== Cold start for site 'argos' ==
+Fetching 2 URLs via ArgosScraper...
+Fetched 2 pages (2 OK).
+
+Generating first-version parser via LLM...
+
+Running parser against all fetched HTMLs (sandbox)...
+
+2 candidates for review.
+
+
+[1/2] https://www.argos.co.uk/product/3284476
+  Extracted:
+    title        = Forest Pressure Treated Wooden Shed Base - 6 x 3ft
+    brand        = Forest Garden
+    price        = 52.20
+    currency     = GBP
+    list_price   = None
+    in_stock     = False
+    gtin         = 5013050000000
+  → skipped
+
+[2/2] https://www.argos.co.uk/product/8747437
+  Extracted:
+    title        = Grand Theft Auto VI Xbox Series X & S Game Pre-Order
+    brand        = Grand Theft Auto VI
+    price        = 69.99
+    currency     = GBP
+    list_price   = None
+    in_stock     = False
+    gtin         = 5026555370073
+  → accepted
+
+== Cold start complete ==
+  parser_id     = 2
+  goldens seeded = 1
+  [PASS] parser_id created
+  [PASS] only 1 accepted  (1)
+  [PASS] only 1 golden seeded  (1)
+
+======================================================================
+SUMMARY: 15 passed, 0 failed, 0 skipped
+======================================================================
