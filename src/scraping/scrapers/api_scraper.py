@@ -52,8 +52,20 @@ class DirectAPIScraper(BaseScraper):
 
         try:
             json_data = await self._fetch_json(url)
-        except BrightDataInfraError:
-            raise
+        except BrightDataInfraError as e:
+            # Same reasoning as HTMLScraper: this API scraper's BrightData
+            # channel is unhealthy, but sibling scrapers in the router chain
+            # use independent channels. Convert to scraper-scoped ScrapeFailed
+            # so router can try the next scraper. If all scrapers' channels
+            # are down, router's _derive_reason promotes back to infra_failure.
+            raise ScrapeFailed(
+                site=self.site,
+                url=url,
+                scraper_name=self.__class__.__name__,
+                failed_stage="api_fetch",
+                signature=(self.site, "api_infra", ""),
+                errors=[f"BrightDataInfraError: {e}"],
+            )
         except Exception as e:
             raise ScrapeFailed(
                 site=self.site,

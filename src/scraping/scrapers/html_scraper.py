@@ -61,8 +61,22 @@ class HTMLScraper(BaseScraper):
             status_code, html = await with_extraction_retry(
                 self._get_unlocker().fetch, url
             )
-        except BrightDataInfraError:
-            raise
+        except BrightDataInfraError as e:
+            # This scraper's BrightData channel (Web Unlocker) is unhealthy for
+            # this URL, but sibling scrapers in the router chain use independent
+            # channels (e.g. TescoDCAScraper hits the DCA API). Convert to a
+            # scraper-scoped ScrapeFailed so the router can try the next scraper
+            # instead of escalating immediately. If every scraper's channel is
+            # also down, _derive_reason() at the router promotes this back to
+            # `infra_failure` on the final escalation.
+            raise ScrapeFailed(
+                site=self.site,
+                url=url,
+                scraper_name=self.__class__.__name__,
+                failed_stage="extraction",
+                signature=(self.site, "extraction_infra", ""),
+                errors=[f"BrightDataInfraError: {e}"],
+            )
         except Exception as e:
             raise ScrapeFailed(
                 site=self.site,

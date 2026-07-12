@@ -122,6 +122,15 @@ def _derive_reason(failures: list[ScrapeFailed]) -> str:
     """Map the terminal failure stages to an EscalationReason."""
     if not failures:
         return "parser_broken"
+    # If ALL failures were extraction-side infra errors (Web Unlocker /
+    # Datasets / DCA channels each independently returning empty bodies or
+    # BD error headers), this is a genuine multi-channel infra failure —
+    # preserve that signal in the escalation reason.
+    if failures and all(
+        f.signature and f.signature[1] in ("extraction_infra", "api_infra")
+        for f in failures
+    ):
+        return "infra_failure"
     last_stage = failures[-1].failed_stage
     if last_stage == "api_malformed":
         return "api_malformed"

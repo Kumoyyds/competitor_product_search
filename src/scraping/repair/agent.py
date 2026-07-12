@@ -38,6 +38,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# F5: Parser-generation temperature ramp. Attempt 0 stays low (deterministic
+# best-guess); later attempts explore alternative strategies. Judgment prompts
+# (no_product / source_absence) always run at 0.1 for stability.
+_PARSER_GEN_TEMPERATURE_LADDER: list[float] = [0.1, 0.4, 0.8]
+
 
 @dataclass
 class RepairContext:
@@ -125,23 +130,34 @@ async def run_repair_ladder(
 
 
 async def _try_repair(ctx: RepairContext, model: str) -> RepairOutcome:
-    llm = _make_llm(model)
-    if llm is None:
+    # F5: judgments (no_product / source_absence) stay deterministic;
+    # parser_gen uses a temperature ramp to force genuine exploration on retries.
+    judgment_llm = _make_llm(model, temperature=0.1)
+    if judgment_llm is None:
         return CandidateFailed(errors=["LLM not configured (DEEPSEEK_KEY missing)"])
 
-    # Turn A: no_product judgment
-    verdict = await _ask_no_product(llm, ctx)
-    if verdict and verdict.get("decision") == "no_product":
-        return NoProductVerdict(phrase=verdict.get("phrase"))
+    parser_gen_temp = _PARSER_GEN_TEMPERATURE_LADDER[
+        min(ctx.attempt, len(_PARSER_GEN_TEMPERATURE_LADDER) - 1)
+    ]
+    parser_gen_llm = _make_llm(model, temperature=parser_gen_temp)
+    if parser_gen_llm is None:
+        return CandidateFailed(errors=["LLM not configured (DEEPSEEK_KEY missing)"])
+
+    # F3: Turn A (no_product judgment) only on attempt 0 — repeating it
+    # on retries wastes LLM calls on a question we already answered.
+    if ctx.attempt == 0:
+        verdict = await _ask_no_product(judgment_llm, ctx)
+        if verdict and verdict.get("decision") == "no_product":
+            return NoProductVerdict(phrase=verdict.get("phrase"))
 
     # Turn B: source_absence check (attempt 2 only, i.e. index 1)
     if ctx.attempt == 1:
-        absent = await _ask_source_absence(llm, ctx)
+        absent = await _ask_source_absence(judgment_llm, ctx)
         if absent and absent.get("decision") == "source_absent":
             return SourceAbsent(reason=absent.get("reason", "source_absent"))
 
     # Turn C: parser generation
-    parser_source = await _gen_parser(llm, ctx)
+    parser_source = await _gen_parser(parser_gen_llm, ctx)
     if not parser_source:
         return CandidateFailed(errors=["parser_gen returned nothing"])
     ctx.candidates_tried.append(parser_source)
@@ -149,10 +165,9 @@ async def _try_repair(ctx: RepairContext, model: str) -> RepairOutcome:
     # Sandbox execution
     sandbox_result = await run_in_sandbox(parser_source, ctx.html, ctx.url)
     if not isinstance(sandbox_result, dict):
-        return CandidateFailed(
-            errors=[f"sandbox rejected: {type(sandbox_result).__name__}: "
-                    f"{getattr(sandbox_result, 'reason', getattr(sandbox_result, 'message', sandbox_result))}"]
-        )
+        # F1: preserve the full traceback (when the sandbox result carries one) so
+        # the next attempt's prompt shows line numbers and the failing expression.
+        return CandidateFailed(errors=[_format_sandbox_error(sandbox_result)])
 
     # Wrap + validate
     wrapped = dict(sandbox_result)
@@ -186,7 +201,7 @@ async def _try_repair(ctx: RepairContext, model: str) -> RepairOutcome:
     )
 
 
-def _make_llm(model: str):
+def _make_llm(model: str, temperature: float = 0.1):
     try:
         from langchain_openai import ChatOpenAI
     except ImportError:
@@ -202,9 +217,23 @@ def _make_llm(model: str):
         api_key=cfg.deepseek_key,
         base_url=cfg.deepseek_base_url,
         model=model,
-        temperature=0.1,
+        temperature=temperature,
         model_kwargs={"response_format": {"type": "json_object"}},
     )
+
+
+def _format_sandbox_error(sandbox_result: Any) -> str:
+    """F1: emit the type + full traceback when available, so the next attempt's
+    prompt shows line numbers and the specific failing expression instead of a
+    single opaque message."""
+    type_name = type(sandbox_result).__name__
+    message = getattr(sandbox_result, "message", None) or getattr(
+        sandbox_result, "reason", str(sandbox_result)
+    )
+    traceback_text = getattr(sandbox_result, "traceback", None)
+    if traceback_text:
+        return f"sandbox rejected: {type_name}: {message}\nTraceback:\n{traceback_text}"
+    return f"sandbox rejected: {type_name}: {message}"
 
 
 async def _ask_no_product(llm, ctx: RepairContext) -> Optional[dict[str, Any]]:

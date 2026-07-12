@@ -1,6 +1,6 @@
 """Verification script for M12 -- End-to-end live scraping with real BrightData + DeepSeek.
 
-Reads URLs from src/scraping/data/initial_url.xlsx, runs the full Router.scrape()
+Reads URLs from src/scraping/data/tesco_test.xlsx.xlsx, runs the full Router.scrape()
 pipeline for each, and logs detailed per-URL scraping status including which
 mechanisms triggered.
 
@@ -61,11 +61,17 @@ _cfg_mod._config = None
 _cfg = _cfg_mod.get_config()
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
-INPUT_XLSX = _DATA_DIR / "initial_url.xlsx"
+INPUT_XLSX = _DATA_DIR / "tesco_test.xlsx.xlsx"
 OUTPUT_LOG = Path(__file__).parent / "verify_m12_output.log"
 
 HAS_BRIGHT_DATA = bool(_cfg.bright_data_key)
 HAS_LLM = bool(_cfg.deepseek_key)
+
+# Max in-flight URLs. BrightData Web Unlocker + DCA tolerate parallel calls;
+# the bottleneck is per-URL latency (~60-100s each), so 4-way parallelism
+# roughly quarters wall-clock time. Bump higher if you need faster and
+# BrightData is happy.
+CONCURRENCY = 4
 
 # ---- Trackers (matching verify_mN pattern) ----
 PASSED: list[str] = []
@@ -112,6 +118,9 @@ class TeeWriter:
     def write(self, s: str) -> None:
         self._stdout.write(s)
         self._file.write(s)
+        # Flush both streams so a `Get-Content -Wait` tail sees progress live
+        self._stdout.flush()
+        self._file.flush()
 
     def flush(self) -> None:
         self._stdout.flush()
@@ -606,7 +615,7 @@ def print_summary(reports: list[PerURLReport], total_latency_ms: int) -> None:
 
 
 def load_urls(xlsx_path: Path) -> list[dict[str, str]]:
-    """Read initial_url.xlsx. Expects columns: label, url, host."""
+    """Read the URL xlsx. Expects columns: label, url, host."""
     import openpyxl
 
     wb = openpyxl.load_workbook(xlsx_path, read_only=True)
@@ -639,7 +648,7 @@ async def run() -> int:
     # -- M12.1: Load URLs --
     section("M12.1 -- Load input URLs")
     urls = load_urls(INPUT_XLSX)
-    check("URLs loaded from initial_url.xlsx", len(urls) > 0, f"loaded {len(urls)} URLs")
+    check(f"URLs loaded from {INPUT_XLSX.name}", len(urls) > 0, f"loaded {len(urls)} URLs")
     if not urls:
         return 1
     _total_urls = len(urls)
@@ -675,25 +684,32 @@ async def run() -> int:
     else:
         check("DEEPSEEK_KEY present", False, "MISSING -- HTML scraper repair will escalate (API scrapers unaffected)")
 
-    # -- M12.3: Run all URLs serially --
-    section(f"M12.3 -- Scrape {len(urls)} URLs (serial)")
+    # -- M12.3: Run all URLs concurrently --
+    concurrency = min(CONCURRENCY, len(urls))
+    section(f"M12.3 -- Scrape {len(urls)} URLs (concurrency={concurrency})")
 
     # Suppress noisy library loggers so captured logs stay clean
     for noisy in ("httpx", "httpcore", "openai", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     overall_start = time.monotonic()
-    reports: list[PerURLReport] = []
+    sem = asyncio.Semaphore(concurrency)
 
-    for i, url_info in enumerate(urls):
-        report = await scrape_one_url(url_info, idx=i + 1, total=len(urls))
+    async def _bounded(url_info: dict[str, str], idx: int) -> PerURLReport:
+        async with sem:
+            return await scrape_one_url(url_info, idx=idx, total=len(urls))
+
+    tasks = [_bounded(u, i + 1) for i, u in enumerate(urls)]
+
+    # Stream reports as they complete (not in input order)
+    reports: list[PerURLReport] = []
+    for coro in asyncio.as_completed(tasks):
+        report = await coro
         reports.append(report)
-        # Stream per-URL report immediately
         print_url_report(report)
 
-        # Brief pause between URLs to avoid hammering BrightData
-        if i < len(urls) - 1:
-            await asyncio.sleep(0.5)
+    # Restore input order for the summary tables
+    reports.sort(key=lambda r: r.idx)
 
     overall_ms = int((time.monotonic() - overall_start) * 1000)
 

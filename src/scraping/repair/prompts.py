@@ -121,6 +121,38 @@ def source_absence_prompt(html: str, site: str, prior_errors: list[list[str]]) -
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+_TIER_STRATEGY: dict[int, str] = {
+    0: (
+        "STRATEGY (Tier 0 — first attempt): Try the SIMPLEST viable approach. Modern "
+        "e-commerce pages almost always embed a JSON-LD `Product` schema in a "
+        "<script type=\"application/ld+json\"> block; parsing that with `json.loads` "
+        "typically yields title, brand, gtin, image_urls, price, currency, and "
+        "availability with minimal DOM traversal. Only fall back to BeautifulSoup "
+        "selectors for fields not present in JSON-LD."
+    ),
+    1: (
+        "STRATEGY (Tier 1 — first retry): The previous attempt failed. Read the "
+        "traceback and error messages CAREFULLY and focus on fixing the SPECIFIC "
+        "issue that broke — do not rewrite the whole parser from scratch. Common "
+        "causes: (a) selector returned None and you called `.text` on it "
+        "(guard with `if node is not None`), (b) price string had a currency prefix "
+        "or thousands separator (strip non-numeric chars before returning), "
+        "(c) the JSON-LD block was structured as `@graph` with multiple entries "
+        "(iterate and pick `@type == 'Product'`)."
+    ),
+    2: (
+        "STRATEGY (Tier 2 — last-ditch): Two prior attempts failed. Consider a "
+        "FUNDAMENTALLY DIFFERENT approach: if earlier attempts used DOM selectors, "
+        "switch to JSON-LD parsing (or vice versa). Look at the actual traceback "
+        "and prior candidates below — what assumption do they share that might be "
+        "wrong? Also: some sites carry TWO price representations (e.g. Tesco "
+        "encodes `offers.price` as the RRP and `offers.priceSpecification.price` "
+        "as the current/discount price). Handle both by mapping the current price "
+        "to `price` and the RRP to `list_price` when both exist."
+    ),
+}
+
+
 def parser_gen_prompt(
     html: str,
     site: str,
@@ -135,23 +167,36 @@ def parser_gen_prompt(
         "  - You may import ONLY: bs4, lxml, re, json (no os, subprocess, urllib, requests, etc.)\n"
         "  - Return a dict; missing optional values should be None (or key omitted)\n"
         "  - Prices as strings like '19.99'; do NOT import Decimal or datetime\n"
+        "  - Handle missing/None DOM nodes defensively (check `if node is not None` before `.text`)\n"
         f"\n{SCHEMA_HINT}\n"
+        "IMPORTANT: The HTML EXCERPT below may be TRUNCATED (large pages are shortened to "
+        "fit the context). JSON-LD script blocks are extracted and shown first because they "
+        "are the most stable machine-readable representation. PREFER JSON-LD-based extraction "
+        "over DOM selectors when the data is available there — it's less likely to be affected "
+        "by truncation, mojibake (some sites emit currency symbols that decode incorrectly), "
+        "or SPA rendering order.\n\n"
         "Return STRICT JSON with a single key 'parser_code' containing the full function source as a string."
     )
     ctx_parts = []
+    strategy = _TIER_STRATEGY.get(tier)
+    if strategy:
+        ctx_parts.append(strategy)
     if prior_errors:
         err_lines = "\n".join(f"  Attempt {i}: {errs}" for i, errs in enumerate(prior_errors))
-        ctx_parts.append(f"PRIOR ATTEMPTS' ERRORS:\n{err_lines}")
+        ctx_parts.append(f"PRIOR ATTEMPTS' ERRORS (read tracebacks carefully):\n{err_lines}")
     if prior_candidates:
+        # F2: show the full prior candidate code (not just first 2000 chars). If total
+        # size becomes a concern in the future we can compress with a middle-truncation
+        # strategy, but for the ladder's 3-attempt budget the payload stays modest.
         cand_lines = "\n\n".join(
-            f"--- Attempt {i} candidate ---\n{c[:2000]}" for i, c in enumerate(prior_candidates)
+            f"--- Attempt {i} candidate ---\n{c}" for i, c in enumerate(prior_candidates)
         )
         ctx_parts.append(f"PRIOR CANDIDATES:\n{cand_lines}")
 
     user_parts = [f"Site: {site}", f"Tier: {tier}"]
     if ctx_parts:
         user_parts.append("\n\n".join(ctx_parts))
-    user_parts.append(f"\nHTML EXCERPT:\n{_excerpt(html)}")
+    user_parts.append(f"\nHTML EXCERPT (may be truncated):\n{_excerpt(html)}")
     user_parts.append("\nRespond with JSON only: {\"parser_code\": \"...\"}")
     return [
         {"role": "system", "content": system},
