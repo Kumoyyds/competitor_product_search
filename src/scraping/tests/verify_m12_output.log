@@ -1,0 +1,345 @@
+verify_m12: End-to-End Live Scraping Verification
+Started:    2026-07-12T17:22:13.935289+00:00
+Log file:   E:\programming\competitor_product_search\src\scraping\tests\verify_m12_output.log
+Temp DB:    C:\Users\12161\AppData\Local\Temp\verify_m12.db
+  Labels: {'normal': 10, 'discount': 7, 'error': 4, 'unavailable': 1}
+  Hosts:  {'tesco.com': 8, 'argos.co.uk': 8, 'amazon.co.uk': 6}
+
+------------------------------------------------------------------------------
+  [01/22] [normal]
+  URL:   https://www.tesco.com/groceries/en-GB/products/276797313
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-12T17:22:14+00:00
+  Latency:        96,984 ms  (97.0s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Dove Men+Care Refreshing 3-in-1 Hair, Face and Body Wash Extra Fresh 400 ml
+    price:         3.75 GBP
+    in_stock:      True
+    image_urls:    1 images
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [02/22] [normal]
+  URL:   https://www.tesco.com/groceries/en-GB/products/312841117
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-12T17:23:52+00:00
+  Latency:        53,797 ms  (53.8s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Sure Men Invisible Ice Fresh 48h Antiperspirant Deodorant 200ml
+    price:         2.25 GBP
+    in_stock:      True
+    image_urls:    1 images
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [03/22] [discount]
+  URL:   https://www.tesco.com/shop/en-GB/products/326405420
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-12T17:24:46+00:00
+  Latency:        2,125 ms  (2.1s)
+  DB path:        invalid_target
+  Outcome:        [X] INVALID TARGET  (InvalidTargetResult)
+  Reason signal:  multi_absence: Missing: title, price, add_to_cart
+  -- Mechanisms Triggered --
+    * invalid-target detection TRIGGERED: multi_absence: Missing: title, price, add_to_cart
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [04/22] [error]
+  URL:   https://www.tesco.com/shop/en-GB/products/325602141
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-12T17:24:49+00:00
+  Latency:        2,032 ms  (2.0s)
+  DB path:        invalid_target
+  Outcome:        [X] INVALID TARGET  (InvalidTargetResult)
+  Reason signal:  multi_absence: Missing: title, price, add_to_cart
+  -- Mechanisms Triggered --
+    * invalid-target detection TRIGGERED: multi_absence: Missing: title, price, add_to_cart
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [05/22] [normal]
+  URL:   https://www.tesco.com/shop/en-GB/products/297568023
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-12T17:24:51+00:00
+  Latency:        79,437 ms  (79.4s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         The F&F Edit Pure Cotton Embroidered Blouse in Cream
+    price:         19.5 GBP
+    in_stock:      True
+    image_urls:    1 images
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [06/22] [normal]
+  URL:   https://www.tesco.com/shop/en-GB/products/303350818
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-12T17:26:11+00:00
+  Latency:        69,250 ms  (69.2s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Magic Rock Saucery Session Ipa 330Ml Can
+    price:         2 GBP
+    in_stock:      False
+    image_urls:    1 images
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [07/22] [error]
+  URL:   https://www.tesco.com/shop/en-GB/products/325296757
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-12T17:27:21+00:00
+  Latency:        13,875 ms  (13.9s)
+  DB path:        invalid_target
+  Outcome:        [X] INVALID TARGET  (InvalidTargetResult)
+  Reason signal:  page_length: Page only 0 chars (min 5000)
+  -- Mechanisms Triggered --
+    * invalid-target detection TRIGGERED: page_length: Page only 0 chars (min 5000)
+  Escalation:     mass_invalid_target
+  Signature:      tesco|invalid_target_surge|
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [08/22] [unavailable]
+  URL:   https://www.tesco.com/shop/en-GB/products/320797857
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-12T17:27:35+00:00
+  Latency:        58,265 ms  (58.3s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Tesco Salted Caramel Churro Flavour Popcorn 100g
+    price:         1.25 GBP
+    in_stock:      False
+    image_urls:    1 images
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+  Escalation:     mass_invalid_target
+  Signature:      tesco|invalid_target_surge|
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [09/22] [normal]
+  URL:   https://www.argos.co.uk/product/8189978
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1)
+  Started:        2026-07-12T17:28:34+00:00
+  Latency:        97,156 ms  (97.2s)
+  Outcome:        [FAIL] ESCALATED  (ScrapeFailed)
+  Failed stage:   scraper_fallback_exhausted
+  Failed scraper: all_exhausted
+  Errors (1):
+    ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken,
+      url=https://www.argos.co.uk/product/8189978)
+  -- Mechanisms Triggered --
+    * terminal failure: stage=scraper_fallback_exhausted
+    *   escalation: parser_broken (argos|repair_budget_exhausted|)
+    *   last error: ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken, url=https://www.argos.co.uk/product/8189978)
+    * no scrape_runs record (failure before DB write)
+  Escalation:     parser_broken
+  Signature:      argos|repair_budget_exhausted|
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [10/22] [discount]
+  URL:   https://www.argos.co.uk/product/4490582
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1)
+  Started:        2026-07-12T17:30:12+00:00
+  Latency:        78,545 ms  (78.5s)
+  Outcome:        [FAIL] ESCALATED  (ScrapeFailed)
+  Failed stage:   scraper_fallback_exhausted
+  Failed scraper: all_exhausted
+  Errors (1):
+    ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken,
+      url=https://www.argos.co.uk/product/4490582)
+  -- Mechanisms Triggered --
+    * terminal failure: stage=scraper_fallback_exhausted
+    *   escalation: parser_broken (argos|repair_budget_exhausted|)
+    *   last error: ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken, url=https://www.argos.co.uk/product/4490582)
+    * no scrape_runs record (failure before DB write)
+  Escalation:     parser_broken
+  Signature:      argos|repair_budget_exhausted|
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [11/22] [normal]
+  URL:   https://www.argos.co.uk/product/8747437
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1)
+  Started:        2026-07-12T17:31:31+00:00
+  Latency:        77,765 ms  (77.8s)
+  Outcome:        [FAIL] ESCALATED  (ScrapeFailed)
+  Failed stage:   scraper_fallback_exhausted
+  Failed scraper: all_exhausted
+  Errors (1):
+    ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken,
+      url=https://www.argos.co.uk/product/8747437)
+  -- Mechanisms Triggered --
+    * terminal failure: stage=scraper_fallback_exhausted
+    *   escalation: parser_broken (argos|repair_budget_exhausted|)
+    *   last error: ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken, url=https://www.argos.co.uk/product/8747437)
+    * no scrape_runs record (failure before DB write)
+  Escalation:     parser_broken
+  Signature:      argos|repair_budget_exhausted|
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [12/22] [normal]
+  URL:   https://www.argos.co.uk/product/7726844
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1)
+  Started:        2026-07-12T17:32:49+00:00
+  Latency:        87,202 ms  (87.2s)
+  Outcome:        [FAIL] ESCALATED  (ScrapeFailed)
+  Failed stage:   scraper_fallback_exhausted
+  Failed scraper: all_exhausted
+  Errors (1):
+    ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken,
+      url=https://www.argos.co.uk/product/7726844)
+  -- Mechanisms Triggered --
+    * terminal failure: stage=scraper_fallback_exhausted
+    *   escalation: parser_broken (argos|repair_budget_exhausted|)
+    *   last error: ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken, url=https://www.argos.co.uk/product/7726844)
+    * no scrape_runs record (failure before DB write)
+  Escalation:     parser_broken
+  Signature:      argos|repair_budget_exhausted|
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [13/22] [discount]
+  URL:   https://www.argos.co.uk/product/3284476
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1)
+  Started:        2026-07-12T17:34:17+00:00
+  Latency:        90,079 ms  (90.1s)
+  Outcome:        [FAIL] ESCALATED  (ScrapeFailed)
+  Failed stage:   scraper_fallback_exhausted
+  Failed scraper: all_exhausted
+  Errors (1):
+    ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken,
+      url=https://www.argos.co.uk/product/3284476)
+  -- Mechanisms Triggered --
+    * terminal failure: stage=scraper_fallback_exhausted
+    *   escalation: parser_broken (argos|repair_budget_exhausted|)
+    *   last error: ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken, url=https://www.argos.co.uk/product/3284476)
+    * no scrape_runs record (failure before DB write)
+  Escalation:     parser_broken
+  Signature:      argos|repair_budget_exhausted|
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [14/22] [normal]
+  URL:   https://www.argos.co.uk/product/8343893
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1)
+  Started:        2026-07-12T17:35:47+00:00
+  Latency:        79,922 ms  (79.9s)
+  Outcome:        [FAIL] ESCALATED  (ScrapeFailed)
+  Failed stage:   scraper_fallback_exhausted
+  Failed scraper: all_exhausted
+  Errors (1):
+    ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken,
+      url=https://www.argos.co.uk/product/8343893)
+  -- Mechanisms Triggered --
+    * terminal failure: stage=scraper_fallback_exhausted
+    *   escalation: parser_broken (argos|repair_budget_exhausted|)
+    *   last error: ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken, url=https://www.argos.co.uk/product/8343893)
+    * no scrape_runs record (failure before DB write)
+  Escalation:     parser_broken
+  Signature:      argos|repair_budget_exhausted|
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [15/22] [error]
+  URL:   https://www.argos.co.uk/product/7123351
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1)
+  Started:        2026-07-12T17:37:08+00:00
+  Latency:        38,812 ms  (38.8s)
+  DB path:        invalid_target
+  Outcome:        [X] INVALID TARGET  (InvalidTargetResult)
+  Reason signal:  agent_no_product: Oops, that didn't go to plan
+  -- Mechanisms Triggered --
+    * invalid-target detection TRIGGERED: agent_no_product: Oops, that didn't go to plan
+  Escalation:     parser_broken
+  Signature:      argos|repair_budget_exhausted|
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [16/22] [error]
+  URL:   https://www.argos.co.uk/browse/garden-and-diy/plant-and-lawn-care/grass-seed-and-feed/c:1040915
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1)
+  Started:        2026-07-12T17:37:47+00:00
+  Latency:        24,937 ms  (24.9s)
+  DB path:        invalid_target
+  Outcome:        [X] INVALID TARGET  (InvalidTargetResult)
+  Reason signal:  agent_no_product: Sorry, we couldn't find any products matching your filters
+  -- Mechanisms Triggered --
+    * invalid-target detection TRIGGERED: agent_no_product: Sorry, we couldn't find any products matching your filters
+  Escalation:     parser_broken
+  Signature:      argos|repair_budget_exhausted|
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
