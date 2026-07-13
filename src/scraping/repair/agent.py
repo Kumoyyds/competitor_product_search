@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # (no_product / source_absence) always run at 0.1 for stability.
 # Length matches config.repair_budget (4). Attempts 2 and 3 use the pro model;
 # attempt 3 additionally enables reasoning/thinking mode (see _make_llm).
-_PARSER_GEN_TEMPERATURE_LADDER: list[float] = [0.1, 0.4, 0.7, 0.9]
+_PARSER_GEN_TEMPERATURE_LADDER: list[float] = [0.1, 0.2, 0.2, 0.3]
 
 
 @dataclass

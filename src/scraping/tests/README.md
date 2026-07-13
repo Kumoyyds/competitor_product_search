@@ -67,7 +67,7 @@ Safe execution environment for LLM-generated parser code:
 
 ### M8 — Repair Agent + JSON Healer
 LLM-driven self-repair when parsers fail or API data is malformed. Uses **real DeepSeek API**:
-- **Repair ladder** (up to 3 attempts, shared budget):
+- **Repair ladder** (up to 4 attempts, shared budget):
   - **Turn A — no_product judgment**: LLM decides if HTML is a real product page. If not → backfill phrase to `invalid_target_phrases`, return `InvalidTargetResult`. Does NOT consume budget.
   - **Turn B — source_absence** (attempt 2 only): distinguishes "hard-to-parse product page" from "no data on page" (source_absent → terminal, skip attempt 3).
   - **Turn C — parser generation**: LLM produces `def parse(html, url) -> dict` → sandbox execute → gates → `promote_candidate()` → active parser inserted.

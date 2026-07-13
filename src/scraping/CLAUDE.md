@@ -15,7 +15,7 @@ Full spec: `scraping_module_spec_v1_2.md` (v1.2, 510 lines). Key decisions are n
 ### Data Flow
 
 `Router.scrape(url)` → host→site→ordered scraper list (two-hop) → try each scraper:
-- **HTMLScraper route** (Tesco, Argos): BrightData Web Unlocker → HTML → invalid-target pre-detection → ordered parser list (sandbox-executed) → two gates → success → ProductData. On failure: **Agent repair ladder** (3 attempts, flash→flash→pro) → candidate parser → sandbox + golden test → promote if passes.
+- **HTMLScraper route** (Tesco, Argos): BrightData Web Unlocker → HTML → invalid-target pre-detection → ordered parser list (sandbox-executed) → two gates → success → ProductData. On failure: **Agent repair ladder** (4 attempts, v4-flash ×2 → v4-pro ×2; last attempt enables thinking mode) → candidate parser → sandbox + golden test → promote if passes.
 - **DirectAPIScraper route** (Amazon, Tesco DCA backup): BrightData Datasets/DCA API → JSON → field mapping → two gates. On gate failure: **restricted JSON self-healing** (D25 red line — remaps existing keys only, never fabricates).
 
 On terminal failure of a scraper: Router tries the next in the list; when exhausted → `EscalationStore.upsert(signature, reason, snapshot)` with reason ∈ `{parser_broken, api_malformed, infra_failure, mass_invalid_target}`.
