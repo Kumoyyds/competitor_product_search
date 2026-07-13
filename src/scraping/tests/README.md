@@ -106,16 +106,25 @@ Bootstrap a new site with zero manual parser writing. Uses **real DeepSeek API**
 
 Runs the full scraping pipeline against a per-site URL batch (`src/scraping/data/tesco_test.xlsx.xlsx` or `argos_test.xlsx.xlsx`, both 3-column `label / url / host`) using real BrightData and real DeepSeek. No mocking — this exercises the complete live pipeline end-to-end.
 
+**Latest results** (July 2026):
+| Batch | URLs | SUCCESS | Invalid Target | Infra Error | Escalated | Check |
+|-------|------|---------|---------------|-------------|-----------|-------|
+| `tesco_test.xlsx.xlsx` | 6 | 5 (83%) | 1 | 0 | 0 | ✓ 6/6 pass |
+| `argos_test.xlsx.xlsx` | 8 | 6 (75%) | 2 | 0 | 0 | ✓ 6/6 pass |
+
+The last-ditch attempt (attempt 3, `deepseek-v4-pro` with thinking mode) rescued URL 2 (McGregor lawnmower, 207s) — in prior runs without it, this URL had consistently escalated.
+
 Key aspects:
 - **Concurrent execution** — `asyncio.Semaphore(4)` runs up to 4 URLs in parallel; results stream in as they complete (via `asyncio.as_completed`) and the summary is sorted back to input order.
+- **4-attempt repair ladder** — model sequence `[deepseek-v4-flash ×2, deepseek-v4-pro ×2]`; last attempt enables pro thinking mode (`reasoning_effort=high` + `extra_body.thinking`).
+- **Gate 2 strengthened**: rejects in-stock items with price ≤ 0 (LLM hallucinated zero), and OOS items with no product signals (image_urls empty + no price + no list_price — likely an error page, not a real product).
+- **Upstream error retry**: BD responses < 1000 chars OR containing `"502 Bad Gateway"` / `"500 Internal Server Error"` etc. (1000-5000 byte gap) trigger extraction retry with 2s pause.
 - **Temp DB** — uses a temporary SQLite database (`%TEMP%\verify_m12.db`) to avoid polluting production `scraping.db`. Cleaned up on process exit.
-- **`.env` key aliasing** — accepts `BRIGHT_UNLOCKER_KEY` in `.env` and injects as `BRIGHT_DATA_KEY` before config load (so `config.py`'s Pydantic BaseSettings picks it up).
-- **Per-URL detailed report** — each URL gets a formatted block showing: input label, resolved site, scraper chain, outcome, all extracted ProductData fields when populated (title / price / list_price / brand / gtin / variant / unit_price / unit / availability_raw / image_urls / parser_version / source_type), latency, and mechanisms triggered.
-- **Mechanism inference** — analyzes the `scrape_runs` DB path (`fast`, `agent_repaired`, `fallback_scraper`, `invalid_target`, `escalated`) to report exactly what happened: fast path, agent repair (Turn A/B/C), scraper fallback, INFRA ALERT, escalations.
-- **TeeWriter with per-write flush** — output goes to stdout + `verify_m12_output.log` (or `verify_m12_argo_output.log`) simultaneously, flushed on every write so `Get-Content -Wait` / IDE auto-refresh shows live progress.
+- **`.env` key aliasing** — accepts `BRIGHT_UNLOCKER_KEY` in `.env` and injects as `BRIGHT_DATA_KEY` before config load.
+- **Per-URL detailed report** — each URL gets a formatted block showing: input label, resolved site, scraper chain, outcome, all extracted ProductData fields (title / price / list_price / brand / gtin / variant / unit_price / unit / availability_raw / image_urls / parser_version / source_type), latency, and mechanisms triggered.
+- **Mechanism inference** — analyzes the `scrape_runs` DB path (`fast`, `agent_repaired`, `invalid_target`, `escalated`) to report exactly what happened.
+- **TeeWriter with per-write flush** — output goes to stdout + log file simultaneously, flushed on every write for live progress.
 - **Summary report** — breakdowns by label, site, DB path; mechanism tally; escalation listing; timing stats (avg, median, p95, min, max).
-- **Label-based checks** — "normal" URLs should succeed, "error" URLs should be detected as invalid_target, "discount" URLs should succeed, "unavailable" should be handled gracefully.
-- **Prerequisites**: `BRIGHT_DATA_KEY` (or `BRIGHT_UNLOCKER_KEY`) mandatory (test costs real money); `DEEPSEEK_KEY` optional (HTML scraper repair escalates without it).
 
 ---
 
@@ -141,7 +150,7 @@ Key aspects:
 | `verify_m11_output.log` | Latest run — 15 checks, 0 failed | — |
 | `verify_m12.py` | M12 — End-to-end live scraping (per-site batch from `tesco_test.xlsx.xlsx` / `argos_test.xlsx.xlsx`, concurrent, real BrightData + DeepSeek) | **real BrightData + DeepSeek** |
 | `verify_m12_output.log` | Latest tesco run — 6 checks, 0 failed | — |
-| `verify_m12_argo_output.log` | Latest argos run — see file | — |
+| `verify_m12_argo_output.log` | Latest argos run — 6/8 SUCCESS, 0 escalated | — |
 
 **Total: 172 checks passed across all milestones (M1–M11). M12 adds live end-to-end validation (label-based checks vary per input batch).**
 

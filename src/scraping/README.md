@@ -2,7 +2,7 @@
 
 Extracts structured product data from marketplace pages. Given a `(url, site)` pair, it returns a validated `ProductData` object with title, price, stock, images, brand, etc. — or explains cleanly why it couldn't.
 
-> **Status**: Phase 0 complete. M1–M12 implemented. M1–M11 offline verification: 172 checks, 0 failures. M12 adds end-to-end live-scraping validation (real BrightData + DeepSeek). See [tests/](tests/).
+> **Status**: Phase 0 complete. M1–M12 implemented. M1–M11 offline verification: 172 checks, 0 failures. M12 end-to-end live-scraping validated on Tesco (6/6 pass) and Argos (6/8 SUCCESS, 0 escalated). See [tests/](tests/).
 
 ## What it does
 

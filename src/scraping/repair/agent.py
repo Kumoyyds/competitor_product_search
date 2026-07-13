@@ -41,7 +41,9 @@ logger = logging.getLogger(__name__)
 # F5: Parser-generation temperature ramp. Attempt 0 stays low (deterministic
 # best-guess); later attempts explore alternative strategies. Judgment prompts
 # (no_product / source_absence) always run at 0.1 for stability.
-_PARSER_GEN_TEMPERATURE_LADDER: list[float] = [0.1, 0.4, 0.8]
+# Length matches config.repair_budget (4). Attempts 2 and 3 use the pro model;
+# attempt 3 additionally enables reasoning/thinking mode (see _make_llm).
+_PARSER_GEN_TEMPERATURE_LADDER: list[float] = [0.1, 0.4, 0.7, 0.9]
 
 
 @dataclass
@@ -94,7 +96,12 @@ async def run_repair_ladder(
     for attempt in range(cfg.repair_budget):
         ctx.attempt = attempt
         model = cfg.repair_model_ladder[min(attempt, len(cfg.repair_model_ladder) - 1)]
-        outcome = await _try_repair(ctx, model)
+        # The final attempt enables the pro model's reasoning/thinking mode
+        # so the LLM can chain-of-thought through cases prior attempts couldn't
+        # solve. Only meaningful when the last-attempt model actually supports
+        # thinking (deepseek-v4-pro etc.).
+        is_last_attempt = attempt == cfg.repair_budget - 1
+        outcome = await _try_repair(ctx, model, is_last_attempt=is_last_attempt)
 
         if isinstance(outcome, NoProductVerdict):
             _backfill_phrase(scraper.site, outcome.phrase)
@@ -129,9 +136,13 @@ async def run_repair_ladder(
     )
 
 
-async def _try_repair(ctx: RepairContext, model: str) -> RepairOutcome:
+async def _try_repair(
+    ctx: RepairContext, model: str, is_last_attempt: bool = False
+) -> RepairOutcome:
     # F5: judgments (no_product / source_absence) stay deterministic;
     # parser_gen uses a temperature ramp to force genuine exploration on retries.
+    # Judgment prompts never enable thinking — they answer yes/no gates that
+    # don't benefit from chain-of-thought.
     judgment_llm = _make_llm(model, temperature=0.1)
     if judgment_llm is None:
         return CandidateFailed(errors=["LLM not configured (DEEPSEEK_KEY missing)"])
@@ -139,7 +150,12 @@ async def _try_repair(ctx: RepairContext, model: str) -> RepairOutcome:
     parser_gen_temp = _PARSER_GEN_TEMPERATURE_LADDER[
         min(ctx.attempt, len(_PARSER_GEN_TEMPERATURE_LADDER) - 1)
     ]
-    parser_gen_llm = _make_llm(model, temperature=parser_gen_temp)
+    # Enable reasoning/thinking mode only on the last repair-ladder attempt,
+    # and only for the parser_gen call (Turn C) — that's where deep reasoning
+    # actually helps.
+    parser_gen_llm = _make_llm(
+        model, temperature=parser_gen_temp, enable_thinking=is_last_attempt
+    )
     if parser_gen_llm is None:
         return CandidateFailed(errors=["LLM not configured (DEEPSEEK_KEY missing)"])
 
@@ -201,7 +217,17 @@ async def _try_repair(ctx: RepairContext, model: str) -> RepairOutcome:
     )
 
 
-def _make_llm(model: str, temperature: float = 0.1):
+def _make_llm(model: str, temperature: float = 0.1, enable_thinking: bool = False):
+    """Build a DeepSeek LangChain client.
+
+    Args:
+      model: model id (e.g. "deepseek-chat" or "deepseek-v4-pro")
+      temperature: sampling temperature (0.1 for judgments, ramp for parser_gen)
+      enable_thinking: when True, enables DeepSeek's reasoning/thinking mode via
+        `reasoning_effort="high"` and `extra_body={"thinking": {"type": "enabled"}}`.
+        Only used on the last repair-ladder attempt so the pro model can reason
+        through hard cases (spec-driven parser generation on gnarly pages).
+    """
     try:
         from langchain_openai import ChatOpenAI
     except ImportError:
@@ -213,12 +239,17 @@ def _make_llm(model: str, temperature: float = 0.1):
         logger.warning("DEEPSEEK_KEY not set — repair ladder cannot invoke LLM")
         return None
 
+    model_kwargs: dict[str, Any] = {"response_format": {"type": "json_object"}}
+    if enable_thinking:
+        model_kwargs["reasoning_effort"] = "high"
+        model_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+
     return ChatOpenAI(
         api_key=cfg.deepseek_key,
         base_url=cfg.deepseek_base_url,
         model=model,
         temperature=temperature,
-        model_kwargs={"response_format": {"type": "json_object"}},
+        model_kwargs=model_kwargs,
     )
 
 

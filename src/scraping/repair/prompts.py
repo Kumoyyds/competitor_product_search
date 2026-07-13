@@ -35,6 +35,22 @@ CRITICAL:
   - do NOT return the tracing fields (url, website, scraped_at, source_type, parser_version) —
     the caller adds them
   - use bs4 (BeautifulSoup) and re; import only from: bs4, lxml, re, json
+
+NEVER HALLUCINATE DEFAULTS (this catches real bugs, be strict):
+  - If you cannot find a real product title, DO NOT default to the site
+    name (e.g. "Argos", "Tesco"), `og:site_name`, or any global fallback.
+    Return an empty dict `{}` from parse() to signal "not a product page".
+  - If you cannot find a numeric price for an in-stock item, DO NOT return
+    "0", "0.00", 0.0, or an empty string. Return None (or omit the key).
+    Gate 2 rejects `in_stock=True + price <= 0` as a hallucinated default,
+    so admitting the absence is strictly better than faking a zero.
+  - Return `{}` ONLY when the URL path clearly indicates a non-product page —
+    it contains `/browse/`, `/category/`, `/search`, or a category-code
+    segment like `/c:<digits>`. For single-product URLs (e.g. `/product/<id>`,
+    `/dp/<asin>`, `/shop/en-GB/products/<id>`), ALWAYS attempt extraction.
+    When a specific field is genuinely missing on a product page, use None
+    or omit the key — never return `{}` just because some fields are hard
+    to find.
 """
 
 _HTML_EXCERPT_LIMIT = 24000
@@ -141,7 +157,8 @@ _TIER_STRATEGY: dict[int, str] = {
         "(iterate and pick `@type == 'Product'`)."
     ),
     2: (
-        "STRATEGY (Tier 2 — last-ditch): Two prior attempts failed. Consider a "
+        "STRATEGY (Tier 2 — pro-model, different approach): Two prior attempts "
+        "failed. You are now running on the more capable pro model. Consider a "
         "FUNDAMENTALLY DIFFERENT approach: if earlier attempts used DOM selectors, "
         "switch to JSON-LD parsing (or vice versa). Look at the actual traceback "
         "and prior candidates below — what assumption do they share that might be "
@@ -149,6 +166,24 @@ _TIER_STRATEGY: dict[int, str] = {
         "encodes `offers.price` as the RRP and `offers.priceSpecification.price` "
         "as the current/discount price). Handle both by mapping the current price "
         "to `price` and the RRP to `list_price` when both exist."
+    ),
+    3: (
+        "STRATEGY (Tier 3 — LAST attempt with reasoning mode enabled): Three "
+        "prior attempts failed. You have the reasoning/thinking budget of the "
+        "pro model — USE IT. Slow down and think step by step: "
+        "(1) inspect ALL prior candidates and their tracebacks; identify what "
+        "consistent assumption made them fail. "
+        "(2) inspect the HTML excerpt structure closely — are the fields nested "
+        "in a way the earlier selectors kept missing? Is JSON-LD wrapped in "
+        "`@graph`? Are there multiple `<script type=\"application/ld+json\">` "
+        "blocks with different `@type` values (Product vs BreadcrumbList vs "
+        "Corporation)? Iterate them and pick the Product one. "
+        "(3) if the HTML is genuinely a product page but everything is missing "
+        "except the title, DO NOT return `{}` — return what fields you CAN find, "
+        "leaving optional fields as None. Gate 2 will accept out-of-stock "
+        "products with images or list_price. "
+        "(4) if this is genuinely NOT a product page (error, category, search), "
+        "return `{}` explicitly."
     ),
 }
 

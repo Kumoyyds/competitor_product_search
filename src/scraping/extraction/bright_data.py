@@ -11,8 +11,21 @@ from ..exceptions import BrightDataInfraError
 
 logger = logging.getLogger(__name__)
 
-_INFRA_STATUS_CODES = {407, 429, 503}
+_INFRA_STATUS_CODES = {407, 429, 500, 502, 503, 504}
 _BD_API_BASE = "https://api.brightdata.com"
+
+# Body content markers indicating an upstream server error page (nginx, CDN,
+# Cloudflare, etc.) — appear only in gateway/error HTML, never in real product
+# pages. Used to catch the "1000-5000 byte upstream error" gap where the body
+# is too large for _MIN_HTML_BODY_LENGTH to fire but too small for detect_invalid_page
+# to legitimately classify.
+_UPSTREAM_ERROR_MARKERS = (
+    "500 Internal Server Error",
+    "502 Bad Gateway",
+    "503 Service Unavailable",
+    "504 Gateway Timeout",
+    "Gateway Time-out",  # nginx variant
+)
 
 # Bodies below this length on an HTTP 200 are treated as infra failures
 # (proxy pool cycle, JS challenge stub, or upstream anti-bot serving a blank
@@ -80,6 +93,21 @@ def _check_infra_error(
             f"(min {_MIN_HTML_BODY_LENGTH})",
             status_code=status_code,
         )
+    # Upstream server error content: nginx/CDN/Cloudflare 5xx error pages that
+    # come in between _MIN_HTML_BODY_LENGTH (1000) and detect_invalid_page's
+    # own 5000-char threshold slip through both — the body is too long for the
+    # empty-body check, too short to be a real product page, and if we hand it
+    # to detection it gets labelled invalid_target (terminal, no retry). Catch
+    # them here by their well-known status-line text so with_extraction_retry
+    # pauses 2s and tries again.
+    if expect_html and status_code == 200 and len(body) < 5000:
+        for marker in _UPSTREAM_ERROR_MARKERS:
+            if marker in body:
+                raise BrightDataInfraError(
+                    f"Upstream server error in response body: {marker!r} "
+                    f"(body {len(body)} chars)",
+                    status_code=status_code,
+                )
 
 
 class BrightDataUnlocker:

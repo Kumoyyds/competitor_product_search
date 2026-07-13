@@ -1,6 +1,6 @@
 # Scraping Module
 
-**Status**: M1–M12 complete. Full Phase 0 lifecycle: extraction, invalid-target detection, ordered parser list, sandbox, Agent repair (DeepSeek), golden set + promote/prune, scraper-level fallback + escalation, cold-start CLI, and end-to-end live scraping verification. All M1–M11 offline verifications pass (172 checks) — see `src/scraping/tests/`.
+**Status**: M1–M12 complete. Full Phase 0 lifecycle. M1–M11: 172 offline checks pass. M12: end-to-end live-scraping verification (6/8 SUCCESS, 0 escalated on Argos; 6/6 pass on Tesco). See `src/scraping/tests/`.
 
 ## Responsibility
 
@@ -35,19 +35,24 @@ BaseScraper (ABC)
 ### Two Gates (Public Checkpoint)
 
 - Gate 1: Pydantic type/structure validation (`price` optional at this layer)
-- Gate 2: `feasible_check` cross-field semantics (`in_stock=True + price=None` → fault)
+- Gate 2: `feasible_check` cross-field semantics:
+  - `in_stock=True + price=None` → fault
+  - `in_stock=True + price<=0` → fault (hallucinated zero from LLM default)
+  - `in_stock=False + no_images + no_price + no_list_price` → fault (likely an error/stub page, not a real out-of-stock product)
 
 ### Repair Ladder (§5.5)
 
-Each attempt (up to 3, shared budget):
+Each attempt (up to 4, shared budget). Model ladder: `[deepseek-v4-flash, deepseek-v4-flash, deepseek-v4-pro, deepseek-v4-pro]`:
 1. **Turn A — no_product judgment**: LLM decides if HTML is a real product page. If not, backfill phrase to `invalid_target_phrases` and return `InvalidTargetResult`. Does NOT consume budget. **Runs only on attempt 0** (asking the same question again on retries wastes LLM calls).
 2. **Turn B — source_absence** (attempt 2 only): distinguishes "hard-to-parse product page" (solvable) vs "no data on page" (source_absent → terminal, skip attempt 3).
 3. **Turn C — parser generation**: LLM produces `def parse(html, url) -> dict` → sandbox → gates → `promote_candidate()` (golden test) → active parser row inserted.
+4. **Attempt 3 (last)**: `deepseek-v4-pro` with thinking mode enabled (`reasoning_effort="high"`, `extra_body: {thinking: {type: enabled}}`). The LLM chains-of-thought through earlier failures; Tier 3 strategy prompt guides it to inspect JSON-LD `@graph`, dual-price patterns, and missing-field reasoning.
 
 **Convergence-quality signals fed into the ladder** (added after M12 findings):
 - **Full sandbox tracebacks** propagated into next attempt's prompt (was: only exception message — LLM had no line numbers to fix).
 - **Full prior candidate code** included in next attempt (was: truncated at 2000 chars).
-- **Temperature ramp** for parser generation: `[0.1, 0.4, 0.8]` per attempt — attempt 0 stays deterministic; retries genuinely explore alternatives. Judgment prompts (Turn A/B) always stay at 0.1.
+- **Temperature ramp** for parser generation: `[0.1, 0.4, 0.7, 0.9]` per attempt — attempt 0 stays deterministic; retries genuinely explore alternatives. Judgment prompts (Turn A/B) always stay at 0.1.
+- **Thinking mode** (pro model): only enabled on the last (`repair_budget-1`) attempt, and only for Turn C. Turn A/B judgments are cheap yes/no gates — reasoning doesn't help them.
 - **Tier-specific strategy hints** in the prompt: attempt 0 = "prefer JSON-LD Product schema", attempt 1 = "fix the specific error, don't rewrite", attempt 2 = "try a fundamentally different approach; also handle Tesco's dual-price `offers.priceSpecification` case".
 - **HTML truncation disclosure**: parser_gen prompt explicitly warns that the excerpt may be truncated and pushes the LLM toward JSON-LD-first extraction (more stable, survives truncation).
 
@@ -56,6 +61,15 @@ Each attempt (up to 3, shared budget):
 `extraction/bright_data.py:_check_infra_error(status_code, body, headers, expect_html)`:
 - **Header-authoritative**: reads `x-brd-error-code` (values include `min_size`, `reject_block`, `networkidle_event_timeout`, `bucket_rate_limit`) — BD's own signal that the fetch failed.
 - **Body-length fallback** (only when `expect_html=True`): body < 1000 chars on an HTTP 200 → treated as infra flake (empty/stub response).
+- **Soft-tolerance**: when Web Unlocker returned an error header BUT the body still has substantial HTML (≥ 1000 chars), the response flows through to `detect_invalid_page` (and Turn A as ultimate safety net) instead of failing hard. Logged at WARN. Applies only to `expect_html=True`; Datasets/DCA trigger endpoints (small JSON responses) always fail fast on any error header.
+
+### BrightData extraction hardening (added after M12 findings)
+
+`extraction/bright_data.py:_check_infra_error(status_code, body, headers, expect_html)`:
+- **Infra status codes**: `{407, 429, 500, 502, 503, 504}` — all server-side transient errors; all trigger the retry + pause mechanism.
+- **Header-authoritative**: reads `x-brd-error-code` (values include `min_size`, `reject_block`, `networkidle_event_timeout`, `bucket_rate_limit`) — BD's own signal that the fetch failed.
+- **Body-length fallback** (only when `expect_html=True`): body < 1000 chars on an HTTP 200 → treated as infra flake.
+- **Upstream error content markers**: when `expect_html=True`, status is 200, and body is under 5000 chars, check for well-known upstream error status-line text (`502 Bad Gateway`, `503 Service Unavailable`, `500 Internal Server Error`, `504 Gateway Timeout`, nginx `Gateway Time-out`). If found → raise — these are transient upstream failures that BD retried as transparent proxies; our extraction retry will pause and re-request.
 - **Soft-tolerance**: when Web Unlocker returned an error header BUT the body still has substantial HTML (≥ 1000 chars), the response flows through to `detect_invalid_page` (and Turn A as ultimate safety net) instead of failing hard. Logged at WARN. Applies only to `expect_html=True`; Datasets/DCA trigger endpoints (small JSON responses) always fail fast on any error header.
 
 ### Scraper independence (added after M12 findings)
@@ -109,6 +123,7 @@ src/scraping/
 | M9 | Golden set + promote/prune | ✔ verify_m9.py |
 | M10 | Scraper-level fallback + escalation writing | ✔ verify_m10.py |
 | M11 | Cold start CLI (real DeepSeek) | ✔ verify_m11.py |
+| M12 | End-to-end live scraping (real BrightData + DeepSeek, 4-way concurrent, 4-attempt ladder with v4-pro thinking mode) | ✔ verify_m12.py |
 | M12 | End-to-end live scraping (real BrightData + DeepSeek, concurrent) | ✔ verify_m12.py |
 
 ## Public API
@@ -132,7 +147,7 @@ Interactive: fetches all URLs → LLM generates first parser → user confirms e
 
 - `BRIGHT_DATA_KEY` / `DEEPSEEK_KEY` — API keys (loaded from `.env`)
 - `SCRAPING_DB_PATH` — SQLite path (default: `scraping.db`)
-- `repair_budget = 3`, `repair_model_ladder = [deepseek-chat, deepseek-chat, deepseek-reasoner]`
+- `repair_budget = 4`, `repair_model_ladder = [deepseek-v4-flash, deepseek-v4-flash, deepseek-v4-pro, deepseek-v4-pro]`
 - `json_heal_budget = 1`
 - `sandbox_timeout = 10s`, `sandbox_import_whitelist = [bs4, lxml, re, json]`
 - `prune_sliding_window = 50`, `per_site_parser_limit = 4`
