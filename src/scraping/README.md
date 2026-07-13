@@ -14,13 +14,68 @@ URL in  ─→  Router (host→site→scraper list)
      out ─→  ProductData | InvalidTargetResult | ScrapeFailed
 ```
 
+### Pipeline Flow
+
+> Rendered by Mermaid (GitHub + VS Code native). Click to zoom.
+
+```mermaid
+flowchart TD
+    A["scrape(url)"] --> B{"resolve_site(url)\nhost → site via hosts.yaml"}
+    B --> C{"get_scrapers(site)\nordered by priority"}
+
+    C --> D["Try scraper 1"]
+
+    D --> E{"BrightData\nfetch"}
+    E -->|"HTTP 200 + body ≥ 1000"| F{"detect_invalid_page\n(5 signals)"}
+    E -->|"body < 1000 chars\nor 407/429/500/502/503/504\nor x-brd-error-code + empty\nor upstream error markers"| E1["extraction retry\npause 2s, up to 3 attempts"]
+    E1 -->|"still failing"| D1["ScrapeFailed\n(extraction_infra)"]
+    E1 -->|"recovered"| F
+
+    F -->|"page_length < 5000\nor multi_absence\nor keyword_match\nor HTTP 404/410"| F1["InvalidTargetResult ✓\n(fast — no LLM)"]
+    F -->|"page looks valid"| G["ordered parser list\n(sorted by hit rate)"]
+
+    G -->|"parser hits\ngates pass"| G1["ProductData ✓\n(fast path)"]
+    G -->|"no active parsers\nor all failed"| H
+
+    H["repair ladder\n(max 4 attempts)"] --> H0{"attempt 0\nTurn A: no_product?"}
+    H0 -->|"yes"| H0A["InvalidTargetResult ✓\n+ phrase backfill"]
+    H0 -->|"no (product page)"| H0B["Turn C: gen parser\n(v4-flash, T=0.1)"]
+    H0B -->|"sandbox + gates pass\n+ golden test pass"| H_DONE["ProductData ✓\n(agent_repaired)\n+ promote parser"]
+    H0B -->|"failed"| H1{"attempt 1\nTurn B: source_absence?"}
+
+    H1 -->|"source_absent"| H1A["ScrapeFailed\n(source_absent)"]
+    H1 -->|"solvable"| H1B["Turn C: gen parser\n(v4-flash, T=0.4)"]
+    H1B -->|"success"| H_DONE
+    H1B -->|"failed"| H2["attempt 2\nTurn C: gen parser\n(v4-pro, T=0.7)"]
+    H2 -->|"success"| H_DONE
+    H2 -->|"failed"| H3["attempt 3\nTurn C: gen parser\n(v4-pro + thinking, T=0.9)"]
+    H3 -->|"success"| H_DONE
+    H3 -->|"failed"| H_FAIL["ScrapeFailed\n(parser_broken)"]
+
+    D1 --> R{"more scrapers\nin list?"}
+    H_FAIL --> R
+    H1A --> R
+
+    R -->|"yes"| D2["Try scraper 2\n(e.g. TescoDCA)"]
+    D2 --> E
+
+    R -->|"no"| ESC{"derive reason"}
+    ESC -->|"all failures = *_infra"| ESC_I["Escalation\ninfra_failure"]
+    ESC -->|"last = api_malformed"| ESC_A["Escalation\napi_malformed"]
+    ESC -->|"else"| ESC_P["Escalation\nparser_broken"]
+
+    ESC_I --> FAIL["raise ScrapeFailed"]
+    ESC_A --> FAIL
+    ESC_P --> FAIL
+```
+
 Under the hood:
 
 - **Invalid-target detection** — before parsing, checks JSON-LD, HTTP status, structural absence, page length, and a learned phrase list. Delisted / error / soft-wall pages are caught before wasting a parse.
 - **Ordered parser list** — each site has multiple parsers ranked by real-time hit rate. First one that passes both validation gates wins.
-- **Two gates** — Gate 1 is Pydantic type validation. Gate 2 is `feasible_check` (e.g. `in_stock=True + price=None` is a fault, not a feature).
+- **Two gates** — Gate 1 is Pydantic type validation. Gate 2 is `feasible_check`: rejects `in_stock=True + price=None`, `in_stock=True + price<=0` (hallucinated zero), and `in_stock=False + no images + no price + no list_price` (likely an error page, not a real product).
 - **Self-healing** — when all parsers fail on an HTML page, an LLM (DeepSeek) generates a candidate parser, sandboxes it, tests it against golden samples, and if it passes, promotes it to the parser list. For API routes, the LLM does field remapping only (never fabricates missing data — the D25 red line).
-- **Fallback ladder** — a site can register multiple scrapers (e.g. Tesco = HTML primary + DCA backup). If one fails terminally, the router tries the next. All exhausted → escalation ticket.
+- **Fallback ladder** — a site can register multiple scrapers (e.g. Tesco = HTML primary + DCA backup). If one fails terminally, the router tries the next. All exhausted → escalation ticket with reason `{parser_broken, api_malformed, infra_failure, mass_invalid_target}`.
 - **Golden set** — every successful scrape auto-seeds a golden sample per page type (`standard`, `out_of_stock`, `discounted`, `multipack`). Future parser promotions must reproduce these exactly.
 - **Cold start** — for a brand-new site, the CLI fetches URLs → LLM generates first parser → you confirm each result → parser + goldens seeded.
 
