@@ -2,7 +2,7 @@
 
 Extracts structured product data from marketplace pages. Given a `(url, site)` pair, it returns a validated `ProductData` object with title, price, stock, images, brand, etc. — or explains cleanly why it couldn't.
 
-> **Status**: Phase 0 complete. M1–M11 implemented and verified (172 checks, 0 failures). See [tests/](tests/).
+> **Status**: Phase 0 complete. M1–M12 implemented. M1–M11 offline verification: 172 checks, 0 failures. M12 adds end-to-end live-scraping validation (real BrightData + DeepSeek). See [tests/](tests/).
 
 ## What it does
 
@@ -200,6 +200,7 @@ PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m8    # real DeepSeek
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m9
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m10
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m11   # real DeepSeek
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m12   # real BrightData + DeepSeek, per-site batch
 ```
 
 Latest results are saved to [tests/verify_m*_output.log](tests/). See [tests/README.md](tests/README.md) for the inventory and re-run instructions.

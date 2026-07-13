@@ -1,6 +1,6 @@
 # Scraping Module
 
-**Status**: M1–M11 complete. Full Phase 0 lifecycle: extraction, invalid-target detection, ordered parser list, sandbox, Agent repair (DeepSeek), golden set + promote/prune, scraper-level fallback + escalation, and cold-start CLI. All 172 verification checks pass — see `src/scraping/tests/`.
+**Status**: M1–M12 complete. Full Phase 0 lifecycle: extraction, invalid-target detection, ordered parser list, sandbox, Agent repair (DeepSeek), golden set + promote/prune, scraper-level fallback + escalation, cold-start CLI, and end-to-end live scraping verification. All M1–M11 offline verifications pass (172 checks) — see `src/scraping/tests/`.
 
 ## Responsibility
 
@@ -40,9 +40,27 @@ BaseScraper (ABC)
 ### Repair Ladder (§5.5)
 
 Each attempt (up to 3, shared budget):
-1. **Turn A — no_product judgment**: LLM decides if HTML is a real product page. If not, backfill phrase to `invalid_target_phrases` and return `InvalidTargetResult`. Does NOT consume budget.
+1. **Turn A — no_product judgment**: LLM decides if HTML is a real product page. If not, backfill phrase to `invalid_target_phrases` and return `InvalidTargetResult`. Does NOT consume budget. **Runs only on attempt 0** (asking the same question again on retries wastes LLM calls).
 2. **Turn B — source_absence** (attempt 2 only): distinguishes "hard-to-parse product page" (solvable) vs "no data on page" (source_absent → terminal, skip attempt 3).
 3. **Turn C — parser generation**: LLM produces `def parse(html, url) -> dict` → sandbox → gates → `promote_candidate()` (golden test) → active parser row inserted.
+
+**Convergence-quality signals fed into the ladder** (added after M12 findings):
+- **Full sandbox tracebacks** propagated into next attempt's prompt (was: only exception message — LLM had no line numbers to fix).
+- **Full prior candidate code** included in next attempt (was: truncated at 2000 chars).
+- **Temperature ramp** for parser generation: `[0.1, 0.4, 0.8]` per attempt — attempt 0 stays deterministic; retries genuinely explore alternatives. Judgment prompts (Turn A/B) always stay at 0.1.
+- **Tier-specific strategy hints** in the prompt: attempt 0 = "prefer JSON-LD Product schema", attempt 1 = "fix the specific error, don't rewrite", attempt 2 = "try a fundamentally different approach; also handle Tesco's dual-price `offers.priceSpecification` case".
+- **HTML truncation disclosure**: parser_gen prompt explicitly warns that the excerpt may be truncated and pushes the LLM toward JSON-LD-first extraction (more stable, survives truncation).
+
+### BrightData extraction hardening (added after M12 findings)
+
+`extraction/bright_data.py:_check_infra_error(status_code, body, headers, expect_html)`:
+- **Header-authoritative**: reads `x-brd-error-code` (values include `min_size`, `reject_block`, `networkidle_event_timeout`, `bucket_rate_limit`) — BD's own signal that the fetch failed.
+- **Body-length fallback** (only when `expect_html=True`): body < 1000 chars on an HTTP 200 → treated as infra flake (empty/stub response).
+- **Soft-tolerance**: when Web Unlocker returned an error header BUT the body still has substantial HTML (≥ 1000 chars), the response flows through to `detect_invalid_page` (and Turn A as ultimate safety net) instead of failing hard. Logged at WARN. Applies only to `expect_html=True`; Datasets/DCA trigger endpoints (small JSON responses) always fail fast on any error header.
+
+### Scraper independence (added after M12 findings)
+
+`html_scraper.py` and `api_scraper.py` catch `BrightDataInfraError` and convert to `ScrapeFailed(signature=(site, "extraction_infra", ""))` / `(site, "api_infra", "")`. Rationale: each scraper's BD channel is independent (Web Unlocker ≠ DCA ≠ Datasets), so one channel's infra failure shouldn't block the router from trying the next scraper. The router's `_derive_reason` promotes the escalation reason back to `infra_failure` only when **all** attempted channels failed with `*_infra` signatures — that's a genuine BD-ecosystem-down event.
 
 ## File Structure
 
@@ -91,6 +109,7 @@ src/scraping/
 | M9 | Golden set + promote/prune | ✔ verify_m9.py |
 | M10 | Scraper-level fallback + escalation writing | ✔ verify_m10.py |
 | M11 | Cold start CLI (real DeepSeek) | ✔ verify_m11.py |
+| M12 | End-to-end live scraping (real BrightData + DeepSeek, concurrent) | ✔ verify_m12.py |
 
 ## Public API
 

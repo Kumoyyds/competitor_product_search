@@ -61,8 +61,8 @@ _cfg_mod._config = None
 _cfg = _cfg_mod.get_config()
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
-INPUT_XLSX = _DATA_DIR / "tesco_test.xlsx.xlsx"
-OUTPUT_LOG = Path(__file__).parent / "verify_m12_output.log"
+INPUT_XLSX = _DATA_DIR / "argos_test.xlsx.xlsx"
+OUTPUT_LOG = Path(__file__).parent / "verify_m12_argo_output.log"
 
 HAS_BRIGHT_DATA = bool(_cfg.bright_data_key)
 HAS_LLM = bool(_cfg.deepseek_key)
@@ -179,6 +179,12 @@ class PerURLReport:
     gtin: str = ""
     parser_version: str = ""
     source_type: str = ""
+    # Additional ProductData fields (all Optional in the schema; only displayed when populated)
+    list_price: str = ""        # e.g. "80.99 GBP"
+    unit_price: str = ""        # e.g. "3.50"
+    unit: str = ""              # e.g. "kg"
+    availability_raw: str = ""  # e.g. "In stock"
+    variant: str = ""           # JSON-encoded dict, e.g. '{"size":"12x330ml"}'
 
     # Invalid-target fields
     invalid_reason: str = ""
@@ -348,6 +354,16 @@ async def scrape_one_url(
             report.gtin = result.gtin or ""
             report.parser_version = result.parser_version or ""
             report.source_type = result.source_type or ""
+            # Additional ProductData fields (display when populated)
+            if result.list_price is not None:
+                report.list_price = f"{result.list_price} {result.currency or ''}".strip()
+            if result.unit_price is not None:
+                report.unit_price = str(result.unit_price)
+            report.unit = result.unit or ""
+            report.availability_raw = result.availability_raw or ""
+            if result.variant:
+                import json as _json
+                report.variant = _json.dumps(result.variant, ensure_ascii=False)
         elif isinstance(result, InvalidTargetResult):
             report.outcome = "invalid_target"
             report.result_type = "InvalidTargetResult"
@@ -429,13 +445,26 @@ def print_url_report(report: PerURLReport) -> None:
         _print(f"    title:         {report.title[:100]}")
         if report.price:
             _print(f"    price:         {report.price}")
+        if report.list_price:
+            _print(f"    list_price:    {report.list_price}")
+        if report.currency and not report.price:
+            _print(f"    currency:      {report.currency}")
         if report.brand:
             _print(f"    brand:         {report.brand}")
         _print(f"    in_stock:      {report.in_stock}")
+        if report.availability_raw:
+            _print(f"    availability:  {report.availability_raw}")
         if report.image_count:
             _print(f"    image_urls:    {report.image_count} images")
         if report.gtin:
             _print(f"    gtin:          {report.gtin}")
+        if report.variant:
+            _print(f"    variant:       {report.variant}")
+        if report.unit_price:
+            if report.unit:
+                _print(f"    unit_price:    {report.unit_price} per {report.unit}")
+            else:
+                _print(f"    unit_price:    {report.unit_price}")
         if report.parser_version:
             _print(f"    parser_version: {report.parser_version}")
         if report.source_type:

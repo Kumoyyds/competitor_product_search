@@ -36,19 +36,39 @@ def _check_infra_error(
         )
     # BrightData explicitly signals fetch problems via response headers.
     # `x-brd-error-code` is the authoritative signal (observed values include
-    # `min_size`, `reject_block`, `networkidle_event_timeout`). Trust this over
-    # heuristic body-length inspection because BD flags failures the moment
-    # the upstream returns a stub/challenge, before we even see the body.
-    # Applies to all BD endpoints (Unlocker, Datasets trigger, DCA trigger).
+    # `min_size`, `reject_block`, `networkidle_event_timeout`,
+    # `bucket_rate_limit`). Applies to all BD endpoints (Unlocker, Datasets
+    # trigger, DCA trigger).
     if headers is not None:
         bd_error = headers.get("x-brd-error-code")
         if bd_error:
             bd_message = headers.get("x-brd-error-message", "")
-            raise BrightDataInfraError(
-                f"Bright Data upstream error: x-brd-error-code={bd_error}"
-                + (f" ({bd_message})" if bd_message else ""),
-                status_code=status_code,
-            )
+            # Soft-tolerate: when Web Unlocker returned substantial HTML
+            # alongside the error header, BD's flag may be a soft warning
+            # (e.g. `min_size` on a shorter-than-expected but real error
+            # page, or a partial-render `networkidle_event_timeout`). Let
+            # detect_invalid_page + repair ladder Turn A do the final
+            # classification via structural / LLM signals instead of failing
+            # hard here. Log at WARN so operator visibility into BD upstream
+            # health is preserved even when downstream returns invalid_target.
+            # Only applies when expect_html=True (HTML endpoints); JSON
+            # trigger endpoints always fail fast on any error header because
+            # their bodies are legitimately tiny.
+            if expect_html and status_code == 200 and len(body) >= _MIN_HTML_BODY_LENGTH:
+                logger.warning(
+                    "Bright Data upstream soft error tolerated: "
+                    "x-brd-error-code=%s%s (body has %d chars, letting "
+                    "detect_invalid_page decide)",
+                    bd_error,
+                    f" ({bd_message})" if bd_message else "",
+                    len(body),
+                )
+            else:
+                raise BrightDataInfraError(
+                    f"Bright Data upstream error: x-brd-error-code={bd_error}"
+                    + (f" ({bd_message})" if bd_message else ""),
+                    status_code=status_code,
+                )
     # Body-length fallback: some BrightData response paths omit the error
     # header even when the body is a JS challenge / anti-bot stub. Only apply
     # this to endpoints that are supposed to return a full HTML page — the
