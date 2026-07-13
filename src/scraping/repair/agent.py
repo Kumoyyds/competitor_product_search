@@ -1,16 +1,16 @@
-"""Repair Agent — the ladder-based candidate parser generator (spec §5.5, D8).
+"""Repair Agent --- the ladder-based candidate parser generator (spec SS5.5, D8).
 
 Called from HTMLScraper when the ordered parser list produces no valid output.
-Shared budget of 3 attempts (parse-exception + Gate1 + Gate2 + promote-fail all count).
+Shared budget of 4 attempts (config.repair_budget).
 
 Ladder:
-  Attempt 1: deepseek-chat (flash)
-  Attempt 2: deepseek-chat (flash) with prior error context
-             + source_absence check (spec §5.5) — if source is absent, terminate
-  Attempt 3: deepseek-reasoner (pro) with all prior errors
+  Attempt 0: deepseek-v4-flash (Turn A only)
+  Attempt 1: deepseek-v4-flash + source_absence check (Turn B)
+  Attempt 2: deepseek-v4-pro (temperature-driven exploration)
+  Attempt 3: deepseek-v4-pro with thinking mode (last-ditch)
 
-Each attempt starts with a no_product_on_page check (Turn A) — if true, terminate
-ladder immediately (no budget consumed), record InvalidTargetResult, backfill phrase.
+Each attempt starts with a no_product_on_page check (Turn A) on attempt 0 only.
+Turn A does not consume budget; Turn B (source_absence) only runs on attempt 1.
 """
 
 from __future__ import annotations
@@ -221,7 +221,7 @@ def _make_llm(model: str, temperature: float = 0.1, enable_thinking: bool = Fals
     """Build a DeepSeek LangChain client.
 
     Args:
-      model: model id (e.g. "deepseek-chat" or "deepseek-v4-pro")
+      model: model id (e.g. "deepseek-v4-flash" or "deepseek-v4-pro")
       temperature: sampling temperature (0.1 for judgments, ramp for parser_gen)
       enable_thinking: when True, enables DeepSeek's reasoning/thinking mode via
         `reasoning_effort="high"` and `extra_body={"thinking": {"type": "enabled"}}`.

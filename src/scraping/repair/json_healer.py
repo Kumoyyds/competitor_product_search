@@ -106,7 +106,7 @@ def _make_llm():
     return ChatOpenAI(
         api_key=cfg.deepseek_key,
         base_url=cfg.deepseek_base_url,
-        model="deepseek-chat",
+        model="deepseek-v4-flash",
         temperature=0.1,
         model_kwargs={"response_format": {"type": "json_object"}},
     )

@@ -165,7 +165,7 @@ Interactive: fetches all URLs → LLM generates first parser → user confirms e
 - **BrightData Web Unlocker** — raw HTML (Tesco, Argos)
 - **BrightData Datasets API** — structured JSON (Amazon)
 - **BrightData DCA** — structured JSON (Tesco backup)
-- **DeepSeek** (OpenAI-compatible endpoint) — repair LLM (flash=deepseek-chat, pro=deepseek-reasoner)
+- **DeepSeek** (OpenAI-compatible endpoint) — repair LLM (flash=deepseek-v4-flash, pro=deepseek-v4-pro)
 
 ## Verification Discipline (mandatory)
 

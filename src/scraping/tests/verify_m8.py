@@ -80,10 +80,10 @@ async def run() -> None:
     section("M8.1 - Config and LLM setup")
     check("DEEPSEEK_KEY loaded", HAS_LLM, "key present" if HAS_LLM else "MISSING")
     if HAS_LLM:
-        llm = _make_llm("deepseek-chat")
-        check("_make_llm returns client with deepseek-chat", llm is not None)
+        llm = _make_llm("deepseek-v4-flash")
+        check("_make_llm returns client with deepseek-v4-flash", llm is not None)
     else:
-        llm_missing = _make_llm("deepseek-chat")
+        llm_missing = _make_llm("deepseek-v4-flash")
         check("_make_llm returns None when key missing", llm_missing is None)
 
     section("M8.2 - JSON healer: _lookup_path")
@@ -156,7 +156,7 @@ async def run() -> None:
     </body></html>""" + "x" * 8000  # pad past detection min length
 
     ctx = RepairContext(site="tesco", url="http://tesco.com/missing", html=error_html)
-    outcome = await _try_repair(ctx, "deepseek-chat")
+    outcome = await _try_repair(ctx, "deepseek-v4-flash")
     check("agent identifies error page as no_product",
           isinstance(outcome, NoProductVerdict), f"got {type(outcome).__name__}")
     if isinstance(outcome, NoProductVerdict):

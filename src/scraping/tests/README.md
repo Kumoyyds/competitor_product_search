@@ -176,7 +176,7 @@ On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTH
 
 **verify_m8** and **verify_m11** hit the real DeepSeek API (per user decision — see plan file). Requirements:
 - `DEEPSEEK_KEY` set in `.env` (loaded automatically via `python-dotenv`).
-- Small cost per full run: ~$0.01–0.05 across a handful of `deepseek-chat` requests.
+- Small cost per full run: ~$0.01–0.05 across a handful of `deepseek-v4-flash` requests (pro attempts cost more).
 - **LLM output varies**: parser code generated on the same HTML can differ between runs. The verify scripts test *machinery* (ladder progresses, phrases backfill, D25 red line, coldstart seeds correctly), not exact parser code output. A rerun that produces a slightly worse parser may show more `[SKIP]` outputs but should not `[FAIL]`.
 
 ## Reading the log
