@@ -1,16 +1,17 @@
 """Repair Agent --- the ladder-based candidate parser generator (spec SS5.5, D8).
 
 Called from HTMLScraper when the ordered parser list produces no valid output.
-Shared budget of 4 attempts (config.repair_budget).
+Attempt count = len(cfg.repair_model_ladder) — edit config to add/remove nodes.
+Temperature ladder lives in config.py (must match model ladder length).
 
-Ladder:
-  Attempt 0: deepseek-v4-flash (Turn A only)
-  Attempt 1: deepseek-v4-flash + source_absence check (Turn B)
-  Attempt 2: deepseek-v4-pro (temperature-driven exploration)
-  Attempt 3: deepseek-v4-pro with thinking mode (last-ditch)
+Ladder (config-driven):
+  Turn A (no_product): index==0 only
+  Turn B (source_absence): index==1 and not last (skip when nothing left to skip)
+  Turn C (parser_gen): every attempt, thinking mode on last only
 
-Each attempt starts with a no_product_on_page check (Turn A) on attempt 0 only.
-Turn A does not consume budget; Turn B (source_absence) only runs on attempt 1.
+Each attempt records a full trace (code, capture summary, errors) fed back to
+the next attempt via AttemptRecord list — no index misalignment, works for any
+node count.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from ..models.product_data import ProductData
 from ..models.results import InvalidTargetResult
 from ..storage import PhraseStore, ScrapeDB
 from ..validation import validate
+from .golden import GoldenRejection, promote_candidate
 from .prompts import (
     no_product_prompt,
     parser_gen_prompt,
@@ -38,12 +40,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# F5: Parser-generation temperature ramp. Attempt 0 stays low (deterministic
-# best-guess); later attempts explore alternative strategies. Judgment prompts
-# (no_product / source_absence) always run at 0.1 for stability.
-# Length matches config.repair_budget (4). Attempts 2 and 3 use the pro model;
-# attempt 3 additionally enables reasoning/thinking mode (see _make_llm).
-_PARSER_GEN_TEMPERATURE_LADDER: list[float] = [0.1, 0.2, 0.2, 0.3]
+
+@dataclass
+class AttemptRecord:
+    """Full trace of one repair attempt — code, output, capture, and why it failed.
+
+    index/model/code/output/capture/errors all share the same index, so the
+    prompt builder can align them without the old error/candidate misalignment.
+    This list is inherently attempt-count-agnostic.
+    """
+    index: int
+    model: str
+    code: str
+    output: Optional[dict[str, Any]] = None   # parsed dict if sandbox returned one
+    capture: Optional[dict[str, Any]] = None   # {captured, missing_required, missing_optional}
+    failure_stage: Optional[str] = None        # "sandbox" | "gate" | "golden" | None (=success)
+    errors: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -51,9 +63,8 @@ class RepairContext:
     site: str
     url: str
     html: str
-    attempt: int = 0
-    error_history: list[list[str]] = field(default_factory=list)
-    candidates_tried: list[str] = field(default_factory=list)
+    initial_errors: list[str] = field(default_factory=list)   # pre-repair, labelled separately
+    attempts: list[AttemptRecord] = field(default_factory=list)
 
 
 @dataclass
@@ -81,27 +92,68 @@ class CandidateSucceeded:
 RepairOutcome = Union[NoProductVerdict, SourceAbsent, CandidateFailed, CandidateSucceeded]
 
 
+def summarize_capture(output: dict[str, Any]) -> dict[str, Any]:
+    """Compute which ProductData fields a parser output captured/missed.
+
+    Uses the current gate2 semantics (price OR list_price satisfies in_stock).
+    Feeds into the next attempt's prompt so the LLM sees exactly what to fix.
+    """
+    required = ["title", "in_stock"]
+    if output.get("in_stock") is True:
+        if not (output.get("price") or output.get("list_price")):
+            required.append("price_or_list_price")
+    optional = [
+        "brand", "gtin", "image_urls", "currency", "list_price",
+        "unit_price", "unit", "availability_raw", "variant",
+    ]
+    present = lambda f: output.get(f) not in (None, [], "", {})
+
+    return {
+        "captured": [f for f in required + optional if present(f)],
+        "missing_required": [f for f in required if not present(f)],
+        "missing_optional": [f for f in optional if not present(f)],
+    }
+
+
+def _flatten_errors(
+    initial_errors: list[str],
+    attempts: list[AttemptRecord],
+    prefix: Optional[list[str]] = None,
+) -> list[str]:
+    """Flatten initial_errors + per-attempt error lists into a flat list[str]."""
+    out: list[str] = list(prefix or [])
+    out.extend(str(e) for e in initial_errors)
+    for a in attempts:
+        out.extend(a.errors)
+    return out
+
+
 async def run_repair_ladder(
     scraper: "HTMLScraper",
     url: str,
     html: str,
     initial_errors: list[str],
 ) -> Union[ProductData, InvalidTargetResult, ScrapeFailed]:
-    """Run the repair ladder. Returns the final outcome: product, invalid-target, or failure."""
+    """Run the repair ladder. Returns the final outcome: product, invalid-target, or failure.
+
+    Node count = len(cfg.repair_model_ladder).  Edit the config lists to add/remove
+    nodes — Turn A/B/thinking adapt via semantic positions (first/not-last-second/last).
+    """
     cfg = get_config()
+    ladder = cfg.repair_model_ladder
+    temps = cfg.repair_temperature_ladder
+    assert len(temps) == len(ladder), (
+        f"repair_temperature_ladder length ({len(temps)}) != "
+        f"repair_model_ladder length ({len(ladder)})"
+    )
+    n = len(ladder)
     ctx = RepairContext(site=scraper.site, url=url, html=html)
     if initial_errors:
-        ctx.error_history.append(initial_errors)
+        ctx.initial_errors = initial_errors
 
-    for attempt in range(cfg.repair_budget):
-        ctx.attempt = attempt
-        model = cfg.repair_model_ladder[min(attempt, len(cfg.repair_model_ladder) - 1)]
-        # The final attempt enables the pro model's reasoning/thinking mode
-        # so the LLM can chain-of-thought through cases prior attempts couldn't
-        # solve. Only meaningful when the last-attempt model actually supports
-        # thinking (deepseek-v4-pro etc.).
-        is_last_attempt = attempt == cfg.repair_budget - 1
-        outcome = await _try_repair(ctx, model, is_last_attempt=is_last_attempt)
+    for i, model in enumerate(ladder):
+        is_last = (i == n - 1)
+        outcome = await _try_repair(ctx, index=i, model=model, is_last=is_last)
 
         if isinstance(outcome, NoProductVerdict):
             _backfill_phrase(scraper.site, outcome.phrase)
@@ -116,74 +168,91 @@ async def run_repair_ladder(
                 scraper_name=scraper.__class__.__name__,
                 failed_stage="source_absent",
                 signature=(scraper.site, "source_absent", ""),
-                errors=[outcome.reason] + [str(e) for e in ctx.error_history],
+                errors=_flatten_errors(ctx.initial_errors, ctx.attempts, prefix=[outcome.reason]),
                 snapshot=html[:2000],
             )
 
         if isinstance(outcome, CandidateSucceeded):
             return outcome.product
 
-        # CandidateFailed — consume budget, continue
-        ctx.error_history.append(outcome.errors)
+        # CandidateFailed — record already in ctx.attempts, continue
 
+    # Budget exhausted — escalate with last capture detail
+    last_capture = ctx.attempts[-1].capture if ctx.attempts else None
+    last_failure_stage = ctx.attempts[-1].failure_stage if ctx.attempts else None
+    import json as _json
     return ScrapeFailed(
         site=scraper.site, url=url,
         scraper_name=scraper.__class__.__name__,
         failed_stage="parser_broken",
         signature=(scraper.site, "repair_budget_exhausted", ""),
-        errors=[str(e) for e in ctx.error_history],
-        snapshot=html[:2000],
+        errors=_flatten_errors(ctx.initial_errors, ctx.attempts),
+        snapshot=_json.dumps({
+            "html_preview": html[:2000],
+            "last_capture": last_capture,
+            "last_failure_stage": last_failure_stage,
+        }, default=str),
     )
 
 
 async def _try_repair(
-    ctx: RepairContext, model: str, is_last_attempt: bool = False
+    ctx: RepairContext, index: int, model: str, is_last: bool
 ) -> RepairOutcome:
-    # F5: judgments (no_product / source_absence) stay deterministic;
-    # parser_gen uses a temperature ramp to force genuine exploration on retries.
-    # Judgment prompts never enable thinking — they answer yes/no gates that
-    # don't benefit from chain-of-thought.
+    """Run one ladder attempt.  index/model/is_last come from the config-driven loop.
+
+    Turn A (no_product): index==0 only.
+    Turn B (source_absence): index==1 and NOT last (skip when nothing left to skip).
+    Turn C (parser_gen): every attempt; captures output + errors into an
+      AttemptRecord appended to ctx.attempts — aligned by index, no mislabelling.
+    """
+    cfg = get_config()
+
+    # Judgment LLM: deterministic answers for yes/no gates
     judgment_llm = _make_llm(model, temperature=0.1)
     if judgment_llm is None:
         return CandidateFailed(errors=["LLM not configured (DEEPSEEK_KEY missing)"])
 
-    parser_gen_temp = _PARSER_GEN_TEMPERATURE_LADDER[
-        min(ctx.attempt, len(_PARSER_GEN_TEMPERATURE_LADDER) - 1)
-    ]
-    # Enable reasoning/thinking mode only on the last repair-ladder attempt,
-    # and only for the parser_gen call (Turn C) — that's where deep reasoning
-    # actually helps.
-    parser_gen_llm = _make_llm(
-        model, temperature=parser_gen_temp, enable_thinking=is_last_attempt
-    )
-    if parser_gen_llm is None:
-        return CandidateFailed(errors=["LLM not configured (DEEPSEEK_KEY missing)"])
-
-    # F3: Turn A (no_product judgment) only on attempt 0 — repeating it
-    # on retries wastes LLM calls on a question we already answered.
-    if ctx.attempt == 0:
+    # Turn A — no_product judgment, first attempt only
+    if index == 0:
         verdict = await _ask_no_product(judgment_llm, ctx)
         if verdict and verdict.get("decision") == "no_product":
             return NoProductVerdict(phrase=verdict.get("phrase"))
 
-    # Turn B: source_absence check (attempt 2 only, i.e. index 1)
-    if ctx.attempt == 1:
+    # Turn B — source_absence, second attempt only when not also the last
+    if index == 1 and not is_last:
         absent = await _ask_source_absence(judgment_llm, ctx)
         if absent and absent.get("decision") == "source_absent":
             return SourceAbsent(reason=absent.get("reason", "source_absent"))
 
-    # Turn C: parser generation
-    parser_source = await _gen_parser(parser_gen_llm, ctx)
+    # Turn C — parser generation (temperature from config, thinking on last)
+    temp = cfg.repair_temperature_ladder[index]
+    parser_gen_llm = _make_llm(
+        model, temperature=temp, enable_thinking=is_last
+    )
+    if parser_gen_llm is None:
+        return CandidateFailed(errors=["LLM not configured (DEEPSEEK_KEY missing)"])
+
+    # Build role name for the prompt
+    role = "last" if is_last else ("first" if index == 0 else "middle")
+
+    parser_source = await _gen_parser(parser_gen_llm, ctx, role)
     if not parser_source:
         return CandidateFailed(errors=["parser_gen returned nothing"])
-    ctx.candidates_tried.append(parser_source)
 
     # Sandbox execution
     sandbox_result = await run_in_sandbox(parser_source, ctx.html, ctx.url)
+
+    # Build an AttemptRecord with everything we know so far
+    rec = AttemptRecord(index=index, model=model, code=parser_source)
+
     if not isinstance(sandbox_result, dict):
-        # F1: preserve the full traceback (when the sandbox result carries one) so
-        # the next attempt's prompt shows line numbers and the failing expression.
-        return CandidateFailed(errors=[_format_sandbox_error(sandbox_result)])
+        rec.failure_stage = "sandbox"
+        rec.errors = [_format_sandbox_error(sandbox_result)]
+        ctx.attempts.append(rec)
+        return CandidateFailed(errors=rec.errors)
+
+    rec.output = sandbox_result
+    rec.capture = summarize_capture(sandbox_result)
 
     # Wrap + validate
     wrapped = dict(sandbox_result)
@@ -191,28 +260,33 @@ async def _try_repair(
     wrapped["website"] = ctx.site
     wrapped["source_type"] = "html"
     wrapped["scraped_at"] = datetime.now(timezone.utc)
-    wrapped["parser_version"] = f"agent_attempt_{ctx.attempt}"
+    wrapped["parser_version"] = f"agent_attempt_{index}"
 
     product, errors = validate(wrapped)
     if product is None:
+        rec.failure_stage = "gate"
+        rec.errors = errors
+        ctx.attempts.append(rec)
         return CandidateFailed(errors=errors)
 
     # Golden test + promote (M9)
-    from .golden import promote_candidate
-
-    parser_id = await promote_candidate(
+    result = await promote_candidate(
         site=ctx.site,
         code=parser_source,
         current_product=product,
         current_html=ctx.html,
     )
-    if parser_id is None:
-        return CandidateFailed(errors=["failed golden test"])
+    if isinstance(result, GoldenRejection):
+        rec.failure_stage = "golden"
+        rec.errors = [result.describe()]
+        ctx.attempts.append(rec)
+        return CandidateFailed(errors=rec.errors)
 
-    # Rewrite parser_version to the promoted parser's version
+    # Success — record attempt and return
+    ctx.attempts.append(rec)
     return CandidateSucceeded(
         product=product,
-        parser_id=parser_id,
+        parser_id=result,             # result is int (parser id) when not GoldenRejection
         parser_source=parser_source,
     )
 
@@ -277,20 +351,25 @@ async def _ask_no_product(llm, ctx: RepairContext) -> Optional[dict[str, Any]]:
 
 
 async def _ask_source_absence(llm, ctx: RepairContext) -> Optional[dict[str, Any]]:
+    # Feed prior errors from initial_errors + all attempts so the LLM has full context
+    prior_errors = [ctx.initial_errors] if ctx.initial_errors else []
+    for a in ctx.attempts:
+        prior_errors.append(a.errors)
     try:
-        resp = await llm.ainvoke(source_absence_prompt(ctx.html, ctx.site, ctx.error_history))
+        resp = await llm.ainvoke(source_absence_prompt(ctx.html, ctx.site, prior_errors))
         return _parse(resp)
     except Exception:
         logger.exception("source_absence prompt failed")
         return None
 
 
-async def _gen_parser(llm, ctx: RepairContext) -> Optional[str]:
+async def _gen_parser(llm, ctx: RepairContext, role: str) -> Optional[str]:
+    """Invoke parser_gen_prompt with the attempt history (aligned by index)."""
     try:
         resp = await llm.ainvoke(parser_gen_prompt(
-            ctx.html, ctx.site, tier=ctx.attempt,
-            prior_errors=ctx.error_history,
-            prior_candidates=ctx.candidates_tried,
+            ctx.html, ctx.site, role=role,
+            initial_errors=ctx.initial_errors,
+            attempts=ctx.attempts,
         ))
         parsed = _parse(resp)
         if parsed:

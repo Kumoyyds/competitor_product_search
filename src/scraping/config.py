@@ -30,14 +30,13 @@ class ScrapingConfig(BaseSettings):
     extraction_retry_interval: float = 2.0
 
     # --- repair (HTML route) ---
-    # 4 attempts: 2× flash (deepseek-v4-flash) + 2× pro (deepseek-v4-pro).
-    # Attempt 0,1 are cheap exploratory (v4-flash); 2 is pro (temperature-driven
-    # exploration); 3 is pro with thinking mode (reasoning_effort=high +
-    # extra_body.thinking) as the last-ditch attempt.
-    # See agent.py._make_llm and _PARSER_GEN_TEMPERATURE_LADDER.
-    repair_budget: int = 4
+    # Number of attempts = len(repair_model_ladder). Edit the lists together to
+    # change attempt count (they must have equal length; validated at startup).
     repair_model_ladder: list[str] = Field(
-        default=["deepseek-v4-flash", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-pro"]
+        default=["deepseek-v4-flash","deepseek-v4-pro"]
+    )
+    repair_temperature_ladder: list[float] = Field(
+        default=[0.1, 0.4]
     )
 
     # --- JSON self-healing (API route) ---

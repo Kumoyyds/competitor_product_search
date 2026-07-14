@@ -137,51 +137,45 @@ def source_absence_prompt(html: str, site: str, prior_errors: list[list[str]]) -
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-_TIER_STRATEGY: dict[int, str] = {
-    0: (
-        "STRATEGY (Tier 0 — first attempt): Try the SIMPLEST viable approach. Modern "
+_ROLE_STRATEGY: dict[str, str] = {
+    "first": (
+        "STRATEGY (first attempt): Try the SIMPLEST viable approach. Modern "
         "e-commerce pages almost always embed a JSON-LD `Product` schema in a "
         "<script type=\"application/ld+json\"> block; parsing that with `json.loads` "
         "typically yields title, brand, gtin, image_urls, price, currency, and "
         "availability with minimal DOM traversal. Only fall back to BeautifulSoup "
         "selectors for fields not present in JSON-LD."
     ),
-    1: (
-        "STRATEGY (Tier 1 — first retry): The previous attempt failed. Read the "
-        "traceback and error messages CAREFULLY and focus on fixing the SPECIFIC "
-        "issue that broke — do not rewrite the whole parser from scratch. Common "
-        "causes: (a) selector returned None and you called `.text` on it "
+    "middle": (
+        "STRATEGY (retry): The previous attempt failed. Read the CAPTURE SUMMARY "
+        "and error traceback CAREFULLY and focus on fixing the SPECIFIC missing "
+        "field(s) — do not rewrite the whole parser from scratch. Common causes: "
+        "(a) selector returned None and you called `.text` on it "
         "(guard with `if node is not None`), (b) price string had a currency prefix "
         "or thousands separator (strip non-numeric chars before returning), "
         "(c) the JSON-LD block was structured as `@graph` with multiple entries "
-        "(iterate and pick `@type == 'Product'`)."
-    ),
-    2: (
-        "STRATEGY (Tier 2 — pro-model, different approach): Two prior attempts "
-        "failed. You are now running on the more capable pro model. Consider a "
-        "FUNDAMENTALLY DIFFERENT approach: if earlier attempts used DOM selectors, "
-        "switch to JSON-LD parsing (or vice versa). Look at the actual traceback "
-        "and prior candidates below — what assumption do they share that might be "
-        "wrong? Also: some sites carry TWO price representations (e.g. Tesco "
+        "(iterate and pick `@type == 'Product'`), (d) in_stock was set True but "
+        "no price or list_price was returned (check both JSON-LD offers and DOM "
+        "price blocks). If the current approach seems fundamentally wrong (e.g. "
+        "JSON-LD has no Product schema but you kept parsing it), switch to DOM "
+        "selectors. Some sites carry TWO price representations (e.g. Tesco "
         "encodes `offers.price` as the RRP and `offers.priceSpecification.price` "
-        "as the current/discount price). Handle both by mapping the current price "
-        "to `price` and the RRP to `list_price` when both exist."
+        "as the current/discount price) — handle both, map current→price and RRP→list_price."
     ),
-    3: (
-        "STRATEGY (Tier 3 — LAST attempt with reasoning mode enabled): Three "
-        "prior attempts failed. You have the reasoning/thinking budget of the "
-        "pro model — USE IT. Slow down and think step by step: "
-        "(1) inspect ALL prior candidates and their tracebacks; identify what "
-        "consistent assumption made them fail. "
+    "last": (
+        "STRATEGY (LAST attempt): All prior attempts failed. You may have "
+        "thinking/reasoning budget — USE IT. Slow down and think step by step: "
+        "(1) inspect ALL prior capture summaries and tracebacks below; identify "
+        "what consistent assumption made them fail. "
         "(2) inspect the HTML excerpt structure closely — are the fields nested "
         "in a way the earlier selectors kept missing? Is JSON-LD wrapped in "
         "`@graph`? Are there multiple `<script type=\"application/ld+json\">` "
         "blocks with different `@type` values (Product vs BreadcrumbList vs "
         "Corporation)? Iterate them and pick the Product one. "
-        "(3) if the HTML is genuinely a product page but everything is missing "
-        "except the title, DO NOT return `{}` — return what fields you CAN find, "
-        "leaving optional fields as None. Gate 2 will accept out-of-stock "
-        "products with images or list_price. "
+        "(3) if the HTML is genuinely a product page but some fields are missing, "
+        "DO NOT return `{}` — return what fields you CAN find, leaving optional "
+        "fields as None. Gate 2 will accept out-of-stock products with images or "
+        "list_price, and in-stock products with price OR list_price. "
         "(4) if this is genuinely NOT a product page (error, category, search), "
         "return `{}` explicitly."
     ),
@@ -191,9 +185,9 @@ _TIER_STRATEGY: dict[int, str] = {
 def parser_gen_prompt(
     html: str,
     site: str,
-    tier: int,
-    prior_errors: list[list[str]],
-    prior_candidates: list[str],
+    role: str,
+    initial_errors: list[str],
+    attempts: list[Any],
 ) -> list[dict[str, str]]:
     system = (
         "You are generating a Python parser function that extracts product data from HTML. "
@@ -212,23 +206,21 @@ def parser_gen_prompt(
         "or SPA rendering order.\n\n"
         "Return STRICT JSON with a single key 'parser_code' containing the full function source as a string."
     )
-    ctx_parts = []
-    strategy = _TIER_STRATEGY.get(tier)
+    ctx_parts: list[str] = []
+    strategy = _ROLE_STRATEGY.get(role)
     if strategy:
         ctx_parts.append(strategy)
-    if prior_errors:
-        err_lines = "\n".join(f"  Attempt {i}: {errs}" for i, errs in enumerate(prior_errors))
-        ctx_parts.append(f"PRIOR ATTEMPTS' ERRORS (read tracebacks carefully):\n{err_lines}")
-    if prior_candidates:
-        # F2: show the full prior candidate code (not just first 2000 chars). If total
-        # size becomes a concern in the future we can compress with a middle-truncation
-        # strategy, but for the ladder's 3-attempt budget the payload stays modest.
-        cand_lines = "\n\n".join(
-            f"--- Attempt {i} candidate ---\n{c}" for i, c in enumerate(prior_candidates)
+    if initial_errors:
+        ctx_parts.append(
+            "PRE-REPAIR (existing parser list failed, not LLM candidates):\n"
+            + "\n".join(f"  - {e}" for e in initial_errors)
         )
-        ctx_parts.append(f"PRIOR CANDIDATES:\n{cand_lines}")
+    if attempts:
+        ctx_parts.append("PRIOR ATTEMPTS (read capture summaries and tracebacks carefully):")
+        for rec in attempts:
+            ctx_parts.append(_format_record(rec))
 
-    user_parts = [f"Site: {site}", f"Tier: {tier}"]
+    user_parts: list[str] = [f"Site: {site}", f"Role: {role}"]
     if ctx_parts:
         user_parts.append("\n\n".join(ctx_parts))
     user_parts.append(f"\nHTML EXCERPT (may be truncated):\n{_excerpt(html)}")
@@ -239,9 +231,33 @@ def parser_gen_prompt(
     ]
 
 
+def _format_record(rec: Any) -> str:
+    """Format one AttemptRecord for the repair prompt.
+
+    Shows the candidate code, what it captured, what was missing, and why it
+    failed.  For a long history we truncate the output dict to keep the prompt
+    compact — the last attempt (formatted last) already carries the richest
+    signal.
+    """
+    parts: list[str] = []
+    parts.append(f"--- Attempt {rec.index} ({rec.model}) ---")
+    if rec.failure_stage:
+        parts.append(f"Failed at: {rec.failure_stage}")
+    parts.append(f"Candidate code:\n{rec.code}")
+    if rec.capture:
+        parts.append(
+            f"Captured: {rec.capture.get('captured', [])}\n"
+            f"Missing required: {rec.capture.get('missing_required', [])}\n"
+            f"Missing optional: {rec.capture.get('missing_optional', [])}"
+        )
+    if rec.errors:
+        parts.append(f"Errors:\n" + "\n".join(f"  - {e}" for e in rec.errors))
+    return "\n".join(parts)
+
+
 def initial_parser_gen_prompt(html: str, site: str) -> list[dict[str, str]]:
     """Cold-start (M11): first parser generation, no error history yet."""
-    return parser_gen_prompt(html, site, tier=0, prior_errors=[], prior_candidates=[])
+    return parser_gen_prompt(html, site, role="first", initial_errors=[], attempts=[])
 
 
 def json_heal_precheck_prompt(

@@ -11,6 +11,7 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -21,6 +22,30 @@ from ..validation import validate
 from .sandbox import run_in_sandbox
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GoldenRejection:
+    """Structured reason for golden-test failure, fed back to the repair ladder."""
+    golden_id: int
+    page_type: str
+    failure: str            # "sandbox_crash" | "field_mismatch"
+    field: Optional[str] = None
+    expected: Any = None
+    actual: Any = None
+
+    def describe(self) -> str:
+        if self.failure == "sandbox_crash":
+            return (
+                f"golden id={self.golden_id} ({self.page_type}): "
+                f"candidate crashed on this golden HTML"
+            )
+        if self.failure == "field_mismatch":
+            return (
+                f"golden id={self.golden_id} ({self.page_type}) field mismatch: "
+                f"{self.field} expected={self.expected!r} actual={self.actual!r}"
+            )
+        return f"golden id={self.golden_id}: {self.failure}"
 
 
 def classify_page_type(product: ProductData) -> str:
@@ -73,10 +98,10 @@ async def promote_candidate(
     code: str,
     current_product: ProductData,
     current_html: str,
-) -> Optional[int]:
+) -> int | GoldenRejection:
     """Run candidate against every non-stale golden; promote if all pass.
 
-    Returns the new parser row id on success, None on rejection.
+    Returns the new parser row id on success, GoldenRejection on rejection.
     Side effects:
       - Marks goldens `is_stale=1` if no active parser can reproduce them
       - Enforces hard-cap prune (retires lowest-hit if adding would exceed 4)
@@ -112,16 +137,28 @@ async def promote_candidate(
                     if _no_active_parser_passes(db, site, sample):
                         gs.mark_stale(sample["id"])
                         continue
-                    return None
+                    return GoldenRejection(
+                        golden_id=sample["id"],
+                        page_type=page_type,
+                        failure="sandbox_crash",
+                    )
 
-                if not _matches_expected(sandbox_result, sample["expected_output"]):
+                mismatch = _matches_expected(sandbox_result, sample["expected_output"])
+                if mismatch is not None:
                     if _no_active_parser_passes(db, site, sample):
                         gs.mark_stale(sample["id"])
                         continue
                     logger.info(
                         "promote reject: candidate mismatch on golden id=%s", sample["id"]
                     )
-                    return None
+                    return GoldenRejection(
+                        golden_id=sample["id"],
+                        page_type=page_type,
+                        failure="field_mismatch",
+                        field=mismatch[0],
+                        expected=mismatch[1],
+                        actual=mismatch[2],
+                    )
 
         return _do_promote(db, site, code, current_html, current_product)
     finally:
@@ -202,10 +239,10 @@ def _prune_hard_cap(db: ScrapeDB, site: str) -> None:
     )
 
 
-def _matches_expected(candidate_dict: dict[str, Any], expected: dict[str, Any]) -> bool:
+def _matches_expected(candidate_dict: dict[str, Any], expected: dict[str, Any]) -> Optional[tuple[str, Any, Any]]:
     """Compare candidate output to expected golden output.
 
-    Only core semantic fields are compared (tracing fields like scraped_at differ per run).
+    Returns None on match, or (field_name, expected_val, actual_val) on first mismatch.
     """
     compare_fields = (
         "title", "brand", "gtin", "image_urls", "variant",
@@ -217,8 +254,8 @@ def _matches_expected(candidate_dict: dict[str, Any], expected: dict[str, Any]) 
         exp_val = _normalize(expected.get(field))
         if cand_val != exp_val:
             logger.debug("golden mismatch on %s: %r != %r", field, cand_val, exp_val)
-            return False
-    return True
+            return (field, exp_val, cand_val)
+    return None
 
 
 def _normalize(v: Any) -> Any:

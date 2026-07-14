@@ -230,8 +230,8 @@ All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (s
 
 | Setting | Default | Notes |
 |---------|---------|-------|
-| `repair_budget` | 3 | Shared budget for HTML repair ladder (D8) |
-| `repair_model_ladder` | flash → flash → pro | DeepSeek model tiers |
+| `repair_model_ladder` | flash → flash → pro → pro | DeepSeek model tiers per attempt; attempt count = list length |
+| `repair_temperature_ladder` | 0.1 → 0.4 → 0.7 → 0.9 | Parser-generation temperature per attempt (must match model ladder length) |
 | `json_heal_budget` | 1 | Single-shot for API route |
 | `sandbox_timeout` | 10s | Kill parser subprocess after this |
 | `sandbox_import_whitelist` | `bs4, lxml, re, json` | Only these can be imported |
@@ -240,7 +240,7 @@ All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (s
 | `mass_invalid_target_ratio` | 0.3 | Alert if >30% of a site's 24h runs are invalid_target |
 | `mass_invalid_target_absolute` | 20 | Or if absolute count exceeds this |
 
-Override via env vars (`SCRAPING_REPAIR_BUDGET=5` etc.).
+Override via env vars (`SCRAPING_REPAIR_MODEL_LADDER='["deepseek-v4-flash","deepseek-v4-pro"]'` etc.).
 
 ## Verification
 

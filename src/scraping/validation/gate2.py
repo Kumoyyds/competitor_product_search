@@ -14,18 +14,24 @@ def register_feasible_rule(site: str, rule: FeasibleRule) -> None:
 
 
 def _core_price_rule(data: ProductData) -> str | None:
-    """in_stock=True must be paired with a positive price (D13).
+    """in_stock=True must be paired with a positive price signal (D13).
 
-    Rejects both:
-      - price is None (original D13 rule)
-      - price <= 0 (LLM-generated parsers sometimes hallucinate 0.0 as a
-        "safe default" when they can't locate the price on browse/category
-        pages; a truly in-stock retail product never sells for £0.00)
+    Accepts price OR list_price (either one > 0 qualifies).  A parser that
+    correctly extracts list_price but misses the current-price DOM node
+    should still pass — we never silently reassign list_price → price,
+    because on discount pages that would record the RRP as the current
+    price.  The gate merely checks that *some* positive price exists.
+
+    Still rejects:
+      - Both None
+      - A hallucinated 0.0 even when the other field carries a real value
     """
-    if data.in_stock and data.price is None:
-        return "in_stock=True but price is missing"
-    if data.in_stock and data.price is not None and data.price <= 0:
-        return f"in_stock=True but price is non-positive ({data.price})"
+    if not data.in_stock:
+        return None
+    has_price = data.price is not None and data.price > 0
+    has_list = data.list_price is not None and data.list_price > 0
+    if not (has_price or has_list):
+        return "in_stock=True but no positive price or list_price"
     return None
 
 

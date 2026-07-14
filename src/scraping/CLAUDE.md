@@ -15,7 +15,7 @@ Full spec: `scraping_module_spec_v1_2.md` (v1.2, 510 lines). Key decisions are n
 ### Data Flow
 
 `Router.scrape(url)` → host→site→ordered scraper list (two-hop) → try each scraper:
-- **HTMLScraper route** (Tesco, Argos): BrightData Web Unlocker → HTML → invalid-target pre-detection → ordered parser list (sandbox-executed) → two gates → success → ProductData. On failure: **Agent repair ladder** (4 attempts, v4-flash ×2 → v4-pro ×2; last attempt enables thinking mode) → candidate parser → sandbox + golden test → promote if passes.
+- **HTMLScraper route** (Tesco, Argos): BrightData Web Unlocker → HTML → invalid-target pre-detection → ordered parser list (sandbox-executed) → two gates → success → ProductData. On failure: **Agent repair ladder** (attempt count = `len(repair_model_ladder)`; config-driven via `config.py`) → candidate parser → sandbox + golden test → promote if passes.
 - **DirectAPIScraper route** (Amazon, Tesco DCA backup): BrightData Datasets/DCA API → JSON → field mapping → two gates. On gate failure: **restricted JSON self-healing** (D25 red line — remaps existing keys only, never fabricates).
 
 On terminal failure of a scraper: Router tries the next in the list; when exhausted → `EscalationStore.upsert(signature, reason, snapshot)` with reason ∈ `{parser_broken, api_malformed, infra_failure, mass_invalid_target}`.
@@ -36,25 +36,27 @@ BaseScraper (ABC)
 
 - Gate 1: Pydantic type/structure validation (`price` optional at this layer)
 - Gate 2: `feasible_check` cross-field semantics:
-  - `in_stock=True + price=None` → fault
+  - `in_stock=True + price=None` → fault (unless `list_price` is present and >0)
   - `in_stock=True + price<=0` → fault (hallucinated zero from LLM default)
   - `in_stock=False + no_images + no_price + no_list_price` → fault (likely an error/stub page, not a real out-of-stock product)
 
 ### Repair Ladder (§5.5)
 
-Each attempt (up to 4, shared budget). Model ladder: `[deepseek-v4-flash, deepseek-v4-flash, deepseek-v4-pro, deepseek-v4-pro]`:
-1. **Turn A — no_product judgment**: LLM decides if HTML is a real product page. If not, backfill phrase to `invalid_target_phrases` and return `InvalidTargetResult`. Does NOT consume budget. **Runs only on attempt 0** (asking the same question again on retries wastes LLM calls).
-2. **Turn B — source_absence** (attempt 2 only): distinguishes "hard-to-parse product page" (solvable) vs "no data on page" (source_absent → terminal, skip attempt 3).
-3. **Turn C — parser generation**: LLM produces `def parse(html, url) -> dict` → sandbox → gates → `promote_candidate()` (golden test) → active parser row inserted.
-4. **Attempt 3 (last)**: `deepseek-v4-pro` with thinking mode enabled (`reasoning_effort="high"`, `extra_body: {thinking: {type: enabled}}`). The LLM chains-of-thought through earlier failures; Tier 3 strategy prompt guides it to inspect JSON-LD `@graph`, dual-price patterns, and missing-field reasoning.
+Config-driven: attempt count = `len(cfg.repair_model_ladder)`. Each attempt registers a full `AttemptRecord` (code, capture summary, errors) fed back to the next attempt — no index misalignment, works for any node count. Default: `[flash, flash, pro, pro]`.
 
-**Convergence-quality signals fed into the ladder** (added after M12 findings):
-- **Full sandbox tracebacks** propagated into next attempt's prompt (was: only exception message — LLM had no line numbers to fix).
-- **Full prior candidate code** included in next attempt (was: truncated at 2000 chars).
-- **Temperature ramp** for parser generation: `[0.1, 0.4, 0.7, 0.9]` per attempt — attempt 0 stays deterministic; retries genuinely explore alternatives. Judgment prompts (Turn A/B) always stay at 0.1.
-- **Thinking mode** (pro model): only enabled on the last (`repair_budget-1`) attempt, and only for Turn C. Turn A/B judgments are cheap yes/no gates — reasoning doesn't help them.
-- **Tier-specific strategy hints** in the prompt: attempt 0 = "prefer JSON-LD Product schema", attempt 1 = "fix the specific error, don't rewrite", attempt 2 = "try a fundamentally different approach; also handle Tesco's dual-price `offers.priceSpecification` case".
-- **HTML truncation disclosure**: parser_gen prompt explicitly warns that the excerpt may be truncated and pushes the LLM toward JSON-LD-first extraction (more stable, survives truncation).
+1. **Turn A — no_product judgment**: LLM decides if HTML is a real product page. If not, backfill phrase to `invalid_target_phrases` and return `InvalidTargetResult`. Does NOT consume budget. **Runs only on attempt 0** (asking the same question again on retries wastes LLM calls).
+2. **Turn B — source_absence**: runs on attempt 1 only when it's not the last attempt (skipped when 2-node ladder, since nothing left to skip). Distinguishes "hard-to-parse product page" (solvable) vs "no data on page" (source_absent → terminal).
+3. **Turn C — parser generation**: every attempt. LLM produces `def parse(html, url) -> dict` → sandbox → gates → `promote_candidate()` (golden test) → active parser row inserted.
+4. **Last attempt**: thinking mode enabled (`reasoning_effort="high"`, `extra_body: {thinking: {type: enabled}}`). Strategy: `_ROLE_STRATEGY["last"]` (step-by-step, inspect all prior records).
+
+**Convergence-quality signals fed into the ladder**:
+- **Full sandbox tracebacks** propagated into next attempt (F1 fix).
+- **AttemptRecord list**: candidate code + `summarize_capture()` output (which fields captured/missing) + errors, all aligned by index — no more error/candidate mislabelling.
+- **Temperature ramp** from config (`repair_temperature_ladder`), default `[0.1, 0.4, 0.7, 0.9]`. Judgment prompts (Turn A/B) always stay at 0.1.
+- **Thinking mode** enabled on the last attempt (len-1), only for Turn C.
+- **Role-specific strategy hints** (3 semantic roles): `first` = "JSON-LD first", `middle` = "fix specific missing field from capture", `last` = "thinking, inspect all prior records".
+- **HTML truncation disclosure**: parser_gen prompt warns the excerpt may be truncated, pushes JSON-LD-first extraction.
+- **GoldenRejection**: `promote_candidate` returns which golden/field/expected/actual on mismatch, fed back into the next attempt's errors.
 
 ### BrightData extraction hardening (added after M12 findings)
 
@@ -123,7 +125,7 @@ src/scraping/
 | M9 | Golden set + promote/prune | ✔ verify_m9.py |
 | M10 | Scraper-level fallback + escalation writing | ✔ verify_m10.py |
 | M11 | Cold start CLI (real DeepSeek) | ✔ verify_m11.py |
-| M12 | End-to-end live scraping (real BrightData + DeepSeek, 4-way concurrent, 4-attempt ladder with v4-pro thinking mode) | ✔ verify_m12.py |
+| M12 | End-to-end live scraping (real BrightData + DeepSeek, 4-way concurrent, config-driven ladder) | ✔ verify_m12.py |
 | M12 | End-to-end live scraping (real BrightData + DeepSeek, concurrent) | ✔ verify_m12.py |
 
 ## Public API
@@ -147,7 +149,7 @@ Interactive: fetches all URLs → LLM generates first parser → user confirms e
 
 - `BRIGHT_DATA_KEY` / `DEEPSEEK_KEY` — API keys (loaded from `.env`)
 - `SCRAPING_DB_PATH` — SQLite path (default: `scraping.db`)
-- `repair_budget = 4`, `repair_model_ladder = [deepseek-v4-flash, deepseek-v4-flash, deepseek-v4-pro, deepseek-v4-pro]`
+- `repair_model_ladder` / `repair_temperature_ladder` — model + temperature per attempt (default: `[flash, flash, pro, pro]` / `[0.1, 0.4, 0.7, 0.9]`; lengths must match)
 - `json_heal_budget = 1`
 - `sandbox_timeout = 10s`, `sandbox_import_whitelist = [bs4, lxml, re, json]`
 - `prune_sliding_window = 50`, `per_site_parser_limit = 4`

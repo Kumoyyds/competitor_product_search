@@ -62,7 +62,7 @@ _cfg = _cfg_mod.get_config()
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
 INPUT_XLSX = _DATA_DIR / "tesco_argos.xlsx"
-OUTPUT_LOG = Path(__file__).parent / "verify_m12_argo_output.log"
+OUTPUT_LOG = Path(__file__).parent / "verify_m12_v3_output.log"
 
 HAS_BRIGHT_DATA = bool(_cfg.bright_data_key)
 HAS_LLM = bool(_cfg.deepseek_key)
