@@ -4,7 +4,7 @@ Each milestone's verification is persisted here so you can audit and re-run at a
 
 ## Milestone Overview
 
-The scraping module was built incrementally across 12 milestones (M1–M12). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
+The scraping module was built incrementally across 13 milestones (M1–M13). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
 
 ### M1 — ProductData Schema + Two Gates
 Defines the canonical `ProductData` Pydantic model (url, website, title, price, currency, in_stock, image_urls, …) and the two-gate validation pipeline:
@@ -106,6 +106,14 @@ Bootstrap a new site with zero manual parser writing. Uses **real DeepSeek API**
 
 Runs the full scraping pipeline against a per-site URL batch (`src/scraping/data/tesco_test.xlsx.xlsx` or `argos_test.xlsx.xlsx`, both 3-column `label / url / host`) using real BrightData and real DeepSeek. No mocking — this exercises the complete live pipeline end-to-end.
 
+### M13 — Amazon/Tesco DCA Polling Fix
+
+Fixes the duplicate-trigger bug: Amazon and Tesco DCA scrapers trigger only one BD snapshot per URL, even on poll timeout. The fix:
+- Splits each async BD client's `fetch()` into `_trigger()` (retryable — a failed POST creates no snapshot) and `_poll()` (run **outside** `with_extraction_retry`, owning the full configurable budget).
+- Moves polling constants (max seconds, interval) into `ScrapingConfig` as `bd_async_poll_max_seconds` (default 300s) and `bd_async_poll_interval_seconds` (default 4s).
+- Polls immediately on first GET (no sleep before it) for faster retrieval when the snapshot is ready.
+- Proves with offline mocked httpx.AsyncClient that a poll timeout does NOT cause a re-trigger — the core bug.
+
 **Latest results** (July 2026):
 | Batch | URLs | SUCCESS | Invalid Target | Infra Error | Escalated | Check |
 |-------|------|---------|---------------|-------------|-----------|-------|
@@ -120,7 +128,7 @@ Key aspects:
 - **Gate 2 strengthened**: rejects in-stock items with price ≤ 0 (LLM hallucinated zero), and OOS items with no product signals (image_urls empty + no price + no list_price — likely an error page, not a real product).
 - **Upstream error retry**: BD responses < 1000 chars OR containing `"502 Bad Gateway"` / `"500 Internal Server Error"` etc. (1000-5000 byte gap) trigger extraction retry with 2s pause.
 - **Temp DB** — uses a temporary SQLite database (`%TEMP%\verify_m12.db`) to avoid polluting production `scraping.db`. Cleaned up on process exit.
-- **`.env` key aliasing** — accepts `BRIGHT_UNLOCKER_KEY` in `.env` and injects as `BRIGHT_DATA_KEY` before config load.
+- **`.env` key aliasing** — `ScrapingConfig.bright_data_key` accepts `BRIGHT_UNLOCKER_KEY` as well as `BRIGHT_DATA_KEY` / `SCRAPING_BRIGHT_DATA_KEY` (see `config.py`), so no script-local shim is needed.
 - **Per-URL detailed report** — each URL gets a formatted block showing: input label, resolved site, scraper chain, outcome, all extracted ProductData fields (title / price / list_price / brand / gtin / variant / unit_price / unit / availability_raw / image_urls / parser_version / source_type), latency, and mechanisms triggered.
 - **Mechanism inference** — analyzes the `scrape_runs` DB path (`fast`, `agent_repaired`, `invalid_target`, `escalated`) to report exactly what happened.
 - **TeeWriter with per-write flush** — output goes to stdout + log file simultaneously, flushed on every write for live progress.
@@ -151,8 +159,10 @@ Key aspects:
 | `verify_m12.py` | M12 — End-to-end live scraping (per-site batch from `tesco_test.xlsx.xlsx` / `argos_test.xlsx.xlsx`, concurrent, real BrightData + DeepSeek) | **real BrightData + DeepSeek** |
 | `verify_m12_output.log` | Latest tesco run — 6 checks, 0 failed | — |
 | `verify_m12_argo_output.log` | Latest argos run — 6/8 SUCCESS, 0 escalated | — |
+| `verify_m13.py` | M13 — Amazon/Tesco DCA polling fix: no duplicate triggers, immediate-first-poll, configurable budget (offline, mocked) | offline |
+| `verify_m13_output.log` | Latest run — 9 checks, 0 failed | — |
 
-**Total: 172 checks passed across all milestones (M1–M11). M12 adds live end-to-end validation (label-based checks vary per input batch).**
+**Total: 181 checks passed across all milestones (M1–M12: 172; M13: 9). M12 adds live end-to-end validation (label-based checks vary per input batch). M13 proves the duplicate-trigger bug is fixed.**
 
 ## How to re-run
 
@@ -166,11 +176,30 @@ python -m src.scraping.tests.verify_m7   | tee src/scraping/tests/verify_m7_outp
 python -m src.scraping.tests.verify_m8   | tee src/scraping/tests/verify_m8_output.log
 python -m src.scraping.tests.verify_m9   | tee src/scraping/tests/verify_m9_output.log
 python -m src.scraping.tests.verify_m10  | tee src/scraping/tests/verify_m10_output.log
-python -m src.scraping.tests.verify_m11  | tee src/scraping/tests/verify_m11_output.log
+python -m src.scraping.tests.verify_m11  | tee src/scraping.tests/verify_m11_output.log
 python -m src.scraping.tests.verify_m12  | tee src/scraping/tests/verify_m12_output.log
+python -m src.scraping.tests.verify_m13  | tee src/scraping/tests/verify_m13_output.log
 ```
 
 On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTHONIOENCODING="utf-8"`) so `->` and similar ASCII arrows don't crash cp1252.
+
+## Milestone artifact summary
+
+| Milestone | Focus | LLM | BD |
+|-----------|-------|-----|----|
+| M1–M3 | ProductData, gates, router, SQLite 6 tables | offline | offline |
+| M4 | DirectAPIScraper (Amazon + Tesco DCA) field mapping | offline | offline |
+| M5 | HTMLScraper + invalid-page detection (5 signals) | offline | offline |
+| M6 | Ordered parser list + run recording | offline | offline |
+| M7 | Sandbox AST scan, timeout, isolation | offline | offline |
+| M8 | Repair agent + JSON healer (real DeepSeek) | **real** | offline |
+| M9 | Golden set + promote/prune | offline | offline |
+| M10 | Escalation writing, signature dedup, mass_invalid_target | offline | offline |
+| M11 | Cold start CLI (real DeepSeek) | **real** | offline |
+| M12 | End-to-end live scraping | **real** | **real** |
+| M13 | Amazon/Tesco DCA polling fix (no duplicate triggers) | offline | offline |
+
+**Total: 181 checks passed across all milestones (M1–M12: 172; M13: 9).**
 
 ## LLM-dependent tests
 

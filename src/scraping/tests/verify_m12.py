@@ -7,7 +7,7 @@ mechanisms triggered.
 Run from repo root:
     python -m src.scraping.tests.verify_m12
 
-Requires: BRIGHT_DATA_KEY in .env (refuses to run without it).
+Requires: BRIGHT_DATA_KEY (or BRIGHT_UNLOCKER_KEY / SCRAPING_BRIGHT_DATA_KEY) in .env (refuses to run without it).
 Optional: DEEPSEEK_KEY in .env (HTML scrapers will escalate without repair; API scrapers still work).
 
 Cost: real BrightData API calls for all 22 URLs + potentially DeepSeek calls for repair.
@@ -45,15 +45,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Compatibility: accept BRIGHT_UNLOCKER_KEY as an alias for BRIGHT_DATA_KEY
-# (the .env in this repo uses BRIGHT_UNLOCKER_KEY, but scraping/config.py reads BRIGHT_DATA_KEY).
-# This must happen BEFORE the first get_config() call — otherwise the singleton
-# caches an empty key and downstream HTTP requests fail with "Illegal header value b'Bearer '".
-if not os.environ.get("BRIGHT_DATA_KEY") and not os.environ.get("SCRAPING_BRIGHT_DATA_KEY"):
-    _fallback = os.environ.get("BRIGHT_UNLOCKER_KEY", "")
-    if _fallback:
-        os.environ["BRIGHT_DATA_KEY"] = _fallback
-
 # Force config reload so it picks up the temp DB path
 import src.scraping.config as _cfg_mod
 
@@ -61,8 +52,8 @@ _cfg_mod._config = None
 _cfg = _cfg_mod.get_config()
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
-INPUT_XLSX = _DATA_DIR / "tesco_argos.xlsx"
-OUTPUT_LOG = Path(__file__).parent / "verify_m12_v3_output.log"
+INPUT_XLSX = _DATA_DIR / "amazon.xlsx"
+OUTPUT_LOG = Path(__file__).parent / "verify_m12_amazon_output.log"
 
 HAS_BRIGHT_DATA = bool(_cfg.bright_data_key)
 HAS_LLM = bool(_cfg.deepseek_key)

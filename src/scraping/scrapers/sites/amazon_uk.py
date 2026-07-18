@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from ...extraction import BrightDataDatasets, with_extraction_retry
 from ...registry import register_scraper
@@ -40,12 +43,17 @@ class AmazonUKScraper(DirectAPIScraper):
         self._client = BrightDataDatasets()
 
     async def _fetch_json(self, url: str) -> dict[str, Any]:
-        return await with_extraction_retry(self._client.fetch, url)
+        snapshot_id = await with_extraction_retry(self._client._trigger, url)
+        return await self._client._poll(snapshot_id)
 
     def _is_not_found(self, json_data: dict[str, Any]) -> bool:
         if json_data.get("error"):
             return True
         if not json_data.get("title"):
+            logger.warning(
+                "Amazon BD extraction dropped as invalid_target: no title; present keys=%s",
+                list(json_data.keys()),
+            )
             return True
         return False
 

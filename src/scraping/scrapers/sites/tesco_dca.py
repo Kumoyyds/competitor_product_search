@@ -28,7 +28,8 @@ class TescoDCAScraper(DirectAPIScraper):
         self._client = BrightDataDCA()
 
     async def _fetch_json(self, url: str) -> dict[str, Any]:
-        return await with_extraction_retry(self._client.fetch, url)
+        collection_id = await with_extraction_retry(self._client._trigger, url)
+        return await self._client._poll(collection_id)
 
     def _is_not_found(self, json_data: dict[str, Any]) -> bool:
         if not json_data.get("product_name"):

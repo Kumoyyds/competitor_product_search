@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Mapping, Optional
 
 import httpx
@@ -151,7 +152,8 @@ class BrightDataDatasets:
     def __init__(self, dataset_id: str = "gd_l7q7dkf244hwjntr0"):
         self._dataset_id = dataset_id
 
-    async def fetch(self, url: str, **extra_input: str) -> dict[str, Any]:
+    async def _trigger(self, url: str, **extra_input: str) -> str:
+        """Trigger a snapshot and return its ID. Retried on transient failures."""
         cfg = get_config()
         headers = {
             "Authorization": f"Bearer {cfg.bright_data_key}",
@@ -160,8 +162,7 @@ class BrightDataDatasets:
 
         input_item: dict[str, str] = {"url": url, **extra_input}
 
-        async with httpx.AsyncClient(timeout=120) as client:
-            # trigger
+        async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{_BD_API_BASE}/datasets/v3/trigger",
                 json=[input_item],
@@ -177,30 +178,57 @@ class BrightDataDatasets:
                     f"Datasets trigger failed: {resp.status_code} {resp.text[:200]}",
                     status_code=resp.status_code,
                 )
-            snapshot_id = resp.json()["snapshot_id"]
+            return resp.json()["snapshot_id"]
 
-            # poll until ready
-            for _ in range(30):
-                await asyncio.sleep(4)
-                status_resp = await client.get(
-                    f"{_BD_API_BASE}/datasets/v3/snapshot/{snapshot_id}",
-                    headers=headers,
-                )
-                if status_resp.status_code == 200:
-                    data = status_resp.json()
-                    if isinstance(data, list) and data:
-                        return data[0]
-                    if isinstance(data, dict):
-                        status = data.get("status")
-                        if status is None:
-                            return data
-                        if status in ("failed", "error"):
-                            raise BrightDataInfraError(
-                                f"Snapshot failed: {data}",
-                                status_code=status_resp.status_code,
-                            )
+    async def _poll(self, snapshot_id: str) -> dict[str, Any]:
+        """Poll a snapshot until ready or deadline, raising on failure."""
+        cfg = get_config()
+        headers = {
+            "Authorization": f"Bearer {cfg.bright_data_key}",
+            "Content-Type": "application/json",
+        }
+        deadline = time.monotonic() + cfg.bd_async_poll_max_seconds
 
-            raise BrightDataInfraError("Snapshot polling timed out")
+        async with httpx.AsyncClient(timeout=60) as client:
+            # poll until ready — first GET is immediate (no sleep before it)
+            while True:
+                try:
+                    status_resp = await client.get(
+                        f"{_BD_API_BASE}/datasets/v3/snapshot/{snapshot_id}",
+                        headers=headers,
+                    )
+                except httpx.HTTPError as e:
+                    # transient network/timeout on a single poll — keep polling
+                    logger.debug("Transient poll error (retrying): %s", e)
+                else:
+                    if status_resp.status_code == 200:
+                        data = status_resp.json()
+                        if isinstance(data, list) and data:
+                            return data[0]
+                        if isinstance(data, dict):
+                            status = data.get("status")
+                            if status is None:
+                                return data
+                            if status in ("failed", "error"):
+                                raise BrightDataInfraError(
+                                    f"Snapshot failed: {data}",
+                                    status_code=status_resp.status_code,
+                                )
+                    # non-200 (including 202 "still running") — keep polling
+
+                # check deadline before sleeping
+                if time.monotonic() >= deadline:
+                    elapsed = time.monotonic() - (deadline - cfg.bd_async_poll_max_seconds)
+                    raise BrightDataInfraError(
+                        f"Snapshot polling timed out after {elapsed:.0f}s (id={snapshot_id})"
+                    )
+
+                await asyncio.sleep(cfg.bd_async_poll_interval_seconds)
+
+    async def fetch(self, url: str, **extra_input: str) -> dict[str, Any]:
+        """Convenience wrapper: trigger then poll. Public API for direct test callers."""
+        snapshot_id = await self._trigger(url, **extra_input)
+        return await self._poll(snapshot_id)
 
 
 class BrightDataDCA:
@@ -209,15 +237,15 @@ class BrightDataDCA:
     def __init__(self, collector_id: str = "c_mr6mrw40d614thtpd"):
         self._collector_id = collector_id
 
-    async def fetch(self, url: str) -> dict[str, Any]:
+    async def _trigger(self, url: str) -> str:
+        """Trigger a collection and return its ID. Retried on transient failures."""
         cfg = get_config()
         headers = {
             "Authorization": f"Bearer {cfg.bright_data_key}",
             "Content-Type": "application/json",
         }
 
-        async with httpx.AsyncClient(timeout=120) as client:
-            # trigger
+        async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{_BD_API_BASE}/dca/trigger",
                 json=[{"url": url}],
@@ -230,19 +258,47 @@ class BrightDataDCA:
                     f"DCA trigger failed: {resp.status_code} {resp.text[:200]}",
                     status_code=resp.status_code,
                 )
-            collection_id = resp.json()["collection_id"]
+            return resp.json()["collection_id"]
 
-            # poll until ready
-            for _ in range(30):
-                await asyncio.sleep(4)
-                status_resp = await client.get(
-                    f"{_BD_API_BASE}/dca/dataset",
-                    headers=headers,
-                    params={"id": collection_id},
-                )
-                if status_resp.status_code == 200:
-                    data = status_resp.json()
-                    if isinstance(data, list) and data:
-                        return data[0]
+    async def _poll(self, collection_id: str) -> dict[str, Any]:
+        """Poll a collection until ready or deadline, raising on failure."""
+        cfg = get_config()
+        headers = {
+            "Authorization": f"Bearer {cfg.bright_data_key}",
+            "Content-Type": "application/json",
+        }
+        deadline = time.monotonic() + cfg.bd_async_poll_max_seconds
 
-            raise BrightDataInfraError("DCA collection polling timed out")
+        async with httpx.AsyncClient(timeout=60) as client:
+            # poll until ready — first GET is immediate (no sleep before it)
+            while True:
+                try:
+                    status_resp = await client.get(
+                        f"{_BD_API_BASE}/dca/dataset",
+                        headers=headers,
+                        params={"id": collection_id},
+                    )
+                except httpx.HTTPError as e:
+                    # transient network/timeout on a single poll — keep polling
+                    logger.debug("Transient DCA poll error (retrying): %s", e)
+                else:
+                    if status_resp.status_code == 200:
+                        data = status_resp.json()
+                        # DCA's terminal detection: only list check (no status field)
+                        if isinstance(data, list) and data:
+                            return data[0]
+                    # non-200 (including 202 "still running") — keep polling
+
+                # check deadline before sleeping
+                if time.monotonic() >= deadline:
+                    elapsed = time.monotonic() - (deadline - cfg.bd_async_poll_max_seconds)
+                    raise BrightDataInfraError(
+                        f"DCA collection polling timed out after {elapsed:.0f}s (id={collection_id})"
+                    )
+
+                await asyncio.sleep(cfg.bd_async_poll_interval_seconds)
+
+    async def fetch(self, url: str) -> dict[str, Any]:
+        """Convenience wrapper: trigger then poll. Public API for direct test callers."""
+        collection_id = await self._trigger(url)
+        return await self._poll(collection_id)

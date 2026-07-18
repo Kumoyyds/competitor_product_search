@@ -11,7 +11,9 @@ class ScrapingConfig(BaseSettings):
     # --- Bright Data ---
     bright_data_key: str = Field(
         default="",
-        validation_alias=AliasChoices("SCRAPING_BRIGHT_DATA_KEY", "BRIGHT_DATA_KEY"),
+        validation_alias=AliasChoices(
+            "SCRAPING_BRIGHT_DATA_KEY", "BRIGHT_DATA_KEY", "BRIGHT_UNLOCKER_KEY"
+        ),
     )
     bright_data_zone: str = "web_unlocker1"
 
@@ -28,6 +30,10 @@ class ScrapingConfig(BaseSettings):
     # --- extraction ---
     extraction_retry_count: int = 2
     extraction_retry_interval: float = 2.0
+
+    # --- Bright Data async polling (Datasets + DCA) ---
+    bd_async_poll_max_seconds: int = 300  # wall-clock budget to poll one snapshot
+    bd_async_poll_interval_seconds: float = 4.0  # sleep between poll GETs
 
     # --- repair (HTML route) ---
     # Number of attempts = len(repair_model_ladder). Edit the lists together to
