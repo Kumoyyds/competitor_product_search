@@ -69,9 +69,30 @@ def verify_m1() -> None:
     check("Gate 2 error message mentions price",
           errs2 and "price" in errs2[0].lower(), str(errs2))
 
-    # in_stock=False + price=None -> legal
-    pd3, errs3 = validate({**base, "in_stock": False, "price": None})
-    check("in_stock=False + price=None -> legal",
+    # in_stock=True + only membership_price > 0 -> passes Gate 2
+    pd5, errs5 = validate({**base, "price": None, "membership_price": Decimal("14.99")})
+    check("in_stock=True + only membership_price > 0 -> passes Gate 2",
+          pd5 is not None and not errs5, str(errs5))
+
+    # in_stock=False + no images + membership_price present -> passes (product signal)
+    pd6, errs6 = validate({
+        **base,
+        "in_stock": False,
+        "price": None,
+        "image_urls": [],
+        "membership_price": Decimal("8.99"),
+    })
+    check("in_stock=False + only membership_price -> passes (product signal present)",
+          pd6 is not None and not errs6, str(errs6))
+
+    # in_stock=False + price=None but has image -> legal (product signal present)
+    pd3, errs3 = validate({
+        **base,
+        "in_stock": False,
+        "price": None,
+        "image_urls": ["https://img.example.com/p.jpg"],
+    })
+    check("in_stock=False + price=None + image -> legal (product signal present)",
           pd3 is not None and not errs3, str(errs3))
 
     # in_stock=False + price present -> legal (some sites keep last price)
@@ -111,6 +132,14 @@ def verify_m2() -> None:
           tesco_scrapers[0].__name__ == "TescoScraper")
     check("Tesco order: DCA second (backup)",
           tesco_scrapers[1].__name__ == "TescoDCAScraper")
+
+    argos_scrapers = get_scrapers("argos")
+    check("argos has 2 scrapers (HTML primary + DCA backup)",
+          len(argos_scrapers) == 2, str([s.__name__ for s in argos_scrapers]))
+    check("Argos order: HTMLScraper first",
+          argos_scrapers[0].__name__ == "ArgosScraper")
+    check("Argos order: DCA second (backup)",
+          argos_scrapers[1].__name__ == "ArgosDCAScraper")
 
     # host -> site resolution (loaded from hosts.yaml)
     cases = [

@@ -21,9 +21,10 @@ OPTIONAL (return None or omit if unavailable):
   brand (str)
   gtin (str) — EAN/UPC barcode; do NOT put ASIN or SKU here
   variant (dict) — {"size": ..., "color": ..., "pack_qty": ...} keys as available
-  price (Decimal-compatible string, e.g. "19.99") — REQUIRED by Gate 2 when in_stock is True
+  price (Decimal-compatible string, e.g. "19.99") — REQUIRED by Gate 2 when in_stock is True (or list_price / membership_price — any one > 0 qualifies)
   currency (str) — ISO-4217 code like "GBP", "EUR", never a symbol like "£"
   list_price (Decimal-compatible string) — original/RRP price for discount detection
+  membership_price (Decimal-compatible string) — member/loyalty offer price (e.g. Tesco Clubcard, Amazon Prime member price); the special price available only to loyalty-program members. Return None/omit if the page shows no member-specific price.
   unit_price (Decimal-compatible string) — e.g. "£/kg" numeric value
   unit (str) — e.g. "kg", "l"
   availability_raw (str) — original stock label from the page ("In stock", "Auf Lager", etc.)

@@ -133,6 +133,36 @@ def verify_tesco_dca_mapping() -> None:
     check("Gate 1 + Gate 2 pass", product is not None, str(errors))
 
 
+def verify_argos_dca_mapping() -> None:
+    section("M4.3 - ArgosDCAScraper._map_fields on DCA sample payload")
+
+    from src.scraping.scrapers.sites.argos_dca import ArgosDCAScraper
+    from src.scraping.validation import validate
+
+    dca_payload = {
+        "product_title": "McGregor 30cm Electric Hover Collect Lawnmower - 1700W",
+        "image_urls": ["https://media.4rgos.it/i/Argos/4490582_R_Z001A?w=134&h=134&qlt=50", "https://media.4rgos.it/i/Argos/4490582_R_Z006A?w=134&h=134&qlt=50", "https://media.4rgos.it/i/Argos/4490582_R_Z008A?w=134&h=134&qlt=50", "https://media.4rgos.it/i/Argos/4490582_R_Z009A?w=134&h=134&qlt=50"],
+        "price": {"value": 85, "currency": "GBP", "symbol": "?"},
+        "list_price": {"value": 95, "currency": "GBP", "symbol": "?"},
+        "currency": "?",
+        "discount": True,
+        "in_stock": True,
+        "input": {"url": "https://www.argos.co.uk/product/4490582"},
+    }
+
+    scraper = ArgosDCAScraper()
+    mapped = scraper._map_fields(dca_payload, dca_payload["input"]["url"])
+
+    check("ArgosDCA title extracted", "McGregor" in mapped["title"])
+    check("ArgosDCA price is Decimal 85", mapped["price"] == Decimal("85"), str(mapped["price"]))
+    check("ArgosDCA list_price is Decimal 95", mapped["list_price"] == Decimal("95"), str(mapped["list_price"]))
+    check("ArgosDCA currency GBP", mapped["currency"] == "GBP")
+    check("ArgosDCA in_stock True", mapped["in_stock"] is True)
+    check("ArgosDCA image_urls populated", bool(mapped["image_urls"]))
+
+    product, errors = validate(mapped)
+    check("ArgosDCA Gate 1 + Gate 2 pass", product is not None, str(errors))
+
 # ---------------------------------------------------------------------------
 # M4.3 — is_not_found detection (invalid_target routing on API side)
 # ---------------------------------------------------------------------------
@@ -142,6 +172,7 @@ def verify_api_not_found() -> None:
 
     from src.scraping.scrapers.sites.amazon_uk import AmazonUKScraper
     from src.scraping.scrapers.sites.tesco_dca import TescoDCAScraper
+    from src.scraping.scrapers.sites.argos_dca import ArgosDCAScraper
 
     amz = AmazonUKScraper()
     check("Amazon: real product NOT flagged",
@@ -158,6 +189,12 @@ def verify_api_not_found() -> None:
           not tdca._is_not_found({"product_name": "Real Product"}))
     check("TescoDCA: missing product_name flagged",
           tdca._is_not_found({"in_stock": True}))
+    adca = ArgosDCAScraper()
+    check("ArgosDCA: product_title present NOT flagged",
+          not adca._is_not_found({"product_title": "Real Product"}))
+    check("ArgosDCA: missing product_title flagged",
+          adca._is_not_found({"in_stock": True}))
+
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +361,7 @@ def main() -> int:
 
     verifiers = [
         verify_amazon_mapping,
+        verify_argos_dca_mapping,
         verify_tesco_dca_mapping,
         verify_api_not_found,
         verify_detection_on_real_html,

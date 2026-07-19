@@ -28,6 +28,7 @@ class ProductData(BaseModel):
     price: Optional[Decimal] = None
     currency: Optional[str] = None
     list_price: Optional[Decimal] = None
+    membership_price: Optional[Decimal] = None
     unit_price: Optional[Decimal] = None
     unit: Optional[str] = None
 

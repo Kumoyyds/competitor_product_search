@@ -143,13 +143,14 @@ def parse(html, url):
     return {'title': 'WRONG', 'in_stock': True, 'price': '19.99',
             'currency': 'GBP', 'image_urls': []}
 """
+    from src.scraping.repair.golden import GoldenRejection
     rejected = await promote_candidate(
         site="argos",
         code=bad_parser,
         current_product=make_product(title="WRONG"),
         current_html="<html>a</html>",
     )
-    check("bad candidate rejected", rejected is None, f"got parser_id={rejected}")
+    check("bad candidate rejected", isinstance(rejected, GoldenRejection), f"got {type(rejected).__name__}={rejected}")
 
     section("M9.5 - _prune_hard_cap: >4 active parsers retires lowest-hit oldest")
     db = ScrapeDB(_DB_PATH); db.init_db()

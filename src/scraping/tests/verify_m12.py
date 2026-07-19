@@ -52,8 +52,8 @@ _cfg_mod._config = None
 _cfg = _cfg_mod.get_config()
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
-INPUT_XLSX = _DATA_DIR / "amazon.xlsx"
-OUTPUT_LOG = Path(__file__).parent / "verify_m12_amazon_output.log"
+INPUT_XLSX = _DATA_DIR / "test_data/initial_url.xlsx"
+OUTPUT_LOG = Path(__file__).parent / "verify_m12_output.log"
 
 HAS_BRIGHT_DATA = bool(_cfg.bright_data_key)
 HAS_LLM = bool(_cfg.deepseek_key)

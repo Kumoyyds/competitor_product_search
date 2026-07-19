@@ -1,6 +1,6 @@
 # Scraping Module
 
-**Status**: M1–M12 complete. Full Phase 0 lifecycle. M1–M11: 172 offline checks pass. M12: end-to-end live-scraping verification (6/8 SUCCESS, 0 escalated on Argos; 6/6 pass on Tesco). See `src/scraping/tests/`.
+**Status**: M1–M13 complete. Full Phase 0 lifecycle. M1–M11: 172 offline checks pass. M12: end-to-end live-scraping (Tesco+Argos). M13: Amazon/Tesco DCA polling fix (trigger/poll split — no duplicate Bright Data triggers). See `src/scraping/tests/`.
 
 ## Responsibility
 
@@ -30,29 +30,32 @@ BaseScraper (ABC)
   └── DirectAPIScraper
         ├── AmazonUKScraper  (Datasets API, order=1)
         └── TescoDCAScraper  (DCA API, order=2, Tesco backup)
+        └── ArgosDCAScraper  (DCA API, order=2, Argos backup)
 ```
 
 ### Two Gates (Public Checkpoint)
 
 - Gate 1: Pydantic type/structure validation (`price` optional at this layer)
 - Gate 2: `feasible_check` cross-field semantics:
-  - `in_stock=True + price=None` → fault (unless `list_price` is present and >0)
+  - `in_stock=True + price=None` → fault (unless `list_price` OR `membership_price` is present and >0)
   - `in_stock=True + price<=0` → fault (hallucinated zero from LLM default)
-  - `in_stock=False + no_images + no_price + no_list_price` → fault (likely an error/stub page, not a real out-of-stock product)
+  - `in_stock=False + no_images + no_price + no_list_price + no_membership_price` → fault (likely an error/stub page, not a real out-of-stock product)
 
 ### Repair Ladder (§5.5)
 
-Config-driven: attempt count = `len(cfg.repair_model_ladder)`. Each attempt registers a full `AttemptRecord` (code, capture summary, errors) fed back to the next attempt — no index misalignment, works for any node count. Default: `[flash, flash, pro, pro]`.
+Config-driven: attempt count = `len(cfg.repair_model_ladder)`. Each attempt registers a full `AttemptRecord` (code, capture summary, errors) fed back to the next attempt — no index misalignment, works for any node count. Default: `["deepseek-v4-flash", "deepseek-v4-pro"]` (2 attempts; previously 4, reduced in `fb68f14`).
 
-1. **Turn A — no_product judgment**: LLM decides if HTML is a real product page. If not, backfill phrase to `invalid_target_phrases` and return `InvalidTargetResult`. Does NOT consume budget. **Runs only on attempt 0** (asking the same question again on retries wastes LLM calls).
-2. **Turn B — source_absence**: runs on attempt 1 only when it's not the last attempt (skipped when 2-node ladder, since nothing left to skip). Distinguishes "hard-to-parse product page" (solvable) vs "no data on page" (source_absent → terminal).
-3. **Turn C — parser generation**: every attempt. LLM produces `def parse(html, url) -> dict` → sandbox → gates → `promote_candidate()` (golden test) → active parser row inserted.
+When the ladder has 2 nodes, Turn B (source_absence) is skipped (attempt 1 is the last, and source_absence only runs on non-last attempts). The logic is:
+
+1. **Turn A — no_product judgment** (attempt 0 only): LLM decides if HTML is a real product page. If not, backfill phrase to `invalid_target_phrases` and return `InvalidTargetResult`. Does NOT consume budget.
+2. **Turn B — source_absence** (non-last attempt only; skipped on 2-node ladder): Distinguishes "hard-to-parse product page" (solvable) vs "no data on page" (source_absent → terminal).
+3. **Turn C — parser generation** (every attempt): LLM produces `def parse(html, url) -> dict` → sandbox → gates → `promote_candidate()` (golden test) → active parser row inserted.
 4. **Last attempt**: thinking mode enabled (`reasoning_effort="high"`, `extra_body: {thinking: {type: enabled}}`). Strategy: `_ROLE_STRATEGY["last"]` (step-by-step, inspect all prior records).
 
 **Convergence-quality signals fed into the ladder**:
 - **Full sandbox tracebacks** propagated into next attempt (F1 fix).
-- **AttemptRecord list**: candidate code + `summarize_capture()` output (which fields captured/missing) + errors, all aligned by index — no more error/candidate mislabelling.
-- **Temperature ramp** from config (`repair_temperature_ladder`), default `[0.1, 0.4, 0.7, 0.9]`. Judgment prompts (Turn A/B) always stay at 0.1.
+- **AttemptRecord list**: candidate code + `summarize_capture()` output (which fields captured/missing) + errors, all aligned by index.
+- **Temperature ramp** from config (`repair_temperature_ladder`), default `[0.1, 0.4]` (2 values matching 2-attempt ladder). Judgment prompts (Turn A/B) always stay at 0.1.
 - **Thinking mode** enabled on the last attempt (len-1), only for Turn C.
 - **Role-specific strategy hints** (3 semantic roles): `first` = "JSON-LD first", `middle` = "fix specific missing field from capture", `last` = "thinking, inspect all prior records".
 - **HTML truncation disclosure**: parser_gen prompt warns the excerpt may be truncated, pushes JSON-LD-first extraction.
@@ -77,6 +80,18 @@ Config-driven: attempt count = `len(cfg.repair_model_ladder)`. Each attempt regi
 ### Scraper independence (added after M12 findings)
 
 `html_scraper.py` and `api_scraper.py` catch `BrightDataInfraError` and convert to `ScrapeFailed(signature=(site, "extraction_infra", ""))` / `(site, "api_infra", "")`. Rationale: each scraper's BD channel is independent (Web Unlocker ≠ DCA ≠ Datasets), so one channel's infra failure shouldn't block the router from trying the next scraper. The router's `_derive_reason` promotes the escalation reason back to `infra_failure` only when **all** attempted channels failed with `*_infra` signatures — that's a genuine BD-ecosystem-down event.
+
+### Datasets/DCA polling fix — trigger/poll split (M13)
+
+`BrightDataDatasets` (Amazon) and `BrightDataDCA` (Tesco backup) use a **trigger-then-poll** async API. The old code ran the entire trigger+poll cycle inside `with_extraction_retry`, so a poll timeout re-POSTed to `/trigger` — creating a fresh snapshot and abandoning the original (which kept running on BD's side and eventually succeeded, visible on the console but never retrieved). The same URL could trigger up to 3 snapshots (1 + `extraction_retry_count`) before giving up.
+
+M13 splits each client into `_trigger()` (retryable — a failed POST creates no snapshot) and `_poll()` (runs **outside** `with_extraction_retry`, owning the full wall-clock budget set by `bd_async_poll_max_seconds`). Only `_trigger` is wrapped in the retry. Result:
+
+- One Amazon URL triggers **at most one** BD snapshot.
+- Poll budget is configurable (`bd_async_poll_max_seconds` = 300s, `bd_async_poll_interval_seconds` = 4s) — covers the Amazon Datasets tail.
+- First poll is immediate (no sleep before the first GET); transient single-GET failures are logged and tolerated (loop continues).
+- `BrightDataInfraError` on poll timeout/failure propagates exactly once — no retry, no re-trigger, honoring the "no retry" intent from D21.
+- The HTML route (Unlocker) is completely unaffected (`with_extraction_retry` was not modified).
 
 ## File Structure
 
@@ -126,7 +141,7 @@ src/scraping/
 | M10 | Scraper-level fallback + escalation writing | ✔ verify_m10.py |
 | M11 | Cold start CLI (real DeepSeek) | ✔ verify_m11.py |
 | M12 | End-to-end live scraping (real BrightData + DeepSeek, 4-way concurrent, config-driven ladder) | ✔ verify_m12.py |
-| M12 | End-to-end live scraping (real BrightData + DeepSeek, concurrent) | ✔ verify_m12.py |
+| M13 | Datasets/DCA polling fix — trigger/poll split (no duplicate BD triggers) | ✔ verify_m13.py |
 
 ## Public API
 
@@ -149,7 +164,8 @@ Interactive: fetches all URLs → LLM generates first parser → user confirms e
 
 - `BRIGHT_DATA_KEY` / `DEEPSEEK_KEY` — API keys (loaded from `.env`)
 - `SCRAPING_DB_PATH` — SQLite path (default: `scraping.db`)
-- `repair_model_ladder` / `repair_temperature_ladder` — model + temperature per attempt (default: `[flash, flash, pro, pro]` / `[0.1, 0.4, 0.7, 0.9]`; lengths must match)
+- `repair_model_ladder` / `repair_temperature_ladder` — model + temperature per attempt (default: `["deepseek-v4-flash", "deepseek-v4-pro"]` / `[0.1, 0.4]`; lengths must match)
+- `bd_async_poll_max_seconds` / `bd_async_poll_interval_seconds` — Datasets/DCA poll budget (default: 300s / 4s; from M13 Amazon fix)
 - `json_heal_budget = 1`
 - `sandbox_timeout = 10s`, `sandbox_import_whitelist = [bs4, lxml, re, json]`
 - `prune_sliding_window = 50`, `per_site_parser_limit = 4`

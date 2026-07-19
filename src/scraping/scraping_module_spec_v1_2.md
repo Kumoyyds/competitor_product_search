@@ -239,6 +239,7 @@
 | 价格 | `price` | Decimal | 条件必填(见门2) | |
 | | `currency` | str | optional | ISO-4217,非符号 |
 | | `list_price` | Decimal | optional | |
+| | `membership_price` | Decimal | optional | 会员/忠诚度计划优惠价,如 Tesco Clubcard 价、Amazon Prime 会员价 |
 | | `unit_price` | Decimal | optional | |
 | | `unit` | str | optional | |
 | 库存 | `in_stock` | bool | 必填 | **仅描述真实商品当前能否购买,与 invalid_target 无关** |
@@ -252,12 +253,12 @@
 **适用范围:所有 scraper 路线中,未被 invalid_target 拦截的产出。**
 
 门1(Pydantic):单字段类型/结构,`price` optional。
-门2(feasible_check):跨字段语义。
+门2(feasible_check):跨字段语义。下表中"有值"指 `price`/`list_price`/`membership_price` 任一 > 0。
 
-| in_stock | price | 判定 |
+| in_stock | 任一正价格信号 | 判定 |
 |---|---|---|
 | True | None | **故障** → 按路线分流 |
-| False | None | 合法(缺货无价) |
+| False | None | 合法(缺货无价,或仅剩 membership_price 作为商品信号) |
 | False | 有值 | 合法(缺货仍挂末价) |
 
 - HTML 路线两门失败共享 repair 预算(D8);API 路线两门失败进受限 JSON 自愈判定(§5.14)。
