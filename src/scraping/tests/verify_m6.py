@@ -144,7 +144,7 @@ async def run() -> None:
     async def _fake_fetch(url):
         return (200, argos_html)
 
-    # Prevent M8 repair ladder from triggering (would call DeepSeek)
+    # Prevent M8 repair ladder from triggering (would call Qwen)
     with patch("src.scraping.repair.agent.run_repair_ladder", new=AsyncMock(return_value=None)):
         scraper = ArgosScraper()
         with patch.object(scraper, "_get_unlocker") as mock:

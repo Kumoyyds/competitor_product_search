@@ -99,14 +99,14 @@ def _make_llm():
         return None
 
     cfg = get_config()
-    if not cfg.deepseek_key:
-        logger.warning("DEEPSEEK_KEY not set — skipping json_heal")
+    if not cfg.qwen_key:
+        logger.warning("QWEN_KEY not set — skipping json_heal")
         return None
 
     return ChatOpenAI(
-        api_key=cfg.deepseek_key,
-        base_url=cfg.deepseek_base_url,
-        model="deepseek-v4-flash",
+        api_key=cfg.qwen_key,
+        base_url=cfg.qwen_base_url,
+        model="qwen3.7-plus",
         temperature=0.1,
         model_kwargs={"response_format": {"type": "json_object"}},
     )
@@ -139,7 +139,7 @@ def _extract_missing_fields(errors: list[str]) -> list[str]:
     missing = set()
     key_fields = {
         "title", "brand", "gtin", "price", "currency", "list_price",
-        "unit_price", "unit", "in_stock", "image_urls", "variant",
+        "membership_price", "unit_price", "unit", "in_stock", "image_urls", "variant",
     }
     for err in errors:
         for field in key_fields:

@@ -69,6 +69,7 @@ class ArgosDCAScraper(DirectAPIScraper):
             "price": price,
             "currency": currency,
             "list_price": list_price,
+            "membership_price": None,  # Argos has no membership program; field present for schema consistency
             "in_stock": bool(json_data.get("in_stock", False)),
             "availability_raw": None,
             "raw": json_data,

@@ -27,6 +27,7 @@ from .config import get_config
 from .extraction import with_extraction_retry
 from .models.product_data import ProductData
 from .registry import get_scrapers
+from .repair.prepass import build_price_aware_context
 from .repair.prompts import initial_parser_gen_prompt
 from .repair.sandbox import run_in_sandbox
 from .storage import GoldenStore, ParserStore, ScrapeDB
@@ -166,19 +167,20 @@ async def _gen_initial_parser(site: str, html: str) -> Optional[str]:
     from langchain_openai import ChatOpenAI
 
     cfg = get_config()
-    if not cfg.deepseek_key:
-        print("DEEPSEEK_KEY not set — cannot generate parser.")
+    if not cfg.qwen_key:
+        print("QWEN_KEY not set — cannot generate parser.")
         return None
 
     llm = ChatOpenAI(
-        api_key=cfg.deepseek_key,
-        base_url=cfg.deepseek_base_url,
-        model="deepseek-v4-flash",
+        api_key=cfg.qwen_key,
+        base_url=cfg.qwen_base_url,
+        model="qwen-3.7-plus",
         temperature=0.1,
         model_kwargs={"response_format": {"type": "json_object"}},
     )
     try:
-        resp = await llm.ainvoke(initial_parser_gen_prompt(html, site))
+        price_ctx = build_price_aware_context(html, f"https://dummy/{site}")
+        resp = await llm.ainvoke(initial_parser_gen_prompt(price_ctx, site))
     except Exception as e:
         logger.exception("initial parser gen failed: %s", e)
         return None

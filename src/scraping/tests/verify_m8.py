@@ -1,6 +1,6 @@
 """Verification for M8 — repair agent + JSON healer.
 
-Uses REAL DeepSeek API (per user decision). Gracefully skips if DEEPSEEK_KEY missing.
+Uses REAL Qwen API (per user decision). Gracefully skips if QWEN_KEY missing.
 
 Covers:
   - RepairContext accumulates errors across attempts
@@ -11,7 +11,7 @@ Covers:
   - JSON healer: D25 red line rejects mapping to non-existent path
   - JSON healer: valid remap of already-existing key succeeds
 
-Cost: ~$0.01–0.05 per full run (a handful of DeepSeek requests).
+Cost: ~$0.01-0.05 per full run (a handful of Qwen requests).
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ _config._config = None
 cfg = _config.get_config()
 
 DATA_DIR = Path(__file__).parent.parent / "data"
-HAS_LLM = bool(cfg.deepseek_key)
+HAS_LLM = bool(cfg.qwen_key)
 
 PASSED: list[str] = []
 FAILED: list[tuple[str, str]] = []
@@ -78,12 +78,12 @@ async def run() -> None:
     )
 
     section("M8.1 - Config and LLM setup")
-    check("DEEPSEEK_KEY loaded", HAS_LLM, "key present" if HAS_LLM else "MISSING")
+    check("QWEN_KEY loaded", HAS_LLM, "key present" if HAS_LLM else "MISSING")
     if HAS_LLM:
-        llm = _make_llm("deepseek-v4-flash")
-        check("_make_llm returns client with deepseek-v4-flash", llm is not None)
+        llm = _make_llm("qwen-3.7-plus")
+        check("_make_llm returns client with qwen-3.7-plus", llm is not None)
     else:
-        llm_missing = _make_llm("deepseek-v4-flash")
+        llm_missing = _make_llm("qwen-3.7-plus")
         check("_make_llm returns None when key missing", llm_missing is None)
 
     section("M8.2 - JSON healer: _lookup_path")
@@ -102,7 +102,7 @@ async def run() -> None:
     check("title extracted from errors", "title" in missing)
 
     if not HAS_LLM:
-        skip("M8.4-M8.7", "DEEPSEEK_KEY not set")
+        skip("M8.4-M8.7", "QWEN_KEY not set")
         return
 
     section("M8.4 - JSON healer: valid remap of existing key succeeds")
@@ -156,7 +156,7 @@ async def run() -> None:
     </body></html>""" + "x" * 8000  # pad past detection min length
 
     ctx = RepairContext(site="tesco", url="http://tesco.com/missing", html=error_html)
-    outcome = await _try_repair(ctx, "deepseek-v4-flash")
+    outcome = await _try_repair(ctx, "qwen-3.7-plus")
     check("agent identifies error page as no_product",
           isinstance(outcome, NoProductVerdict), f"got {type(outcome).__name__}")
     if isinstance(outcome, NoProductVerdict):

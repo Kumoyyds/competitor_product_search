@@ -81,6 +81,15 @@ class AmazonUKScraper(DirectAPIScraper):
             if single:
                 image_urls = [single]
 
+        # Best-effort membership/Prime price from BrightData Datasets
+        buybox = json_data.get("buybox_prices") or {}
+        membership_price = (
+            _to_decimal(buybox.get("member_price"))
+            or _to_decimal(buybox.get("prime_price"))
+            or _to_decimal(buybox.get("loyalty_price"))
+            or None
+        )
+
         return {
             "url": json_data.get("url", url),
             "website": "amazon",
@@ -94,6 +103,7 @@ class AmazonUKScraper(DirectAPIScraper):
             "price": _to_decimal(json_data.get("final_price")),
             "currency": json_data.get("currency"),
             "list_price": _to_decimal(json_data.get("initial_price")),
+            "membership_price": membership_price,
             "unit_price": unit_price,
             "unit": unit,
             "in_stock": bool(json_data.get("is_available", False)),

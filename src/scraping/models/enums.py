@@ -10,7 +10,8 @@ ScrapeRunPath = Literal[
     "fast",
     "retried",
     "agent_repaired",
-    "fallback_scraper",
+    "backup_1",
+    "backup_2",
     "escalated",
     "invalid_target",
 ]
@@ -24,4 +25,4 @@ EscalationReason = Literal[
 
 ParserStatus = Literal["active", "retired"]
 
-PageType = Literal["standard", "out_of_stock", "discounted", "multipack"]
+PageType = Literal["standard", "out_of_stock", "discounted", "multipack", "membership"]

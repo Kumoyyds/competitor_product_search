@@ -4,7 +4,7 @@ Each milestone's verification is persisted here so you can audit and re-run at a
 
 ## Milestone Overview
 
-The scraping module was built incrementally across 13 milestones (M1–M13). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
+The scraping module was built incrementally across 15 milestones (M1–M15). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
 
 ### M1 — ProductData Schema + Two Gates
 Defines the canonical `ProductData` Pydantic model (url, website, title, price, currency, in_stock, image_urls, …) and the two-gate validation pipeline:
@@ -66,7 +66,7 @@ Safe execution environment for LLM-generated parser code:
 - **Exception isolation** — runtime errors caught and reported as `SandboxException` with type name.
 
 ### M8 — Repair Agent + JSON Healer
-LLM-driven self-repair when parsers fail or API data is malformed. Uses **real DeepSeek API**:
+LLM-driven self-repair when parsers fail or API data is malformed. Uses **real Qwen API**:
 - **Repair ladder** (up to 4 attempts, shared budget):
   - **Turn A — no_product judgment**: LLM decides if HTML is a real product page. If not → backfill phrase to `invalid_target_phrases`, return `InvalidTargetResult`. Does NOT consume budget.
   - **Turn B — source_absence** (attempt 2 only): distinguishes "hard-to-parse product page" from "no data on page" (source_absent → terminal, skip attempt 3).
@@ -75,7 +75,7 @@ LLM-driven self-repair when parsers fail or API data is malformed. Uses **real D
 
 ### M9 — Golden Set + Promote/Prune
 Parser quality control and lifecycle management:
-- **`classify_page_type`** — 4 buckets: `standard`, `out_of_stock`, `discounted`, `multipack` (in priority order: out_of_stock > discounted > multipack > standard).
+- **`classify_page_type`** — 5 buckets: `standard`, `out_of_stock`, `discounted`, `multipack`, `membership` (in priority order: out_of_stock > membership > discounted > multipack > standard).
 - **`maybe_seed_golden`** — first product of each `page_type` per site is seeded as a golden sample; subsequent same-type products are skipped.
 - **`promote_candidate`** — LLM-generated parser must reproduce ALL goldens for its site → promoted to active; any mismatch → rejected.
 - **`_prune_hard_cap`** — enforces `per_site_parser_limit` (default 4). When exceeded, retires the oldest lowest-hit parser.
@@ -93,7 +93,7 @@ Failure handling across the scraper list and operational alerting:
 - **INFRA ALERT** — logged via `logger.error` when `BrightDataInfraError` occurs (Phase 1 hook for email/IM).
 
 ### M11 — Cold Start CLI
-Bootstrap a new site with zero manual parser writing. Uses **real DeepSeek API**:
+Bootstrap a new site with zero manual parser writing. Uses **real Qwen API**:
 - **Interactive flow**: `python -m src.scraping.coldstart --site <site> --urls-file <file>` →
   1. Fetch all URLs via BrightData.
   2. Pick the largest 200-OK HTML as representative.
@@ -104,7 +104,56 @@ Bootstrap a new site with zero manual parser writing. Uses **real DeepSeek API**
 
 ### M12 — End-to-End Live Scraping
 
-Runs the full scraping pipeline against a per-site URL batch (`src/scraping/data/tesco_test.xlsx.xlsx` or `argos_test.xlsx.xlsx`, both 3-column `label / url / host`) using real BrightData and real DeepSeek. No mocking — this exercises the complete live pipeline end-to-end.
+Runs the full scraping pipeline against a per-site URL batch (`src/scraping/data/tesco_test.xlsx.xlsx` or `argos_test.xlsx.xlsx`, both 3-column `label / url / host`) using real BrightData and real Qwen. No mocking — this exercises the complete live pipeline end-to-end.
+
+### M15 — Data-Quality Gate: promotion detection, availability normalization, fast-path distrust
+
+Fixes three defects discovered in a live M12 re-run (buzzballz case: JSON-LD blob in `availability_raw`; Alivio/Peroni: discount vs membership price mis-mapped by a saved parser from a single-price page). The underlying root cause is that a promoted parser is reused on unseen page types with no output-quality check. Fixes:
+
+- **Central `availability_raw` normalizer** (`models/product_data.py` — `@model_validator(mode="after")`) — recovers a schema.org availability token from anywhere inside a blob (`InStock → "In stock"`, `OutOfStock → "Out of stock"`, `PreOrder → "Pre-order"`, etc.) or derives from `in_stock`. A parser can never surface a blob again — this is a single choke point for both HTML and API routes. Site-agnostic (schema.org vocabulary is W3C-standard).
+- **`detect_promotion(soup) → Optional[dict]`** (`repair/prepass.py`) — new reusable promotion-signal detector that classifies the main price container structurally (not hard-coded to any site's keywords). Discount = a struck/reference higher price with **no** membership-gating marker nearby. Membership = a price gated behind a named loyalty/membership program (badge, "Clubcard/Prime price", "only available with <program>", schema.org `validForMemberTier` corroborated by visible gating). Negation prefixes (`non-`, `not-`, `no-`) on membership-hint class tokens explicitly override. Detection reuses the existing BeautifulSoup parse; a growable lexicon of example tokens seeds each category.
+- **Fast-path distrust guard** (`scrapers/html_scraper.py` — `_fast_path_sane()`) — after a reused parser passes both gates, the guard runs lightweight structural checks: (1) is `availability_raw` a JSON blob? (2) does the page carry a visible promotion signal (discount or membership) that the parser failed to capture (neither `list_price` nor `membership_price` returned)? If suspicious → the parser is skipped and the repair ladder self-heals to a better `vN+1` parser. Uses the same `detect_promotion` detector (no duplicate parsing).
+- **Gate 2 structural price rules** (`validation/gate2.py` — `_structural_price_rule()`) — route-agnostic: `list_price == price` → fault (price duplicated); `membership_price == price` → fault. Catches both Alivio and Peroni mis-mappings regardless of whether the parser came from the fast path or repair.
+- **Prompt rewrite** (`repair/prompts.py`) — demotes `validForMemberTier` from an imperative "→ `membership_price` — use it" to "a **corroborating hint only**; the visible price presentation is authoritative and overrides it." Renders a new `[PROMOTION SIGNAL]` section in the PriceContext bundle showing the structural classification. SCHEMA_HINT updated: `membership_price` now mentions "VISIBLY SHOWS membership gating", `availability_raw` warns "NEVER return the raw JSON-LD."
+
+**Verification**: `verify_m15.py` — 44 offline checks (Tier 1: promotion signal detection on Alivio/Peroni/standard, including negation-proof; Tier 2: availability normalization including blob→label, token recovery, model_validator wiring; Tier 3: gate2 structural rules including list==price, member==price, valid discount/membership, feasible_check wiring; Tier 4: fast-path guard on blob availability / missed-promotion / correct-extraction / standard-page; Tier 5: prompt rendering — PROMOTION SIGNAL section, old "use it" text absent, new principles present).
+
+
+### M16 — UTF-8 Mojibake Resilience + Anchoring/Promotion Hardening
+
+Triggered by M12 live findings: Tesco items `[01] Dove` and `[06] Peroni` fell through the HTML route to the DCA API backup after 400+ seconds each (Argos HTML succeeded on the same pipeline). Root cause: `BrightDataUnlocker.fetch()` returned `resp.text`, letting httpx auto-guess the charset. For Tesco, httpx guesses Latin-1, so UTF-8 `£` becomes `Â£`. LLM-generated parsers commonly do `text.replace('£','')` → `Decimal(...)`; on `'Â£20.00'` the spurious `Â` survives → parser crashes. Secondary root cause: the price-aware pre-pass (M14) never anchored the main visible DOM price, so every DOM price was `anchor=ambiguous`, and `detect_promotion._find_price_container` picked the wrong container (delivery-fee instead of buy-box).
+
+Five coordinated fixes:
+
+1. **UTF-8 decode at extraction** (`extraction/bright_data.py`): `enc = resp.charset_encoding or "utf-8"; html = resp.content.decode(enc, errors="replace")`. Honors explicit charset declarations (future sites), defaults to UTF-8 (every modern retailer). Single choke point.
+2. **Fixture cleanup** (`data/html_sample/tesco_*.html`): targeted byte-level replacement of `Â£` → `£`. Zero mojibake byte sequences remain.
+3. **Anchoring hardening** (`repair/prepass.py` `_anchor_evidence`): added cross-source value corroboration (DOM value matches JSON-LD-anchored inside_main value → inside_main) and primary price-container membership (descendant of `_find_price_container` → inside_main). Uses only JSON-LD-anchored values for container scoring to avoid circular anchoring.
+4. **Promotion container scorer** (`repair/prepass.py` `_find_price_container`): 6-factor scored heuristic — trusted-value match (+100), buy-box hints (+50), mid-sized (+30), has-prices (+25), membership keywords (+10), h1 proximity (+20/+15). Uses Decimal-based numeric comparison (not substring). Added `buy-box`, `pdp-buy-box`, `pdp-buybox` to `_PROMOTION_CONTAINER_HINTS`. `detect_promotion(soup, trusted_values=None)` threads trusted values through.
+5. **Robust-extraction prompt** (`repair/prompts.py`): added "ROBUST PRICE EXTRACTION" section — locate price via structure, then clean with regex (`re.search(r'\d[\d,]*\.?\d*', node_text)`), never `text.replace('£','')`. Explicit constraint: regex is for cleaning an already-located node, never for scanning the whole page.
+
+**Verification**: Re-ran M14 (41/41 pass) and M15 (44/44 pass) against fixed fixtures. Pre-pass anchoring on Tesco samples: `alivio`/`net` discount — main DOM prices now `inside_main`, promo correct; `cloth_normal` — main DOM price `19.50` now `inside_main`, promo `cur=19.50` (delivery `£2.50` no longer chosen); `peroni` — DOM `13.00` `inside_main`, promo `kind=membership`, `mem=13.00`; `pc_membership` — DOM `2.00` `inside_main`, promo `kind=membership`.
+
+
+### M14 — Price-Aware Pre-Pass + Membership Support
+
+Fixes the systematic loss of `list_price` / `membership_price` in LLM-generated HTML parsers. The root cause was two-fold: (1) the raw-truncation budget (24k chars, JSON-LD-first) could drop the DOM subtree containing struck-through/member prices, and (2) the prompt instructed the model to "PREFER JSON-LD over DOM" — so it stopped once JSON-LD had a `price` value. The fix:
+
+- **`repair/prepass.py`** — New price-aware context builder replacing character-count truncation. Three evidence sources (DOM currency-regex scan, meta description scan, schema.org `priceSpecification`/`validForMemberTier` walk) are collected, anchored to the main product via URL product ID + canonical title + h1 matching, and cross-sell/recommendation prices are hard-deleted (double-hit rule: recommendation container + heading ≠ canonical title). Basket £0.00 guide-price widgets, JSON-LD shipping rates, and unit prices are filtered. Budget is evidence-first: no DOM price subtree can be truncated.
+- **Prompt rewrite** — Replaced the unconditional "PREFER JSON-LD over DOM" with site-agnostic, evidence-driven rules: `validForMemberTier` → `membership_price`; struck-through / "Was"/"RRP"-labeled → `list_price`; two prices in free text → capture both. Site names (Tesco Clubcard, Amazon Prime) appear only as `e.g.` examples. A RECALL FAILURE warning tells the model it must extract evidence already in its context.
+- **`parser_gen_prompt` signature change** — Accepts `PriceContext` instead of raw `html`; user message renders structured `[JSON-LD BLOCKS]` / `[PRICE EVIDENCE]` / `[HEAD EXCERPT]` / `[MAIN EXCERPT]` bundle. `coldstart` wired to build `PriceContext` for initial parsers.
+- **Membership golden bucket** — `classify_page_type` now has 5 buckets: `out_of_stock > membership > discounted > multipack > standard`. `PageType` Literal and `golden_samples` CHECK constraint updated; one-time migration script at `storage/migrations/add_membership_bucket.py`.
+- **Prerequisite fixes**: `summarize_capture` (agent.py) and `_extract_missing_fields` (json_healer.py) now include `membership_price`. Contradictory `middle`-role Tesco hint deleted from prompts.py.
+- **API-route membership mapping** — `amazon_uk.py`, `tesco_dca.py` best-effort map `member_price`/`prime_price`/`clubcard_price` from BrightData payloads.
+
+**Verification**: `verify_m14.py` — 41 offline checks (Tier 1: pre-pass + anchoring across all 8 fixtures; Tier 2: prompt rendering — old "PREFER JSON-LD" text absent, new rules present). Tier 3 (end-to-end parser-gen, gated on QWEN_KEY) is best-effort.
+
+Key aspects:
+- **Site-agnostic** — Currency regex (not keywords) is the primary recall signal, works for any marketplace. `validForMemberTier` is a standard schema.org property. Keyword seed tables grow by data over time.
+- **Safe-by-default anchoring** — Cross-sell delete requires double-hit (recommendation container + non-matching heading). Unknown containers stay `ambiguous` (kept for LLM), never mis-deleted.
+- **JSON-LD anchoring** — Offers whose URL/SKU match the URL product ID are marked `inside_main`; others stay `ambiguous`.
+- **Anti-mojibake** — Meta regexes tolerate `Â£`/mojibake currency symbols. DOM scan excludes `<script>`/`<style>` to avoid ingesting embedded-JSON phantom prices.
+- **No per-site hints in prompt** — Rules are evidence-driven principles, breaking the pattern that produced the dead `middle`-role Tesco text.
+- **`verify_m12.PerURLReport`** extended with `membership_price` field, populated on success scrapes.
 
 ### M13 — Amazon/Tesco DCA Polling Fix
 
@@ -120,11 +169,11 @@ Fixes the duplicate-trigger bug: Amazon and Tesco DCA scrapers trigger only one 
 | `tesco_test.xlsx.xlsx` | 6 | 5 (83%) | 1 | 0 | 0 | ✓ 6/6 pass |
 | `argos_test.xlsx.xlsx` | 8 | 6 (75%) | 2 | 0 | 0 | ✓ 6/6 pass |
 
-The last-ditch attempt (attempt 3, `deepseek-v4-pro` with thinking mode) rescued URL 2 (McGregor lawnmower, 207s) — in prior runs without it, this URL had consistently escalated.
+The last-ditch attempt (attempt 1, `qwen-3.7-plus` with thinking mode) rescued URL 2 (McGregor lawnmower, 207s) — in prior runs without it, this URL had consistently escalated.
 
 Key aspects:
 - **Concurrent execution** — `asyncio.Semaphore(4)` runs up to 4 URLs in parallel; results stream in as they complete (via `asyncio.as_completed`) and the summary is sorted back to input order.
-- **4-attempt repair ladder** — model sequence `[deepseek-v4-flash ×2, deepseek-v4-pro ×2]`; last attempt enables pro thinking mode (`reasoning_effort=high` + `extra_body.thinking`).
+- **2-attempt repair ladder** — model sequence `[qwen-3.7-plus, qwen-3.7-plus]`; last attempt enables thinking mode (`extra_body.enable_thinking`).
 - **Gate 2 strengthened**: rejects in-stock items with price ≤ 0 (LLM hallucinated zero), and OOS items with no product signals (image_urls empty + no price + no list_price — likely an error page, not a real product).
 - **Upstream error retry**: BD responses < 1000 chars OR containing `"502 Bad Gateway"` / `"500 Internal Server Error"` etc. (1000-5000 byte gap) trigger extraction retry with 2s pause.
 - **Temp DB** — uses a temporary SQLite database (`%TEMP%\verify_m12.db`) to avoid polluting production `scraping.db`. Cleaned up on process exit.
@@ -148,21 +197,25 @@ Key aspects:
 | `verify_m6_output.log` | Latest run — 14 checks, 0 failed | — |
 | `verify_m7.py` | M7 — sandbox AST scan (imports/names/dunder), timeout, exception isolation, whitelisted imports, Windows | offline |
 | `verify_m7_output.log` | Latest run — 21 checks, 0 failed | — |
-| `verify_m8.py` | M8 — repair agent no_product judgment, JSON healer D25 red line, end-to-end parser gen on real HTML | **real DeepSeek** |
+| `verify_m8.py` | M8 — repair agent no_product judgment, JSON healer D25 red line, end-to-end parser gen on real HTML | **real Qwen** |
 | `verify_m8_output.log` | Latest run — 14 checks, 0 failed | — |
 | `verify_m9.py` | M9 — page_type classification, promote_candidate (accept/reject), hard-cap prune, natural prune | offline |
 | `verify_m9_output.log` | Latest run — 17 checks, 0 failed | — |
 | `verify_m10.py` | M10 — escalation writing (parser_broken / api_malformed / infra_failure), signature dedup, mass_invalid_target thresholds, INFRA ALERT log | offline |
 | `verify_m10_output.log` | Latest run — 14 checks, 0 failed | — |
-| `verify_m11.py` | M11 — cold start CLI end-to-end: fetch → LLM gen → user confirm (y/n/q) → seed parser + goldens | **real DeepSeek** |
+| `verify_m11.py` | M11 — cold start CLI end-to-end: fetch → LLM gen → user confirm (y/n/q) → seed parser + goldens | **real Qwen** |
 | `verify_m11_output.log` | Latest run — 15 checks, 0 failed | — |
-| `verify_m12.py` | M12 — End-to-end live scraping (per-site batch from `tesco_test.xlsx.xlsx` / `argos_test.xlsx.xlsx`, concurrent, real BrightData + DeepSeek) | **real BrightData + DeepSeek** |
+| `verify_m12.py` | M12 — End-to-end live scraping (per-site batch from `tesco_test.xlsx.xlsx` / `argos_test.xlsx.xlsx`, concurrent, real BrightData + Qwen) | **real BrightData + Qwen** |
 | `verify_m12_output.log` | Latest tesco run — 6 checks, 0 failed | — |
 | `verify_m12_argo_output.log` | Latest argos run — 6/8 SUCCESS, 0 escalated | — |
 | `verify_m13.py` | M13 — Amazon/Tesco DCA polling fix: no duplicate triggers, immediate-first-poll, configurable budget (offline, mocked) | offline |
 | `verify_m13_output.log` | Latest run — 9 checks, 0 failed | — |
+| `verify_m14.py` | M14 — Price-aware pre-pass + anchoring (8 fixtures), prompt rewrite (evidence-driven, de-Tesco-ified), membership golden bucket (5 types), API-route membership mapping | offline (Tier 1+2); real Qwen (Tier 3, best-effort) |
+| `verify_m14_output.log` | Latest run — 41 checks, 0 failed (Tier 1+2) | — |
+| `verify_m15.py` | M15 — Promotion signal detection (structural, site-agnostic), availability_raw normalization (schema.org token recovery), gate2 structural price rules, fast-path distrust guard, prompt rewrite (visual-value-bar-first) | offline |
+| `verify_m15_output.log` | Latest run — 44 checks, 0 failed | — |
 
-**Total: 181 checks passed across all milestones (M1–M12: 172; M13: 9). M12 adds live end-to-end validation (label-based checks vary per input batch). M13 proves the duplicate-trigger bug is fixed.**
+**Total: 266+ checks passed across all milestones (M1–M14: 222; M15: 44). M12 adds live end-to-end validation. M13 proves the duplicate-trigger bug is fixed. M14 adds price-aware context feeding. M15 adds data-quality gates (promotion detection + availability normalization + fast-path distrust) so a reused parser can never surface a blob or a wrong price mapping.**
 
 ## How to re-run
 
@@ -179,6 +232,8 @@ python -m src.scraping.tests.verify_m10  | tee src/scraping/tests/verify_m10_out
 python -m src.scraping.tests.verify_m11  | tee src/scraping.tests/verify_m11_output.log
 python -m src.scraping.tests.verify_m12  | tee src/scraping/tests/verify_m12_output.log
 python -m src.scraping.tests.verify_m13  | tee src/scraping/tests/verify_m13_output.log
+python -m src.scraping.tests.verify_m14  | tee src/scraping/tests/verify_m14_output.log
+python -m src.scraping.tests.verify_m15  | tee src/scraping/tests/verify_m15_output.log
 ```
 
 On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTHONIOENCODING="utf-8"`) so `->` and similar ASCII arrows don't crash cp1252.
@@ -192,20 +247,23 @@ On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTH
 | M5 | HTMLScraper + invalid-page detection (5 signals) | offline | offline |
 | M6 | Ordered parser list + run recording | offline | offline |
 | M7 | Sandbox AST scan, timeout, isolation | offline | offline |
-| M8 | Repair agent + JSON healer (real DeepSeek) | **real** | offline |
+| M8 | Repair agent + JSON healer (real Qwen) | **real** | offline |
 | M9 | Golden set + promote/prune | offline | offline |
 | M10 | Escalation writing, signature dedup, mass_invalid_target | offline | offline |
-| M11 | Cold start CLI (real DeepSeek) | **real** | offline |
+| M11 | Cold start CLI (real Qwen) | **real** | offline |
 | M12 | End-to-end live scraping | **real** | **real** |
 | M13 | Amazon/Tesco DCA polling fix (no duplicate triggers) | offline | offline |
+| M14 | Price-aware pre-pass + anchoring + prompt rewrite + membership golden bucket + API membership mapping | offline (Tier 1+2); real Qwen (Tier 3) | offline |
+| M15 | Promotion detection + availability normalization + gate2 structural rules + fast-path distrust guard + prompt rewrite (visual-value-bar-first) | offline | offline |
+| M16 | UTF-8 mojibake resilience (extraction choke point) + anchoring hardening (cross-source corroboration, buy-box container) + promotion container scored selection + robust-extraction prompt | offline (M14+M15 re-run on fixed fixtures) | offline |
 
-**Total: 181 checks passed across all milestones (M1–M12: 172; M13: 9).**
+**Total: 266+ checks passed across all milestones (M1–M14: 222; M15: 44; M16 verified by re-running M14+M15 on fixed fixtures, 0 failures).**
 
 ## LLM-dependent tests
 
-**verify_m8** and **verify_m11** hit the real DeepSeek API (per user decision — see plan file). Requirements:
-- `DEEPSEEK_KEY` set in `.env` (loaded automatically via `python-dotenv`).
-- Small cost per full run: ~$0.01–0.05 across a handful of `deepseek-v4-flash` requests (pro attempts cost more).
+**verify_m8** and **verify_m11** hit the real Qwen API (per user decision — see plan file). Requirements:
+- `QWEN_KEY` set in `.env` (loaded automatically via `python-dotenv`).
+- Small cost per full run: ~$0.01-0.05 across a handful of `qwen-3.7-plus` requests.
 - **LLM output varies**: parser code generated on the same HTML can differ between runs. The verify scripts test *machinery* (ladder progresses, phrases backfill, D25 red line, coldstart seeds correctly), not exact parser code output. A rerun that produces a slightly worse parser may show more `[SKIP]` outputs but should not `[FAIL]`.
 
 ## Reading the log
@@ -213,7 +271,7 @@ On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTH
 - Section headers (`===...===`) mark which milestone/component is being checked
 - `[PASS]` = expected result observed; the detail column shows the actual value
 - `[FAIL]` = mismatch; detail shows expected vs actual
-- `[SKIP]` = optional dependency missing (e.g., DEEPSEEK_KEY absent for M8/M11)
+- `[SKIP]` = optional dependency missing (e.g., QWEN_KEY absent for M8/M11)
 
 ## What is NOT covered here
 

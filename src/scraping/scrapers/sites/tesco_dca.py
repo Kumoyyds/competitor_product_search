@@ -60,6 +60,14 @@ class TescoDCAScraper(DirectAPIScraper):
         elif isinstance(img, str) and img:
             image_urls = [img]
 
+        # Best-effort membership/Clubcard price from BrightData DCA
+        membership_price = (
+            _to_decimal(json_data.get("member_price"))
+            or _to_decimal(json_data.get("clubcard_price"))
+            or _to_decimal(json_data.get("loyalty_price"))
+            or None
+        )
+
         return {
             "url": (json_data.get("input") or {}).get("url", url),
             "website": "tesco",
@@ -71,6 +79,7 @@ class TescoDCAScraper(DirectAPIScraper):
             "price": price,
             "currency": currency,
             "list_price": list_price,
+            "membership_price": membership_price,
             "in_stock": bool(json_data.get("in_stock", False)),
             "availability_raw": json_data.get("availability"),
             "raw": json_data,

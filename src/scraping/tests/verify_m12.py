@@ -1,4 +1,4 @@
-"""Verification script for M12 -- End-to-end live scraping with real BrightData + DeepSeek.
+"""Verification script for M12 -- End-to-end live scraping with real BrightData + Qwen.
 
 Reads URLs from src/scraping/data/tesco_test.xlsx.xlsx, runs the full Router.scrape()
 pipeline for each, and logs detailed per-URL scraping status including which
@@ -8,9 +8,9 @@ Run from repo root:
     python -m src.scraping.tests.verify_m12
 
 Requires: BRIGHT_DATA_KEY (or BRIGHT_UNLOCKER_KEY / SCRAPING_BRIGHT_DATA_KEY) in .env (refuses to run without it).
-Optional: DEEPSEEK_KEY in .env (HTML scrapers will escalate without repair; API scrapers still work).
+Optional: QWEN_KEY in .env (HTML scrapers will escalate without repair; API scrapers still work).
 
-Cost: real BrightData API calls for all 22 URLs + potentially DeepSeek calls for repair.
+Cost: real BrightData API calls for all 22 URLs + potentially Qwen calls for repair.
 """
 
 from __future__ import annotations
@@ -52,11 +52,11 @@ _cfg_mod._config = None
 _cfg = _cfg_mod.get_config()
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
-INPUT_XLSX = _DATA_DIR / "test_data/initial_url.xlsx"
-OUTPUT_LOG = Path(__file__).parent / "verify_m12_output.log"
+INPUT_XLSX = _DATA_DIR / "test_data/tesco_argos.xlsx"
+OUTPUT_LOG = Path(__file__).parent / "verify_m12_qwen_output.log"
 
 HAS_BRIGHT_DATA = bool(_cfg.bright_data_key)
-HAS_LLM = bool(_cfg.deepseek_key)
+HAS_LLM = bool(_cfg.qwen_key)
 
 # Max in-flight URLs. BrightData Web Unlocker + DCA tolerate parallel calls;
 # the bottleneck is per-URL latency (~60-100s each), so 4-way parallelism
@@ -172,6 +172,7 @@ class PerURLReport:
     source_type: str = ""
     # Additional ProductData fields (all Optional in the schema; only displayed when populated)
     list_price: str = ""        # e.g. "80.99 GBP"
+    membership_price: str = ""  # e.g. "99.99 GBP" (Tesco Clubcard)
     unit_price: str = ""        # e.g. "3.50"
     unit: str = ""              # e.g. "kg"
     availability_raw: str = ""  # e.g. "In stock"
@@ -225,8 +226,9 @@ def infer_mechanisms(report: PerURLReport) -> None:
             mech.append(f"  repair model: {report.model_used}")
     elif report.db_path == "retried":
         mech.append("extraction retry TRIGGERED (D7): transient fetch failure -&gt; retried and succeeded")
-    elif report.db_path == "fallback_scraper":
-        mech.append("scraper fallback TRIGGERED: primary scraper failed -&gt; backup scraper succeeded")
+    elif report.db_path and report.db_path.startswith("backup_"):
+        layer = report.db_path.split("_", 1)[1]
+        mech.append(f"backup scraper (order-{int(layer)+1}) SUCCEEDED: primary route exhausted -> DCA/API backup produced the result")
     elif report.db_path == "invalid_target":
         mech.append(f"invalid-target detection TRIGGERED: {report.invalid_reason}")
     elif report.db_path == "escalated":
@@ -348,6 +350,8 @@ async def scrape_one_url(
             # Additional ProductData fields (display when populated)
             if result.list_price is not None:
                 report.list_price = f"{result.list_price} {result.currency or ''}".strip()
+            if result.membership_price is not None:
+                report.membership_price = f"{result.membership_price} {result.currency or ''}".strip()
             if result.unit_price is not None:
                 report.unit_price = str(result.unit_price)
             report.unit = result.unit or ""
@@ -437,7 +441,9 @@ def print_url_report(report: PerURLReport) -> None:
         if report.price:
             _print(f"    price:         {report.price}")
         if report.list_price:
-            _print(f"    list_price:    {report.list_price}")
+            _print(f"    list_price:        {report.list_price}")
+        if report.membership_price:
+            _print(f"    membership_price:  {report.membership_price}")
         if report.currency and not report.price:
             _print(f"    currency:      {report.currency}")
         if report.brand:
@@ -699,10 +705,10 @@ async def run() -> int:
         return 1
     check("BrightData key present", True, f"key starts with {bright_key[:6]}...")
 
-    if cfg.deepseek_key:
-        check("DEEPSEEK_KEY present", True, "repair ladder available for HTML scrapers")
+    if cfg.qwen_key:
+        check("QWEN_KEY present", True, "repair ladder available for HTML scrapers")
     else:
-        check("DEEPSEEK_KEY present", False, "MISSING -- HTML scraper repair will escalate (API scrapers unaffected)")
+        check("QWEN_KEY present", False, "MISSING -- HTML scraper repair will escalate (API scrapers unaffected)")
 
     # -- M12.3: Run all URLs concurrently --
     concurrency = min(CONCURRENCY, len(urls))

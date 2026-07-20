@@ -28,6 +28,7 @@ from ..models.results import InvalidTargetResult
 from ..storage import PhraseStore, ScrapeDB
 from ..validation import validate
 from .golden import GoldenRejection, promote_candidate
+from .prepass import PriceContext, build_price_aware_context
 from .prompts import (
     no_product_prompt,
     parser_gen_prompt,
@@ -65,6 +66,7 @@ class RepairContext:
     html: str
     initial_errors: list[str] = field(default_factory=list)   # pre-repair, labelled separately
     attempts: list[AttemptRecord] = field(default_factory=list)
+    price_context: Optional[PriceContext] = None               # computed once in _gen_parser
 
 
 @dataclass
@@ -100,11 +102,11 @@ def summarize_capture(output: dict[str, Any]) -> dict[str, Any]:
     """
     required = ["title", "in_stock"]
     if output.get("in_stock") is True:
-        if not (output.get("price") or output.get("list_price")):
-            required.append("price_or_list_price")
+        if not (output.get("price") or output.get("list_price") or output.get("membership_price")):
+            required.append("price_or_list_price_or_membership_price")
     optional = [
         "brand", "gtin", "image_urls", "currency", "list_price",
-        "unit_price", "unit", "availability_raw", "variant",
+        "membership_price", "unit_price", "unit", "availability_raw", "variant",
     ]
     present = lambda f: output.get(f) not in (None, [], "", {})
 
@@ -210,7 +212,7 @@ async def _try_repair(
     # Judgment LLM: deterministic answers for yes/no gates
     judgment_llm = _make_llm(model, temperature=0.1)
     if judgment_llm is None:
-        return CandidateFailed(errors=["LLM not configured (DEEPSEEK_KEY missing)"])
+        return CandidateFailed(errors=["LLM not configured (QWEN_KEY missing)"])
 
     # Turn A — no_product judgment, first attempt only
     if index == 0:
@@ -230,7 +232,7 @@ async def _try_repair(
         model, temperature=temp, enable_thinking=is_last
     )
     if parser_gen_llm is None:
-        return CandidateFailed(errors=["LLM not configured (DEEPSEEK_KEY missing)"])
+        return CandidateFailed(errors=["LLM not configured (QWEN_KEY missing)"])
 
     # Build role name for the prompt
     role = "last" if is_last else ("first" if index == 0 else "middle")
@@ -292,14 +294,14 @@ async def _try_repair(
 
 
 def _make_llm(model: str, temperature: float = 0.1, enable_thinking: bool = False):
-    """Build a DeepSeek LangChain client.
+    """Build a Qwen LangChain client.
 
     Args:
-      model: model id (e.g. "deepseek-v4-flash" or "deepseek-v4-pro")
+      model: model id (e.g. "qwen-3.7-plus")
       temperature: sampling temperature (0.1 for judgments, ramp for parser_gen)
-      enable_thinking: when True, enables DeepSeek's reasoning/thinking mode via
-        `reasoning_effort="high"` and `extra_body={"thinking": {"type": "enabled"}}`.
-        Only used on the last repair-ladder attempt so the pro model can reason
+      enable_thinking: when True, enables Qwen's reasoning/thinking mode via
+        `extra_body={"enable_thinking": True}`.
+        Only used on the last repair-ladder attempt so the model can reason
         through hard cases (spec-driven parser generation on gnarly pages).
     """
     try:
@@ -309,18 +311,17 @@ def _make_llm(model: str, temperature: float = 0.1, enable_thinking: bool = Fals
         return None
 
     cfg = get_config()
-    if not cfg.deepseek_key:
-        logger.warning("DEEPSEEK_KEY not set — repair ladder cannot invoke LLM")
+    if not cfg.qwen_key:
+        logger.warning("QWEN_KEY not set — repair ladder cannot invoke LLM")
         return None
 
     model_kwargs: dict[str, Any] = {"response_format": {"type": "json_object"}}
     if enable_thinking:
-        model_kwargs["reasoning_effort"] = "high"
-        model_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+        model_kwargs["extra_body"] = {"enable_thinking": True}
 
     return ChatOpenAI(
-        api_key=cfg.deepseek_key,
-        base_url=cfg.deepseek_base_url,
+        api_key=cfg.qwen_key,
+        base_url=cfg.qwen_base_url,
         model=model,
         temperature=temperature,
         model_kwargs=model_kwargs,
@@ -364,10 +365,16 @@ async def _ask_source_absence(llm, ctx: RepairContext) -> Optional[dict[str, Any
 
 
 async def _gen_parser(llm, ctx: RepairContext, role: str) -> Optional[str]:
-    """Invoke parser_gen_prompt with the attempt history (aligned by index)."""
+    """Invoke parser_gen_prompt with the attempt history (aligned by index).
+
+    Builds the PriceContext once (cached on ctx) so every ladder attempt shares
+    the same evidence bundle — no redundant DOM scans.
+    """
+    if ctx.price_context is None:
+        ctx.price_context = build_price_aware_context(ctx.html, ctx.url)
     try:
         resp = await llm.ainvoke(parser_gen_prompt(
-            ctx.html, ctx.site, role=role,
+            ctx.price_context, ctx.site, role=role,
             initial_errors=ctx.initial_errors,
             attempts=ctx.attempts,
         ))

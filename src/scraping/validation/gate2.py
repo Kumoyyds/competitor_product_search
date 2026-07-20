@@ -13,6 +13,29 @@ def register_feasible_rule(site: str, rule: FeasibleRule) -> None:
     _SITE_RULES.setdefault(site, []).append(rule)
 
 
+def _structural_price_rule(data: ProductData) -> str | None:
+    """Reject price-field assignments that are structurally impossible.
+
+    A parser that copies the same value into both price and list_price (or both
+    price and membership_price) has confused the two — there is no real discount
+    or membership price.  Rejecting it here (route-agnostic) causes the fast path
+    to fall through to the repair ladder, and prevents a golden promotion that
+    would lock the bug in.
+    """
+    if data.price is not None:
+        if data.list_price is not None and data.list_price == data.price:
+            return (
+                "list_price equals price — price is duplicated into list_price; "
+                "no real discount present"
+            )
+        if data.membership_price is not None and data.membership_price == data.price:
+            return (
+                "membership_price equals price — price is duplicated into "
+                "membership_price; no real membership price present"
+            )
+    return None
+
+
 def _core_price_rule(data: ProductData) -> str | None:
     """in_stock=True must be paired with a positive price signal (D13).
 
@@ -69,6 +92,10 @@ def feasible_check(data: ProductData) -> list[str]:
     Returns empty list on pass, or list of violation descriptions on fail.
     """
     violations: list[str] = []
+
+    struct = _structural_price_rule(data)
+    if struct:
+        violations.append(struct)
 
     core = _core_price_rule(data)
     if core:

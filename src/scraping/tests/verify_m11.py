@@ -1,6 +1,6 @@
 """Verification for M11 — cold start CLI.
 
-Uses REAL DeepSeek API. Uses local HTML samples (mocks BrightData fetch).
+Uses REAL Qwen API. Uses local HTML samples (mocks BrightData fetch).
 
 Covers:
   - End-to-end cold start seeds parser + goldens on user accept
@@ -10,7 +10,7 @@ Covers:
   - _pick_representative_html picks largest HTML
   - _read_urls parses a URL file
 
-Cost: 1-2 DeepSeek calls per full run.
+Cost: 1-2 Qwen calls per full run.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ _config._config = None
 cfg = _config.get_config()
 
 DATA_DIR = Path(__file__).parent.parent / "data"
-HAS_LLM = bool(cfg.deepseek_key)
+HAS_LLM = bool(cfg.qwen_key)
 
 PASSED: list[str] = []
 FAILED: list[tuple[str, str]] = []
@@ -101,7 +101,7 @@ async def run() -> None:
     check("None when no OK", rep is None)
 
     if not HAS_LLM:
-        skip("M11.3-M11.5", "DEEPSEEK_KEY not set")
+        skip("M11.3-M11.5", "QWEN_KEY not set")
         return
 
     section("M11.3 - Cold start with 'y y' accepts both URLs")

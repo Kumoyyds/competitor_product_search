@@ -17,12 +17,12 @@ class ScrapingConfig(BaseSettings):
     )
     bright_data_zone: str = "web_unlocker1"
 
-    # --- DeepSeek (repair LLM) ---
-    deepseek_key: str = Field(
+    # --- Qwen (repair LLM) ---
+    qwen_key: str = Field(
         default="",
-        validation_alias=AliasChoices("SCRAPING_DEEPSEEK_KEY", "DEEPSEEK_KEY"),
+        validation_alias=AliasChoices("SCRAPING_QWEN_KEY", "QWEN_KEY"),
     )
-    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     # --- concurrency ---
     per_site_concurrency: int = 16
@@ -39,7 +39,7 @@ class ScrapingConfig(BaseSettings):
     # Number of attempts = len(repair_model_ladder). Edit the lists together to
     # change attempt count (they must have equal length; validated at startup).
     repair_model_ladder: list[str] = Field(
-        default=["deepseek-v4-flash","deepseek-v4-pro"]
+        default=["qwen3.7-plus", "qwen3.7-plus"]
     )
     repair_temperature_ladder: list[float] = Field(
         default=[0.1, 0.4]

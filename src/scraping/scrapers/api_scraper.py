@@ -89,7 +89,7 @@ class DirectAPIScraper(BaseScraper):
 
         if product is not None:
             latency = int((time.monotonic() - start) * 1000)
-            self._record_run(url, host, "success", "fast", latency=latency)
+            self._record_run(url, host, "success", self._success_path(), latency=latency)
             self._store_result(product)
             return product
 
@@ -103,7 +103,7 @@ class DirectAPIScraper(BaseScraper):
                 self._cache_heal(json_data, mapped, healed)
                 latency = int((time.monotonic() - start) * 1000)
                 self._record_run(url, host, "success", "agent_repaired",
-                                 model_used="deepseek-v4-flash", latency=latency)
+                                 model_used="qwen-3.7-plus", latency=latency)
                 self._store_result(product)
                 return product
             errors.extend(errors2)

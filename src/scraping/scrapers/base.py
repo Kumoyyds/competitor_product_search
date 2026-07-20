@@ -17,6 +17,18 @@ class BaseScraper(ABC):
     site: str
     source_type: SourceType
 
+    _order: int = 1
+
+    def _success_path(self) -> str:
+        """Return the scrape_runs.path label for a direct-success outcome.
+
+        order=1 (primary scraper) → "fast"
+        order=2 (first backup)  → "backup_1"
+        order=3 (second backup) → "backup_2"
+        """
+        order = getattr(self, "_order", 1)
+        return "fast" if order <= 1 else f"backup_{order - 1}"
+
     @abstractmethod
     async def scrape(self, url: str) -> ScrapeOutcome:
         ...

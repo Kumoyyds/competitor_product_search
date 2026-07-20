@@ -110,7 +110,7 @@ class HTMLScraper(BaseScraper):
             if product is not None:
                 latency = int((time.monotonic() - start) * 1000)
                 self._record_run(
-                    url, host, "success", "fast",
+                    url, host, "success", self._success_path(),
                     winning_parser_id=parser_id,
                     latency=latency,
                 )
@@ -176,6 +176,22 @@ class HTMLScraper(BaseScraper):
         if not parsers:
             return None
 
+        # --- Fast-path distrust: parse HTML once for structural sanity checks ---
+        # A parser saved from a different page type may emit blobs or miss a
+        # second price that is clearly visible on *this* page.  We run
+        # lightweight structural checks and distrust the parser if they fail —
+        # this causes a fall-through to the repair ladder which self-heals
+        # to a better vN+1 parser.
+        from bs4 import BeautifulSoup as _Bs
+
+        _soup: Any = None
+
+        def _ensure_soup() -> Any:
+            nonlocal _soup
+            if _soup is None:
+                _soup = _Bs(html, "lxml")
+            return _soup
+
         for parser in parsers:
             code = parser["code"]
             result = await run_in_sandbox(code, html, url)
@@ -184,6 +200,16 @@ class HTMLScraper(BaseScraper):
                 wrapped = self._wrap_parser_output(result, parser["version"], url)
                 product, gate_errors = validate(wrapped)
                 if product is not None:
+                    # --- fast-path distrust guard (M15) ---
+                    distrust_reason = _fast_path_sane(
+                        result, product, _ensure_soup()
+                    )
+                    if distrust_reason is not None:
+                        errors.append(
+                            f"parser {parser['version']} (id={parser['id']}) "
+                            f"distrusted: {distrust_reason}"
+                        )
+                        continue  # skip — repair ladder will generate a better parser
                     return wrapped, parser["id"], parser["version"], errors
                 errors.append(
                     f"parser {parser['version']} (id={parser['id']}) gate fail: {gate_errors}"
@@ -328,3 +354,58 @@ class HTMLScraper(BaseScraper):
             db.close()
         except Exception:
             logger.exception("Failed to store result")
+
+
+# ---------------------------------------------------------------------------
+# Fast-path distrust guard (M15)
+# ---------------------------------------------------------------------------
+
+
+def _fast_path_sane(raw_result: dict[str, Any], product: Any, soup: Any) -> Optional[str]:
+    """Check whether a fast-path (reused-parser) output is structurally credible.
+
+    Returns None if the output appears sane, or a reason string if it should
+    be distrusted — causing fall-through to the repair ladder which self-heals
+    to a better parser.
+
+    Checks (all generic, no site-hard-coded strings):
+      1. availability_raw is a JSON blob (entire JSON-LD script assigned instead
+         of the short human label).
+      2. A promotion signal (discount or membership) is structurally detected on
+         the page, but the parser returned neither list_price nor membership_price
+         — a reused parser from a single-price page that missed the second price.
+    """
+    # 1. availability blob — a JSON-object string at any length is a blob
+    avail = raw_result.get("availability_raw")
+    if isinstance(avail, str):
+        looks_like_json = ("{" in avail or "[" in avail) and (
+            "@context" in avail or "schema.org" in avail
+            or '"@type"' in avail or '"@graph"' in avail
+        )
+        if looks_like_json or (len(avail) > 80 and ("{" in avail or "@context" in avail)):
+            return "availability_raw is a JSON blob (not a short label)"
+
+    # 2. Promotion signal present but parser missed it
+    try:
+        from src.scraping.repair.prepass import detect_promotion  # type: ignore[import]
+
+        signal = detect_promotion(soup)
+        if signal and signal.get("kind") in ("discount", "membership"):
+            has_list = (
+                product.list_price is not None
+                and product.list_price != product.price
+            )
+            has_member = (
+                product.membership_price is not None
+                and product.membership_price != product.price
+            )
+            if not has_list and not has_member:
+                return (
+                    f"promotion signal '{signal['kind']}' detected on page "
+                    f"(evidence: {signal.get('evidence_text', '')[:120]}), "
+                    f"but parser returned neither list_price nor membership_price"
+                )
+    except Exception:
+        pass  # non-fatal — if promotion detection fails, trust the parser
+
+    return None  # sane

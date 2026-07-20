@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS parsers (
 CREATE TABLE IF NOT EXISTS golden_samples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     site TEXT NOT NULL,
-    page_type TEXT NOT NULL CHECK(page_type IN ('standard', 'out_of_stock', 'discounted', 'multipack')),
+    page_type TEXT NOT NULL CHECK(page_type IN ('standard', 'out_of_stock', 'discounted', 'multipack', 'membership')),
     html_snapshot TEXT NOT NULL,
     expected_output TEXT NOT NULL,
     captured_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
     scraper TEXT NOT NULL,
     scraped_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     outcome TEXT NOT NULL CHECK(outcome IN ('success', 'escalated', 'invalid_target')),
-    path TEXT NOT NULL CHECK(path IN ('fast', 'retried', 'agent_repaired', 'fallback_scraper', 'escalated', 'invalid_target')),
+    path TEXT NOT NULL CHECK(path IN ('fast', 'retried', 'agent_repaired', 'backup_1', 'backup_2', 'escalated', 'invalid_target')),
     winning_parser_id INTEGER REFERENCES parsers(id),
     attempts INTEGER NOT NULL DEFAULT 1,
     model_used TEXT,

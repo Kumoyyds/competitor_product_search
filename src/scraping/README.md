@@ -2,7 +2,7 @@
 
 Extracts structured product data from marketplace pages. Given a `(url, site)` pair, it returns a validated `ProductData` object with title, price, list_price, membership_price, stock, images, brand, etc. 鈥?or explains cleanly why it couldn't.
 
-> **Status**: Phase 0 complete. M1鈥揗13 implemented. M1鈥揗11 offline verification: 172 checks, 0 failures. M12: end-to-end live-scraping (Tesco+Argos). M13: Amazon/Tesco DCA polling fix (trigger/poll split 鈥?no duplicate BD triggers, 22 checks). See [tests/](tests/).
+> **Status**: Phase 0 complete. M1–M16 implemented. M1–M15 offline verification: 266 checks, 0 failures. M12: end-to-end live-scraping (Tesco+Argos). M13: DCA polling fix. M14: price-aware pre-pass. M15: data-quality gates. M16: UTF-8 mojibake resilience + anchoring hardening. See [tests/](tests/).
 
 ## What it does
 
@@ -39,12 +39,12 @@ flowchart TD
 
     H["repair ladder\n(N att, config-driven)"] --> H0{"attempt 0\nTurn A: no_product?"}
     H0 -->|"yes"| H0A["InvalidTargetResult 鉁揬n+ phrase backfill"]
-    H0 -->|"no (product page)"| H0B["Turn C: gen parser\n(v4-flash, T=0.1)"]
+    H0 -->|"no (product page)"| H0B["Turn C: gen parser\n(qwen-3.7-plus, T=0.1)"]
     H0B -->|"sandbox + gates pass\n+ golden test pass"| H_DONE["ProductData 鉁揬n(agent_repaired)\n+ promote parser"]
     H0B -->|"failed"| H1{"attempt 1 (last)\nTurn B: source_absence?\n(skipped if 2-node)"}
 
     H1 -->|"source_absent"| H1A["ScrapeFailed\n(source_absent)"]
-    H1 -->|"solvable"| H1B["Turn C: gen parser\n(v4-pro + thinking, T=0.4)"]
+    H1 -->|"solvable"| H1B["Turn C: gen parser\n(qwen-3.7-plus + thinking, T=0.4)"]
     H1B -->|"success"| H_DONE
     H1B -->|"failed"| H_FAIL["ScrapeFailed\n(parser_broken)"]
 
@@ -71,7 +71,7 @@ Under the hood:
 - **Ordered parser list** 鈥?each site has multiple parsers ranked by real-time hit rate. First to pass both gates wins.
 - **Two gates** 鈥?Gate 1 = Pydantic types. Gate 2 = `feasible_check`: rejects `in_stock=True` with no price, hallucinated zero prices, and out-of-stock items with zero product signals.
 - **Trigger/poll split (M13)** 鈥?for async BD APIs (Datasets/DCA): `_trigger()` is wrapped in retry (safe 鈥?failed POST 鈫?no snapshot), `_poll()` owns the full budget and **never re-triggers**. One URL 鈫?at most one BD snapshot. Configurable poll budget via `bd_async_poll_max_seconds` (300s default). The old blind-re-trigger-on-timeout bug for Amazon is fixed.
-- **Self-healing** 鈥?when all parsers fail, an LLM (DeepSeek) generates a candidate, sandboxes it, tests against golden samples, promotes if it passes. API routes use JSON remapping only (D25 red line 鈥?never fabricates).
+- **Self-healing** 鈥?when all parsers fail, an LLM (Qwen) generates a candidate, sandboxes it, tests against golden samples, promotes if it passes. API routes use JSON remapping only (D25 red line 鈥?never fabricates).
 - **Fallback ladder** 鈥?a site can register multiple scrapers (e.g. Tesco = HTML primary + DCA backup). Terminal failure 鈫?next scraper; all exhausted 鈫?escalation ticket (`parser_broken / api_malformed / infra_failure / mass_invalid_target`).
 - **Golden set** 鈥?every successful scrape auto-seeds a golden per page type (`standard / out_of_stock / discounted / multipack`). Future promotions must reproduce them exactly.
 - **Cold start** 鈥?for a new site: fetch URLs 鈫?LLM generates first parser 鈫?confirm each result 鈫?parser + goldens seeded.
@@ -94,10 +94,10 @@ Copy `.env.sample` to `.env` and fill in:
 
 ```
 BRIGHT_DATA_KEY  = your Bright Data API key
-DEEPSEEK_KEY     = your DeepSeek API key
+QWEN_KEY        = your Qwen API key (used by both search and scraping)
 ```
 
-BrightData is used for extraction (Web Unlocker for HTML, Datasets API for Amazon). DeepSeek is used for the repair Agent and cold start.
+BrightData is used for extraction (Web Unlocker for HTML, Datasets API for Amazon). Qwen is used for the repair Agent and cold start.
 
 ### 3. Scrape a URL
 
@@ -152,7 +152,7 @@ src/scraping/
 鈹溾攢鈹€ extraction/                     Bright Data async clients (Unlocker / Datasets / DCA)
 鈹溾攢鈹€ repair/
 鈹?  鈹溾攢鈹€ sandbox.py                  Subprocess + AST whitelist + timeout
-鈹?  鈹溾攢鈹€ agent.py                    Repair ladder (flash 鈫?flash 鈫?pro)
+鈹?  鈹溾攢鈹€ agent.py                    Repair ladder (qwen-3.7-plus x2)
 鈹?  鈹溾攢鈹€ prompts.py                  Prompt builders (JSON-LD-aware HTML excerpts)
 鈹?  鈹溾攢鈹€ json_healer.py              Restricted JSON remap (D25 red line)
 鈹?  鈹斺攢鈹€ golden.py                   page_type classifier + promote_candidate + prune
@@ -264,7 +264,7 @@ All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (s
 
 | Setting | Default | Notes |
 |---------|---------|-------|
-| `repair_model_ladder` | `flash 鈫?pro` | DeepSeek model tiers per attempt; length = attempt count |
+| `repair_model_ladder` | `qwen-3.7-plus` x2 | Qwen model per attempt; length = attempt count |
 | `repair_temperature_ladder` | `0.1 鈫?0.4` | Parser-generation temperature per attempt (must match model ladder) |
 | `bd_async_poll_max_seconds` | 300 | Wall-clock budget for Datasets/DCA snapshot polling (M13) |
 | `bd_async_poll_interval_seconds` | 4 | Sleep between Datasets/DCA poll GETs (M13) |
@@ -276,7 +276,7 @@ All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (s
 | `mass_invalid_target_ratio` | 0.3 | Alert if >30% of a site's 24h runs are invalid_target |
 | `mass_invalid_target_absolute` | 20 | Or if absolute count exceeds this |
 
-Override via env vars (`SCRAPING_REPAIR_MODEL_LADDER='["deepseek-v4-flash","deepseek-v4-pro"]'` etc.).
+Override via env vars (`SCRAPING_REPAIR_MODEL_LADDER='["qwen-3.7-plus","qwen-3.7-plus"]'` etc.).
 
 ## Verification
 
@@ -287,11 +287,11 @@ PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m1_m3
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m4_m5
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m6
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m7
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m8    # real DeepSeek
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m8    # real Qwen
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m9
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m10
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m11   # real DeepSeek
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m12   # real BrightData + DeepSeek, per-site batch
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m11   # real Qwen
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m12   # real BrightData + Qwen, per-site batch
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m13   # offline 鈥?mocked BD, proves no duplicate triggers
 ```
 
@@ -322,7 +322,7 @@ Full design spec: [scraping_module_spec_v1_2.md](scraping_module_spec_v1_2.md) (
 ## External dependencies
 
 - **BrightData** 鈥?[Web Unlocker](https://docs.brightdata.com/scraping-automation/web-unlocker/introduction) for HTML, Datasets API for Amazon, DCA collectors for Tesco backup
-- **DeepSeek** 鈥?OpenAI-compatible LLM endpoint (`https://api.deepseek.com/v1`)
+- **Qwen** (via DashScope) 鈥?OpenAI-compatible LLM endpoint (`https://dashscope.aliyuncs.com/compatible-mode/v1`)
 - **Python 3.12** 鈥?some upstream deps lack 3.14 wheels
 - Key libraries: `pydantic`, `httpx`, `lxml`, `beautifulsoup4`, `langchain-openai`, `pydantic-settings`, `pyyaml`
 

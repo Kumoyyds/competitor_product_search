@@ -49,9 +49,15 @@ class GoldenRejection:
 
 
 def classify_page_type(product: ProductData) -> str:
-    """Auto-classify a ProductData into one of four buckets (spec §5.7)."""
+    """Auto-classify a ProductData into one of five buckets (spec §5.7).
+
+    Precedence: out_of_stock > membership > discounted > multipack > standard.
+    """
     if not product.in_stock:
         return "out_of_stock"
+
+    if product.membership_price is not None and product.membership_price > 0:
+        return "membership"
 
     if product.list_price is not None and product.price is not None:
         if product.list_price > product.price:
@@ -113,7 +119,7 @@ async def promote_candidate(
     try:
         gs = GoldenStore(db)
         goldens_by_type: dict[str, list[dict[str, Any]]] = {}
-        for pt in ("standard", "out_of_stock", "discounted", "multipack"):
+        for pt in ("standard", "out_of_stock", "discounted", "multipack", "membership"):
             goldens_by_type[pt] = gs.get_by_site_and_type(site, pt, exclude_stale=True)
 
         covered = {pt: samples for pt, samples in goldens_by_type.items() if samples}

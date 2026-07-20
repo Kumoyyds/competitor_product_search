@@ -69,9 +69,16 @@ async def run() -> None:
     )
     from src.scraping.storage import GoldenStore, ParserStore, ScrapeDB, RunStore
 
-    section("M9.1 - classify_page_type: 4 buckets")
+    section("M9.1 - classify_page_type: 5 buckets")
     check("in_stock=False -> out_of_stock",
           classify_page_type(make_product(in_stock=False, price=None)) == "out_of_stock")
+    check("membership_price > 0 -> membership",
+          classify_page_type(make_product(price=Decimal("129.99"),
+                                          membership_price=Decimal("99.99"))) == "membership")
+    check("membership trumps discounted",
+          classify_page_type(make_product(price=Decimal("99.99"),
+                                          list_price=Decimal("129.99"),
+                                          membership_price=Decimal("99.99"))) == "membership")
     check("list_price > price -> discounted",
           classify_page_type(make_product(price=Decimal("15.00"),
                                           list_price=Decimal("20.00"))) == "discounted")
@@ -85,6 +92,9 @@ async def run() -> None:
     check("out_of_stock takes priority over discount",
           classify_page_type(make_product(in_stock=False, price=Decimal("15.00"),
                                           list_price=Decimal("20.00"))) == "out_of_stock")
+    check("out_of_stock takes priority over membership",
+          classify_page_type(make_product(in_stock=False, price=None,
+                                          membership_price=Decimal("2.00"))) == "out_of_stock")
 
     section("M9.2 - maybe_seed_golden: first product seeded, next skipped")
     p1 = make_product(title="Product A")

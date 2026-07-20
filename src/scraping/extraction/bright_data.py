@@ -143,7 +143,13 @@ class BrightDataUnlocker:
                 },
             )
         _check_infra_error(resp.status_code, resp.text, resp.headers, expect_html=True)
-        return resp.status_code, resp.text
+        # Decode explicitly — httpx mis-guesses charset on some sites (e.g.
+        # Tesco is served as UTF-8 but httpx guesses Latin-1, turning '£' into
+        # 'Â£').  Honor an explicitly declared Content-Type charset if present;
+        # otherwise default to UTF-8 (every modern retailer uses it).
+        enc = resp.charset_encoding or "utf-8"
+        html = resp.content.decode(enc, errors="replace")
+        return resp.status_code, html
 
 
 class BrightDataDatasets:
