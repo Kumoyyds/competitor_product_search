@@ -1,0 +1,19 @@
+#!/bin/sh
+# Auto-sync CLAUDE.md <-> AGENTS.md before every commit (bidirectional).
+# Enabled once per clone with: git config core.hooksPath .githooks
+# Cross-platform: Git for Windows runs hooks with its bundled sh.
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 1
+SCRIPT="$ROOT/scripts/sync_agent_docs.py"
+
+PY=""
+command -v python3 >/dev/null 2>&1 && PY="python3"
+[ -z "$PY" ] && command -v python >/dev/null 2>&1 && PY="python"
+[ -z "$PY" ] && command -v py >/dev/null 2>&1 && PY="py"
+
+if [ -z "$PY" ]; then
+    echo "[pre-commit] python not found - skipping CLAUDE.md/AGENTS.md sync" >&2
+    exit 0
+fi
+
+exec "$PY" "$SCRIPT" --pre-commit --root "$ROOT"

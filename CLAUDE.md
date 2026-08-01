@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents (Claude Code, Codex, etc.) when working with code in this repository. `AGENTS.md` (read by Codex) and `CLAUDE.md` (read by Claude Code) are kept byte-identical: edit either one, and a git pre-commit hook syncs the other automatically.
 
 ## Project Overview
 
@@ -19,6 +19,9 @@ cp .env.sample .env
 
 # Run
 python run.py
+
+# Enable the CLAUDE.md <-> AGENTS.md auto-sync hook (once per clone)
+git config core.hooksPath .githooks
 ```
 
 Configuration is in `config.yaml` — set input file name, SKU name column, country code, target web domain, and output file name before running.
@@ -72,7 +75,7 @@ See `docs/architecture.md` for detailed diagrams.
 ## Code Conventions
 
 - `src/` uses implicit namespace package (no `src/__init__.py`)
-- Each module under `src/` has its own `CLAUDE.md` with module-specific details
+- Modules under `src/` may carry their own `CLAUDE.md` with module-specific details; every `CLAUDE.md` has a byte-identical `AGENTS.md` sibling maintained by the pre-commit hook (`scripts/sync_agent_docs.py`), so edit either file freely — the other follows
 - Imports within a module use relative paths (e.g., `from .searcher import find_url_llm`)
 - Cross-module imports use absolute paths (e.g., `from src.search.searcher import ...`)
 - Dependencies managed via `requirements.txt` (pip freeze format)
