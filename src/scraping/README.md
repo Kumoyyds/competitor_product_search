@@ -1,17 +1,17 @@
-﻿# PriceScope 鈥?Scraping Module
+# PriceScope — Scraping Module
 
-Extracts structured product data from marketplace pages. Given a `(url, site)` pair, it returns a validated `ProductData` object with title, price, list_price, membership_price, stock, images, brand, etc. 鈥?or explains cleanly why it couldn't.
+Extracts structured product data from marketplace pages. Given a `(url, site)` pair, it returns a validated `ProductData` object with title, price, list_price, membership_price, stock, images, brand, etc. — or explains cleanly why it couldn't.
 
 > **Status**: Phase 0 complete. M1–M16 implemented. M1–M15 offline verification: 266 checks, 0 failures. M12: end-to-end live-scraping (Tesco+Argos). M13: DCA polling fix. M14: price-aware pre-pass. M15: data-quality gates. M16: UTF-8 mojibake resilience + anchoring hardening. See [tests/](tests/).
 
 ## What it does
 
 ```
-URL in  鈹€鈫? Router (host鈫抯ite鈫抯craper list)
-             鈹溾攢 HTMLScraper (Tesco/Argos): BrightData Web Unlocker 鈫?HTML 鈫?parser 鈫?ProductData
-             鈹斺攢 DirectAPIScraper (Amazon): BrightData Datasets API 鈫?_trigger (retried) 鈫?_poll (300s budget, no re-trigger) 鈫?JSON 鈫?ProductData
-                (Tesco has DCA API as backup 鈥?same trigger/poll split)
-     out 鈹€鈫? ProductData | InvalidTargetResult | ScrapeFailed
+URL in  ─→  Router (host→site→scraper list)
+             ├─ HTMLScraper (Tesco/Argos): BrightData Web Unlocker → HTML → parser → ProductData
+             └─ DirectAPIScraper (Amazon): BrightData Datasets API → _trigger (retried) → _poll (300s budget, no re-trigger) → JSON → ProductData
+                (Tesco has DCA API as backup — same trigger/poll split)
+     out ─→  ProductData | InvalidTargetResult | ScrapeFailed
 ```
 
 ### Pipeline Flow
@@ -20,27 +20,27 @@ URL in  鈹€鈫? Router (host鈫抯ite鈫抯craper list)
 
 ```mermaid
 flowchart TD
-    A["scrape(url)"] --> B{"resolve_site(url)\nhost 鈫?site via hosts.yaml"}
+    A["scrape(url)"] --> B{"resolve_site(url)\nhost → site via hosts.yaml"}
     B --> C{"get_scrapers(site)\nordered by priority"}
 
     C --> D["Try scraper 1"]
 
     D --> E{"BrightData\nfetch"}
-    E -->|"HTTP 200 + body 鈮?1000"| F{"detect_invalid_page\n(5 signals)"}
+    E -->|"HTTP 200 + body ≥ 1000"| F{"detect_invalid_page\n(5 signals)"}
     E -->|"body < 1000 chars\nor 407/429/500/502/503/504\nor x-brd-error-code + empty\nor upstream error markers"| E1["extraction retry\npause 2s, up to 3 attempts"]
     E1 -->|"still failing"| D1["ScrapeFailed\n(extraction_infra)"]
     E1 -->|"recovered"| F
 
-    F -->|"page_length < 5000\nor multi_absence\nor keyword_match\nor HTTP 404/410"| F1["InvalidTargetResult 鉁揬n(fast 鈥?no LLM)"]
+    F -->|"page_length < 5000\nor multi_absence\nor keyword_match\nor HTTP 404/410"| F1["InvalidTargetResult ✓\n(fast — no LLM)"]
     F -->|"page looks valid"| G["ordered parser list\n(sorted by hit rate)"]
 
-    G -->|"parser hits\ngates pass"| G1["ProductData 鉁揬n(fast path)"]
+    G -->|"parser hits\ngates pass"| G1["ProductData ✓\n(fast path)"]
     G -->|"no active parsers\nor all failed"| H
 
     H["repair ladder\n(N att, config-driven)"] --> H0{"attempt 0\nTurn A: no_product?"}
-    H0 -->|"yes"| H0A["InvalidTargetResult 鉁揬n+ phrase backfill"]
+    H0 -->|"yes"| H0A["InvalidTargetResult ✓\n+ phrase backfill"]
     H0 -->|"no (product page)"| H0B["Turn C: gen parser\n(qwen-3.7-plus, T=0.1)"]
-    H0B -->|"sandbox + gates pass\n+ golden test pass"| H_DONE["ProductData 鉁揬n(agent_repaired)\n+ promote parser"]
+    H0B -->|"sandbox + gates pass\n+ golden test pass"| H_DONE["ProductData ✓\n(agent_repaired)\n+ promote parser"]
     H0B -->|"failed"| H1{"attempt 1 (last)\nTurn B: source_absence?\n(skipped if 2-node)"}
 
     H1 -->|"source_absent"| H1A["ScrapeFailed\n(source_absent)"]
@@ -67,14 +67,14 @@ flowchart TD
 
 Under the hood:
 
-- **Invalid-target detection** 鈥?before parsing, checks JSON-LD, HTTP status, structural absence, page length, and a learned phrase list. Delisted / error pages are caught before wasting a parse.
-- **Ordered parser list** 鈥?each site has multiple parsers ranked by real-time hit rate. First to pass both gates wins.
-- **Two gates** 鈥?Gate 1 = Pydantic types. Gate 2 = `feasible_check`: rejects `in_stock=True` with no price, hallucinated zero prices, and out-of-stock items with zero product signals.
-- **Trigger/poll split (M13)** 鈥?for async BD APIs (Datasets/DCA): `_trigger()` is wrapped in retry (safe 鈥?failed POST 鈫?no snapshot), `_poll()` owns the full budget and **never re-triggers**. One URL 鈫?at most one BD snapshot. Configurable poll budget via `bd_async_poll_max_seconds` (300s default). The old blind-re-trigger-on-timeout bug for Amazon is fixed.
-- **Self-healing** 鈥?when all parsers fail, an LLM (Qwen) generates a candidate, sandboxes it, tests against golden samples, promotes if it passes. API routes use JSON remapping only (D25 red line 鈥?never fabricates).
-- **Fallback ladder** 鈥?a site can register multiple scrapers (e.g. Tesco = HTML primary + DCA backup). Terminal failure 鈫?next scraper; all exhausted 鈫?escalation ticket (`parser_broken / api_malformed / infra_failure / mass_invalid_target`).
-- **Golden set** 鈥?every successful scrape auto-seeds a golden per page type (`standard / out_of_stock / discounted / multipack`). Future promotions must reproduce them exactly.
-- **Cold start** 鈥?for a new site: fetch URLs 鈫?LLM generates first parser 鈫?confirm each result 鈫?parser + goldens seeded.
+- **Invalid-target detection** — before parsing, checks JSON-LD, HTTP status, structural absence, page length, and a learned phrase list. Delisted / error pages are caught before wasting a parse.
+- **Ordered parser list** — each site has multiple parsers ranked by real-time hit rate. First to pass both gates wins.
+- **Two gates** — Gate 1 = Pydantic types. Gate 2 = `feasible_check`: rejects `in_stock=True` with no price, hallucinated zero prices, and out-of-stock items with zero product signals.
+- **Trigger/poll split (M13)** — for async BD APIs (Datasets/DCA): `_trigger()` is wrapped in retry (safe — failed POST → no snapshot), `_poll()` owns the full budget and **never re-triggers**. One URL → at most one BD snapshot. Configurable poll budget via `bd_async_poll_max_seconds` (300s default). The old blind-re-trigger-on-timeout bug for Amazon is fixed.
+- **Self-healing** — when all parsers fail, an LLM (Qwen) generates a candidate, sandboxes it, tests against golden samples, promotes if it passes. API routes use JSON remapping only (D25 red line — never fabricates).
+- **Fallback ladder** — a site can register multiple scrapers (e.g. Tesco = HTML primary + DCA backup). Terminal failure → next scraper; all exhausted → escalation ticket (`parser_broken / api_malformed / infra_failure / mass_invalid_target`).
+- **Golden set** — every successful scrape auto-seeds a golden per page type (`standard / out_of_stock / discounted / multipack`). Future promotions must reproduce them exactly.
+- **Cold start** — for a new site: fetch URLs → LLM generates first parser → confirm each result → parser + goldens seeded.
 
 ## Quick start
 
@@ -113,9 +113,9 @@ asyncio.run(main())
 ```
 
 Returns:
-- `ProductData` 鈥?validated product data
-- `InvalidTargetResult` 鈥?URL reachable but not a valid product (delisted, 404, etc.)
-- raises `ScrapeFailed` 鈥?all scrapers exhausted (see escalation ticket in DB)
+- `ProductData` — validated product data
+- `InvalidTargetResult` — URL reachable but not a valid product (delisted, 404, etc.)
+- raises `ScrapeFailed` — all scrapers exhausted (see escalation ticket in DB)
 
 ### 4. Cold-start a new site
 
@@ -134,32 +134,32 @@ The CLI will fetch each URL, ask the LLM to generate a parser, run it against ev
 
 ```
 src/scraping/
-鈹溾攢鈹€ __init__.py                     Public API: scrape(), ProductData, ScrapeFailed
-鈹溾攢鈹€ config.py                       ScrapingConfig (all knobs from spec 搂7)
-鈹溾攢鈹€ exceptions.py                   ScrapeFailed, BrightDataInfraError
-鈹溾攢鈹€ detection.py                    Invalid-target detection (5 signal layers)
-鈹溾攢鈹€ router.py                       Two-hop dispatch + scraper fallback + escalation
-鈹溾攢鈹€ registry.py                     @register_scraper decorator
-鈹溾攢鈹€ hosts.yaml                      host 鈫?site mapping (edit to add sites)
-鈹溾攢鈹€ coldstart.py                    Cold-start CLI
-鈹溾攢鈹€ models/                         ProductData, enums, InvalidTargetResult
-鈹溾攢鈹€ validation/                     gate1 (Pydantic) + gate2 (feasible_check)
-鈹溾攢鈹€ scrapers/
-鈹?  鈹溾攢鈹€ base.py                     BaseScraper ABC
-鈹?  鈹溾攢鈹€ html_scraper.py             Template Method: extract 鈫?detect 鈫?parse 鈫?gates 鈫?repair
-鈹?  鈹溾攢鈹€ api_scraper.py              JSON mapping + restricted JSON self-heal
-鈹?  鈹斺攢鈹€ sites/                      TescoScraper, TescoDCAScraper, ArgosScraper, AmazonUKScraper
-鈹溾攢鈹€ extraction/                     Bright Data async clients (Unlocker / Datasets / DCA)
-鈹溾攢鈹€ repair/
-鈹?  鈹溾攢鈹€ sandbox.py                  Subprocess + AST whitelist + timeout
-鈹?  鈹溾攢鈹€ agent.py                    Repair ladder (qwen-3.7-plus x2)
-鈹?  鈹溾攢鈹€ prompts.py                  Prompt builders (JSON-LD-aware HTML excerpts)
-鈹?  鈹溾攢鈹€ json_healer.py              Restricted JSON remap (D25 red line)
-鈹?  鈹斺攢鈹€ golden.py                   page_type classifier + promote_candidate + prune
-鈹溾攢鈹€ storage/                        6 SQLite tables (parsers, golden_samples, scrape_runs,
-鈹?                                  results, escalations, invalid_target_phrases)
-鈹溾攢鈹€ data/                           Sample HTMLs / JSON for tests
-鈹斺攢鈹€ tests/                          verify_mN.py + verify_mN_output.log per milestone
+├── __init__.py                     Public API: scrape(), ProductData, ScrapeFailed
+├── config.py                       ScrapingConfig (all knobs from spec §7)
+├── exceptions.py                   ScrapeFailed, BrightDataInfraError
+├── detection.py                    Invalid-target detection (5 signal layers)
+├── router.py                       Two-hop dispatch + scraper fallback + escalation
+├── registry.py                     @register_scraper decorator
+├── hosts.yaml                      host → site mapping (edit to add sites)
+├── coldstart.py                    Cold-start CLI
+├── models/                         ProductData, enums, InvalidTargetResult
+├── validation/                     gate1 (Pydantic) + gate2 (feasible_check)
+├── scrapers/
+│   ├── base.py                     BaseScraper ABC
+│   ├── html_scraper.py             Template Method: extract → detect → parse → gates → repair
+│   ├── api_scraper.py              JSON mapping + restricted JSON self-heal
+│   └── sites/                      TescoScraper, TescoDCAScraper, ArgosScraper, AmazonUKScraper
+├── extraction/                     Bright Data async clients (Unlocker / Datasets / DCA)
+├── repair/
+│   ├── sandbox.py                  Subprocess + AST whitelist + timeout
+│   ├── agent.py                    Repair ladder (qwen-3.7-plus x2)
+│   ├── prompts.py                  Prompt builders (JSON-LD-aware HTML excerpts)
+│   ├── json_healer.py              Restricted JSON remap (D25 red line)
+│   └── golden.py                   page_type classifier + promote_candidate + prune
+├── storage/                        6 SQLite tables (parsers, golden_samples, scrape_runs,
+│                                   results, escalations, invalid_target_phrases)
+├── data/                           Sample HTMLs / JSON for tests
+└── tests/                          verify_mN.py + verify_mN_output.log per milestone
 ```
 
 ## Adding a new site
@@ -260,12 +260,12 @@ SELECT * FROM escalations WHERE status = 'open' ORDER BY affected_count DESC;
 
 ## Configuration
 
-All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (spec 搂7):
+All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (spec §7):
 
 | Setting | Default | Notes |
 |---------|---------|-------|
 | `repair_model_ladder` | `qwen-3.7-plus` x2 | Qwen model per attempt; length = attempt count |
-| `repair_temperature_ladder` | `0.1 鈫?0.4` | Parser-generation temperature per attempt (must match model ladder) |
+| `repair_temperature_ladder` | `0.1 → 0.4` | Parser-generation temperature per attempt (must match model ladder) |
 | `bd_async_poll_max_seconds` | 300 | Wall-clock budget for Datasets/DCA snapshot polling (M13) |
 | `bd_async_poll_interval_seconds` | 4 | Sleep between Datasets/DCA poll GETs (M13) |
 | `json_heal_budget` | 1 | Single-shot for API route |
@@ -292,14 +292,14 @@ PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m9
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m10
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m11   # real Qwen
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m12   # real BrightData + Qwen, per-site batch
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m13   # offline 鈥?mocked BD, proves no duplicate triggers
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m13   # offline — mocked BD, proves no duplicate triggers
 ```
 
-Latest results are saved to [tests/verify_m*_output.log](tests/). See [tests/README.md](tests/README.md) for the inventory (194 checks across M1鈥揗13) and re-run instructions.
+Latest results are saved to [tests/verify_m*_output.log](tests/). See [tests/README.md](tests/README.md) for the inventory (194 checks across M1–M13) and re-run instructions.
 
 ## Design
 
-Full design spec: [scraping_module_spec_v1_2.md](scraping_module_spec_v1_2.md) (in Chinese). Key decisions are numbered D1鈥揇29 with rationale. Highlights:
+Full design spec: [scraping_module_spec_v1_2.md](scraping_module_spec_v1_2.md) (in Chinese). Key decisions are numbered D1–D29 with rationale. Highlights:
 
 - **D1**: Prices always `Decimal`, never `float`
 - **D3**: Scraper registry is a code decorator (`@register_scraper`), not YAML
@@ -314,20 +314,20 @@ Full design spec: [scraping_module_spec_v1_2.md](scraping_module_spec_v1_2.md) (
 
 ## Phase 0 known compromises
 
-- **Sandbox on Windows** 鈥?`resource.setrlimit` is POSIX-only. On Windows only the subprocess timeout provides isolation. Phase 2 will use Docker.
-- **JSON heal cache** 鈥?in-memory only (lost on restart). Next scrape re-heals in ~1 LLM call.
-- **INFRA ALERT** 鈥?currently logged only. Phase 1 will hook email/IM.
-- **LLM output variance** 鈥?the Agent's parser code differs between runs even on identical HTML. Verify scripts test *machinery*, not exact parser code.
+- **Sandbox on Windows** — `resource.setrlimit` is POSIX-only. On Windows only the subprocess timeout provides isolation. Phase 2 will use Docker.
+- **JSON heal cache** — in-memory only (lost on restart). Next scrape re-heals in ~1 LLM call.
+- **INFRA ALERT** — currently logged only. Phase 1 will hook email/IM.
+- **LLM output variance** — the Agent's parser code differs between runs even on identical HTML. Verify scripts test *machinery*, not exact parser code.
 
 ## External dependencies
 
-- **BrightData** 鈥?[Web Unlocker](https://docs.brightdata.com/scraping-automation/web-unlocker/introduction) for HTML, Datasets API for Amazon, DCA collectors for Tesco backup
-- **Qwen** (via DashScope) 鈥?OpenAI-compatible LLM endpoint (`https://dashscope.aliyuncs.com/compatible-mode/v1`)
-- **Python 3.12** 鈥?some upstream deps lack 3.14 wheels
+- **BrightData** — [Web Unlocker](https://docs.brightdata.com/scraping-automation/web-unlocker/introduction) for HTML, Datasets API for Amazon, DCA collectors for Tesco backup
+- **Qwen** (via DashScope) — OpenAI-compatible LLM endpoint (`https://dashscope.aliyuncs.com/compatible-mode/v1`)
+- **Python 3.12** — some upstream deps lack 3.14 wheels
 - Key libraries: `pydantic`, `httpx`, `lxml`, `beautifulsoup4`, `langchain-openai`, `pydantic-settings`, `pyyaml`
 
 ## Contributing
 
-- Add a new site 鈫?see "Adding a new site" above.
-- Modify a D-numbered decision 鈫?read its rationale in the spec first.
-- Ship a new milestone 鈫?follow the Verification Discipline in [CLAUDE.md](CLAUDE.md): a runnable `verify_mN.py` + its `.log` output, and a row in [tests/README.md](tests/README.md).
+- Add a new site → see "Adding a new site" above.
+- Modify a D-numbered decision → read its rationale in the spec first.
+- Ship a new milestone → follow the Verification Discipline in [CLAUDE.md](CLAUDE.md): a runnable `verify_mN.py` + its `.log` output, and a row in [tests/README.md](tests/README.md).

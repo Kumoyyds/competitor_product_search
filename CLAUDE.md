@@ -79,3 +79,14 @@ See `docs/architecture.md` for detailed diagrams.
 - Imports within a module use relative paths (e.g., `from .searcher import find_url_llm`)
 - Cross-module imports use absolute paths (e.g., `from src.search.searcher import ...`)
 - Dependencies managed via `requirements.txt` (pip freeze format)
+
+## File Encoding Rules
+
+All text files (markdown, Python, YAML, …) are **UTF-8 without BOM**.
+
+- Read and write every file as UTF-8. Never transcode, convert, or "repair" a file's encoding.
+- When editing a file that contains non-ASCII characters (`— – → § ✓ ├ └ │` etc.), preserve the existing bytes exactly. Do not open/re-save through another codepage.
+- The classic failure: opening a UTF-8 file and re-saving it as GBK/CP936 (Chinese-Windows default) mangles every non-ASCII char into mojibake and prepends a UTF-8 BOM. Corrupted files show rare CJK glyphs where ASCII symbols should be, a leading BOM, or the Unicode replacement character (U+FFFD).
+- If a file you are about to edit looks mojibake'd (or `python3 scripts/check_encoding.py --all` flags it), STOP and report it to the user — do not edit around it or silently rewrite the file. The authoritative mojibake marker list lives in `scripts/check_encoding.py` (`MOJIBAKE`).
+- Never add a UTF-8 BOM (`EF BB BF`).
+- The pre-commit hook (`scripts/check_encoding.py`) rejects staged files with a BOM, invalid UTF-8, or mojibake. If your commit is blocked, fix the file's encoding — do not bypass the hook.
