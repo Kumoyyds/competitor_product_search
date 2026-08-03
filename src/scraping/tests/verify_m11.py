@@ -6,9 +6,9 @@ Covers:
   - End-to-end cold start seeds parser + goldens on user accept
   - 'q' aborts the review loop, nothing seeded
   - 'n' skips a URL, only accepted URLs become goldens
-  - page_type classification during seeding
+  - declared page_type during seeding
   - _pick_representative_html picks largest HTML
-  - _read_urls parses a URL file
+  - read_coldstart_input parses a valid Excel workbook
 
 Cost: 1-2 Qwen calls per full run.
 """
@@ -22,6 +22,8 @@ import tempfile
 import traceback
 from pathlib import Path
 from unittest.mock import patch
+
+from openpyxl import Workbook
 
 _DB_PATH = os.path.join(tempfile.gettempdir(), "verify_m11.db")
 if os.path.exists(_DB_PATH):
@@ -63,27 +65,28 @@ def section(title: str) -> None:
 
 async def run() -> None:
     from src.scraping.coldstart import (
+        ColdStartRow,
         _pick_representative_html,
-        _read_urls,
+        read_coldstart_input,
         run_coldstart,
     )
     from src.scraping.storage import GoldenStore, ParserStore, ScrapeDB
     from src.scraping.extraction import bright_data as bd_mod
 
-    section("M11.1 - _read_urls parses text file")
-    fd, tmp_path = tempfile.mkstemp(suffix=".txt")
+    section("M11.1 - read_coldstart_input parses Excel file")
+    fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
     os.close(fd)
     tmp = Path(tmp_path)
-    tmp.write_text(
-        "# comment line\n"
-        "https://www.argos.co.uk/product/1\n"
-        "\n"
-        "https://www.argos.co.uk/product/2\n",
-        encoding="utf-8",
-    )
-    urls = _read_urls(tmp)
-    check("comment stripped", "# comment line" not in urls[0])
-    check("2 URLs read (blanks/comments skipped)", len(urls) == 2, str(urls))
+    wb = Workbook(); ws = wb.active
+    ws.append(["page_type", "url"])
+    ws.append(["standard", "https://www.argos.co.uk/product/1"])
+    ws.append(["out_of_stock", "https://www.argos.co.uk/product/2"])
+    ws.append(["discounted", "https://www.argos.co.uk/product/3"])
+    ws.append(["membership", "https://www.argos.co.uk/product/4"])
+    wb.save(tmp); wb.close()
+    rows = read_coldstart_input(tmp)
+    check("4 rows read", len(rows) == 4, str(rows))
+    check("declared page types retained", rows[2].page_type == "discounted")
     tmp.unlink()
 
     section("M11.2 - _pick_representative_html picks largest OK HTML")
@@ -122,7 +125,7 @@ async def run() -> None:
         inputs = iter(["y", "y"])
         result = await run_coldstart(
             site="argos",
-            urls=list(fake_fetch_map.keys()),
+            rows=[ColdStartRow("standard", url, i + 2) for i, url in enumerate(fake_fetch_map)],
             input_fn=lambda prompt: next(inputs),
         )
 
@@ -154,7 +157,7 @@ async def run() -> None:
         inputs = iter(["q"])
         result = await run_coldstart(
             site="argos",
-            urls=list(fake_fetch_map.keys()),
+            rows=[ColdStartRow("standard", url, i + 2) for i, url in enumerate(fake_fetch_map)],
             input_fn=lambda prompt: next(inputs),
         )
 
@@ -174,7 +177,7 @@ async def run() -> None:
         inputs = iter(["n", "y"])
         result = await run_coldstart(
             site="argos",
-            urls=list(fake_fetch_map.keys()),
+            rows=[ColdStartRow("standard", url, i + 2) for i, url in enumerate(fake_fetch_map)],
             input_fn=lambda prompt: next(inputs),
         )
 

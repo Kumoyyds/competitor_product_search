@@ -1,6 +1,6 @@
 # Scraping Module
 
-**Status**: M1–M16 complete. Full Phase 0 lifecycle. M1–M15: 266+ offline checks pass. M12: end-to-end live-scraping (Tesco+Argos). M13: Amazon/Tesco DCA polling fix (trigger/poll split — no duplicate Bright Data triggers). M14: price-aware pre-pass + membership golden bucket + prompt rewrite (evidence-driven, site-agnostic). M15: data-quality gates — promotion detection (structural, visual-value-bar-first), availability normalization (schema.org token recovery), fast-path distrust guard (single-parser reuse → self-heal), gate2 structural price rules, prompt demoted `validForMemberTier` from imperative to corroborating hint. M16: UTF-8 mojibake resilience at extraction + anchoring/promotion hardening (cross-source corroboration, scored buy-box container, robust-extraction prompt). See `src/scraping/tests/`.
+**Status**: M1–M18 complete. Full Phase 0 lifecycle. M1–M15: 266+ offline checks pass. M12: end-to-end live-scraping (Tesco+Argos). M13: Amazon/Tesco DCA polling fix (trigger/poll split — no duplicate Bright Data triggers). M14: price-aware pre-pass + membership golden bucket + prompt rewrite (evidence-driven, site-agnostic). M15: data-quality gates — promotion detection (structural, visual-value-bar-first), availability normalization (schema.org token recovery), fast-path distrust guard (single-parser reuse → self-heal), gate2 structural price rules, prompt demoted `validForMemberTier` from imperative to corroborating hint. M16: UTF-8 mojibake resilience at extraction + anchoring/promotion hardening (cross-source corroboration, scored buy-box container, robust-extraction prompt). M17: validated Excel cold start and capped golden lifecycle. M18: provider-aware LLM registry (Qwen + DeepSeek). See `src/scraping/tests/`.
 
 ## Responsibility
 
@@ -119,12 +119,13 @@ M13 splits each client into `_trigger()` (retryable — a failed POST creates no
 src/scraping/
 ├── __init__.py             # Public API: scrape(), ProductData, ScrapeFailed
 ├── config.py               # ScrapingConfig (spec §7)
+├── providers.py            # LLM model/provider registry + unified client factory (M18)
 ├── exceptions.py           # ScrapeFailed, BrightDataInfraError
 ├── detection.py            # Invalid page detection (5 signals)
 ├── router.py               # Two-hop dispatch + fallback loop + escalation writer (M10)
 ├── registry.py             # @register_scraper decorator
 ├── hosts.yaml              # host → site mapping (edit here to add sites)
-├── coldstart.py            # CLI cold start (M11)
+├── coldstart.py            # CLI cold start (M11/M17: validated Excel + declared page types)
 ├── models/                 # ProductData (M15: availability_raw normalizer), enums, InvalidTargetResult
 ├── validation/             # gate1 (Pydantic), gate2 (feasible_check + M15 structural price rules)
 ├── scrapers/
@@ -145,9 +146,10 @@ src/scraping/
 ├── storage/
 │   ├── database.py         # 6 SQLite tables (golden_samples CHECK incl. membership since M14)
 │   ├── migrations/
-│   │   └── add_membership_bucket.py  # M14 — one-time migration for existing DBs
+│   │   ├── add_membership_bucket.py  # M14 — one-time migration for existing DBs
+│   │   └── add_golden_created_by.py  # M17 — golden provenance for safe pruning
 │   └── ...                 # store classes (golden, parser, run, result, escalation, phrase)
-└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M15)
+└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M18)
 ```
 
 ## Milestone Status
@@ -170,6 +172,8 @@ src/scraping/
 | M14 | Price-aware pre-pass + anchoring + prompt rewrite (evidence-driven, site-agnostic) + membership golden bucket (5 types) + API membership mapping | ✔ verify_m14.py |
 | M15 | Data-quality gates: promotion detection (structural, visual-value-bar-first), availability normalization, gate2 structural rules, fast-path distrust guard, prompt rewrite | ✔ verify_m15.py |
 | M16 | UTF-8 mojibake resilience (extraction choke point) + anchoring hardening (cross-source value corroboration, buy-box container membership) + promotion container scored selection + robust-extraction prompt guidance | ✔ verify_m14.py + verify_m15.py (re-run on fixed fixtures) |
+| M17 | Validated Excel cold-start input + config-driven page-type requirements + global golden caps/URL dedup + provenance-aware dry-run pruning | ✔ verify_m17.py |
+| M18 | Provider-aware LLM registry + unified Qwen/DeepSeek client factory + dynamic dotenv key lookup | ✔ verify_m18.py |
 
 ## Public API
 
@@ -183,20 +187,23 @@ result = await scrape("https://www.argos.co.uk/product/3284476")
 ## Cold Start (new site)
 
 ```bash
-python -m src.scraping.coldstart --site tesco --urls-file cold_urls.txt
+python -m src.scraping.storage.migrations.add_golden_created_by
+python -m src.scraping.coldstart --site tesco --input src/scraping/data/cold_start/tesco.xlsx
 ```
 
-Interactive: fetches all URLs → LLM generates first parser → user confirms each result (y/n/q) → seeds `parsers` + `golden_samples`. First-and-only manual step in the pipeline's lifetime.
+The workbook requires `page_type` + `url`. Mandatory coverage is validated before network spend. Interactive review shows declared type and any classifier mismatch; accepted rows seed the declared bucket with `created_by=coldstart`. Exit 2 means accepted data was seeded but mandatory coverage remains incomplete.
 
 ## Key Config (all in `ScrapingConfig`, spec §7)
 
-- `BRIGHT_DATA_KEY` / `QWEN_KEY` — API keys (loaded from `.env`)
+- `BRIGHT_DATA_KEY` / provider keys such as `QWEN_KEY` and `DEEPSEEK_KEY` — loaded from `.env`
 - `SCRAPING_DB_PATH` — SQLite path (default: `scraping.db`)
-- `repair_model_ladder` / `repair_temperature_ladder` — model + temperature per attempt (default: `["qwen-3.7-plus", "qwen-3.7-plus"]` / `[0.1, 0.4]`; lengths must match)
+- `repair_model_ladder` / `repair_temperature_ladder` — model + temperature per attempt (default: `["qwen3.7-plus", "qwen3.7-plus"]` / `[0.1, 0.4]`; lengths must match); models resolve through `providers.py`; cold start and JSON healing use the first configured model
 - `bd_async_poll_max_seconds` / `bd_async_poll_interval_seconds` — Datasets/DCA poll budget (default: 300s / 4s; from M13 Amazon fix)
 - `json_heal_budget = 1`
 - `sandbox_timeout = 10s`, `sandbox_import_whitelist = [bs4, lxml, re, json]`
 - `prune_sliding_window = 50`, `per_site_parser_limit = 4`
+- `cold_start_page_require_mandatory` — default mandatory: standard, discounted, out_of_stock, membership; multipack optional
+- `golden_max_samples_per_page_type = 3` — global cap for cold start and runtime auto-seeding
 - `mass_invalid_target_ratio = 0.3`, `mass_invalid_target_absolute = 20`
 
 ## Phase 0 Known Compromises
@@ -211,7 +218,7 @@ Interactive: fetches all URLs → LLM generates first parser → user confirms e
 - **BrightData Web Unlocker** — raw HTML (Tesco, Argos)
 - **BrightData Datasets API** — structured JSON (Amazon)
 - **BrightData DCA** — structured JSON (Tesco backup)
-- **Qwen** (via DashScope, OpenAI-compatible endpoint) — repair LLM (default: qwen-3.7-plus)
+- **Provider-aware repair LLM** — Qwen via DashScope by default; DeepSeek via its official OpenAI-compatible API. Add models/vendors only in `providers.py`, then set the provider key in `.env`.
 
 ## Verification Discipline (mandatory)
 

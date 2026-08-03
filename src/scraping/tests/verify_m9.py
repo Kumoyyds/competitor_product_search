@@ -2,7 +2,7 @@
 
 Covers:
   - classify_page_type for all 4 buckets
-  - maybe_seed_golden: first product of a page_type is seeded, subsequent skipped
+  - maybe_seed_golden: distinct URLs grow to cap; duplicate URL is skipped
   - promote_candidate: candidate matching all goldens → promoted
   - promote_candidate: candidate failing a golden → rejected
   - _prune_hard_cap: >4 parsers → oldest lowest-hit retired
@@ -96,7 +96,7 @@ async def run() -> None:
           classify_page_type(make_product(in_stock=False, price=None,
                                           membership_price=Decimal("2.00"))) == "out_of_stock")
 
-    section("M9.2 - maybe_seed_golden: first product seeded, next skipped")
+    section("M9.2 - maybe_seed_golden: first product seeded, duplicate URL skipped")
     p1 = make_product(title="Product A")
     seed_id_1 = maybe_seed_golden("argos", "<html>a</html>", p1)
     check("first product of 'standard' bucket seeded", seed_id_1 is not None,
@@ -104,7 +104,7 @@ async def run() -> None:
 
     p2 = make_product(title="Product B")
     seed_id_2 = maybe_seed_golden("argos", "<html>b</html>", p2)
-    check("second product of same bucket NOT re-seeded", seed_id_2 is None,
+    check("same URL in same bucket NOT re-seeded", seed_id_2 is None,
           f"seed_id={seed_id_2}")
 
     # Different page_type is seeded
@@ -124,7 +124,7 @@ async def run() -> None:
     good_parser = """
 def parse(html, url):
     return {'title': 'Product A', 'in_stock': True, 'price': '19.99',
-            'currency': 'GBP', 'image_urls': []}
+            'currency': 'GBP', 'image_urls': [], 'availability_raw': 'In stock'}
 """
     ooo_product = make_product(title="Product C", in_stock=False, price=None)
     # This candidate should match both goldens (standard: 'Product A', out_of_stock: 'Product C')
@@ -145,7 +145,7 @@ def parse(html, url):
         current_product=make_product(title="Product A"),
         current_html="<html>a</html>",
     )
-    check("good candidate promoted", parser_id is not None, f"parser_id={parser_id}")
+    check("good candidate promoted", isinstance(parser_id, int), f"parser_id={parser_id}")
 
     section("M9.4 - promote_candidate: wrong candidate rejected")
     bad_parser = """
@@ -185,7 +185,7 @@ def parse(html, url):
     good_parser_v2 = """
 def parse(html, url):
     return {'title': 'X', 'in_stock': True, 'price': '9.99',
-            'currency': 'GBP', 'image_urls': []}
+            'currency': 'GBP', 'image_urls': [], 'availability_raw': 'In stock'}
 """
     db = ScrapeDB(_DB_PATH); db.init_db()
     from src.scraping.repair.golden import maybe_seed_golden as _seed
@@ -199,7 +199,7 @@ def parse(html, url):
         current_product=make_product(website="tesco", title="X", price=Decimal("9.99")),
         current_html="<html>x</html>",
     )
-    check("5th candidate promoted after hard cap prune", new_id is not None,
+    check("5th candidate promoted after hard cap prune", isinstance(new_id, int),
           f"new_id={new_id}")
 
     db = ScrapeDB(_DB_PATH); db.init_db()

@@ -16,6 +16,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from ..config import get_config
+from ..models.enums import PAGE_TYPES
 from ..models.product_data import ProductData
 from ..storage import GoldenStore, ParserStore, RunStore, ScrapeDB
 from ..validation import validate
@@ -76,9 +77,9 @@ def classify_page_type(product: ProductData) -> str:
 
 
 def maybe_seed_golden(site: str, html: str, product: ProductData) -> Optional[int]:
-    """Seed a golden sample if this page_type bucket is empty for the site.
+    """Seed a distinct golden sample while this page_type bucket is below cap.
 
-    Best-effort: returns sample id on seed, None if bucket already populated.
+    Best-effort: returns sample id on seed, otherwise None.
     """
     page_type = classify_page_type(product)
     cfg = get_config()
@@ -86,8 +87,7 @@ def maybe_seed_golden(site: str, html: str, product: ProductData) -> Optional[in
     db.init_db()
     try:
         gs = GoldenStore(db)
-        existing = gs.get_by_site_and_type(site, page_type, exclude_stale=True)
-        if existing:
+        if not _bucket_accepts_product(gs, site, page_type, product.url):
             return None
         expected = product.model_dump(mode="json")
         sample_id = gs.seed(site, page_type, html, expected)
@@ -119,7 +119,7 @@ async def promote_candidate(
     try:
         gs = GoldenStore(db)
         goldens_by_type: dict[str, list[dict[str, Any]]] = {}
-        for pt in ("standard", "out_of_stock", "discounted", "multipack", "membership"):
+        for pt in PAGE_TYPES:
             goldens_by_type[pt] = gs.get_by_site_and_type(site, pt, exclude_stale=True)
 
         covered = {pt: samples for pt, samples in goldens_by_type.items() if samples}
@@ -223,7 +223,7 @@ def _do_promote(
     logger.info(
         "promoted parser id=%s site=%s version=%s", parser_id, site, version
     )
-    # If this page_type bucket is empty, seed the current html + product for future promotes
+    # Grow this page_type bucket to its cap using distinct product URLs.
     _maybe_seed_golden_inline(db, site, html, product)
     return parser_id
 
@@ -324,6 +324,33 @@ def _maybe_seed_golden_inline(
 ) -> None:
     page_type = classify_page_type(product)
     gs = GoldenStore(db)
-    existing = gs.get_by_site_and_type(site, page_type, exclude_stale=True)
-    if not existing:
+    if _bucket_accepts_product(gs, site, page_type, product.url):
         gs.seed(site, page_type, html, product.model_dump(mode="json"))
+
+
+def _bucket_accepts_product(
+    gs: GoldenStore,
+    site: str,
+    page_type: str,
+    product_url: str,
+) -> bool:
+    """Return whether a non-stale bucket has room for this distinct URL."""
+    cfg = get_config()
+    existing = gs.get_by_site_and_type(site, page_type, exclude_stale=True)
+    maximum = cfg.golden_max_for(page_type)
+    if len(existing) >= maximum:
+        if len(existing) > maximum:
+            logger.warning(
+                "golden bucket over cap: site=%s page_type=%s has %d > max %d — "
+                "run `python -m src.scraping.scripts.prune_goldens --site %s` to shrink",
+                site,
+                page_type,
+                len(existing),
+                maximum,
+                site,
+            )
+        return False
+    return not any(
+        sample["expected_output"].get("url") == product_url
+        for sample in existing
+    )

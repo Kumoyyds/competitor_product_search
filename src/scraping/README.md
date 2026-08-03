@@ -2,7 +2,7 @@
 
 Extracts structured product data from marketplace pages. Given a `(url, site)` pair, it returns a validated `ProductData` object with title, price, list_price, membership_price, stock, images, brand, etc. — or explains cleanly why it couldn't.
 
-> **Status**: Phase 0 complete. M1–M16 implemented. M1–M15 offline verification: 266 checks, 0 failures. M12: end-to-end live-scraping (Tesco+Argos). M13: DCA polling fix. M14: price-aware pre-pass. M15: data-quality gates. M16: UTF-8 mojibake resilience + anchoring hardening. See [tests/](tests/).
+> **Status**: Phase 0 complete. M1–M18 implemented. 328+ checks, 0 failures. M12: end-to-end live-scraping (Tesco+Argos). M13: DCA polling fix. M14: price-aware pre-pass. M15: data-quality gates. M16: UTF-8 mojibake resilience + anchoring hardening. M17: validated Excel cold start + capped golden lifecycle. M18: provider-aware LLM registry (Qwen + DeepSeek). See [tests/](tests/).
 
 ## What it does
 
@@ -71,10 +71,10 @@ Under the hood:
 - **Ordered parser list** — each site has multiple parsers ranked by real-time hit rate. First to pass both gates wins.
 - **Two gates** — Gate 1 = Pydantic types. Gate 2 = `feasible_check`: rejects `in_stock=True` with no price, hallucinated zero prices, and out-of-stock items with zero product signals.
 - **Trigger/poll split (M13)** — for async BD APIs (Datasets/DCA): `_trigger()` is wrapped in retry (safe — failed POST → no snapshot), `_poll()` owns the full budget and **never re-triggers**. One URL → at most one BD snapshot. Configurable poll budget via `bd_async_poll_max_seconds` (300s default). The old blind-re-trigger-on-timeout bug for Amazon is fixed.
-- **Self-healing** — when all parsers fail, an LLM (Qwen) generates a candidate, sandboxes it, tests against golden samples, promotes if it passes. API routes use JSON remapping only (D25 red line — never fabricates).
+- **Self-healing** — when all parsers fail, a provider-configured LLM generates a candidate, sandboxes it, tests against golden samples, and promotes it if it passes. API routes use JSON remapping only (D25 red line — never fabricates).
 - **Fallback ladder** — a site can register multiple scrapers (e.g. Tesco = HTML primary + DCA backup). Terminal failure → next scraper; all exhausted → escalation ticket (`parser_broken / api_malformed / infra_failure / mass_invalid_target`).
-- **Golden set** — every successful scrape auto-seeds a golden per page type (`standard / out_of_stock / discounted / multipack`). Future promotions must reproduce them exactly.
-- **Cold start** — for a new site: fetch URLs → LLM generates first parser → confirm each result → parser + goldens seeded.
+- **Golden set** — successful scrapes grow each page-type bucket to the config-driven cap (3 by default), with duplicate-URL protection. Five buckets (precedence order): `out_of_stock` > `membership` > `discounted` > `multipack` > `standard`. Future promotions must reproduce all goldens exactly.
+- **Cold start** — a validated Excel sheet declares each URL's page type; required coverage is checked before any paid fetch, then the LLM-generated parser and human-confirmed goldens are seeded.
 
 ## Quick start
 
@@ -124,11 +124,14 @@ If you want to add a site that isn't yet in the parser table:
 ```bash
 # 1. Add the site's hostnames to hosts.yaml
 # 2. Register an HTMLScraper subclass in scrapers/sites/
-# 3. Run cold start with a batch of representative product URLs
-python -m src.scraping.coldstart --site newsite --urls-file urls.txt
+# 3. Run cold start with a representative Excel input
+python -m src.scraping.storage.migrations.add_golden_created_by
+python -m src.scraping.coldstart --site newsite --input newsite.xlsx
 ```
 
-The CLI will fetch each URL, ask the LLM to generate a parser, run it against every URL, and prompt you interactively (`y` / `n` / `q`) to confirm each extracted result. Confirmed outputs become the seed golden samples.
+The first row must contain `page_type` and `url` (case-insensitive; extra columns are ignored). Legal page types are `standard`, `discounted`, `out_of_stock`, `membership`, and `multipack`. By default the first four are mandatory and `multipack` is optional. Multiple rows per type are useful as spares: once a bucket reaches its cap, remaining rows are skipped without another prompt.
+
+The CLI validates coverage before spending Bright Data/Qwen calls, then prompts interactively (`y` / `n` / `q`) for each usable extraction. A declared/extracted type disagreement is shown as `MISMATCH`; accepting still stores the declared type. Exit codes are `0` for complete coverage, `1` for input/abort/no seed, and `2` when accepted rows were seeded but mandatory coverage remains incomplete.
 
 ## Module structure
 
@@ -189,7 +192,7 @@ src/scraping/
 
 4. **Cold start** to seed the first parser + goldens:
    ```bash
-   python -m src.scraping.coldstart --site waitrose --urls-file waitrose_urls.txt
+   python -m src.scraping.coldstart --site waitrose --input waitrose.xlsx
    ```
 
 For an API-route site, subclass `DirectAPIScraper` instead and implement `_fetch_json` + `_map_fields`.
@@ -264,7 +267,7 @@ All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (s
 
 | Setting | Default | Notes |
 |---------|---------|-------|
-| `repair_model_ladder` | `qwen-3.7-plus` x2 | Qwen model per attempt; length = attempt count |
+| `repair_model_ladder` | `qwen3.7-plus` x2 | Provider-registered model per attempt; length = attempt count; cold start and JSON healing use the first model |
 | `repair_temperature_ladder` | `0.1 → 0.4` | Parser-generation temperature per attempt (must match model ladder) |
 | `bd_async_poll_max_seconds` | 300 | Wall-clock budget for Datasets/DCA snapshot polling (M13) |
 | `bd_async_poll_interval_seconds` | 4 | Sleep between Datasets/DCA poll GETs (M13) |
@@ -273,14 +276,36 @@ All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (s
 | `sandbox_import_whitelist` | `bs4, lxml, re, json` | Only these can be imported |
 | `prune_sliding_window` | 50 | Runs before natural prune considers a parser |
 | `per_site_parser_limit` | 4 | Hard cap on active parsers per site |
+| `cold_start_page_require_mandatory` | standard/discounted/out_of_stock/membership = true; multipack = false | Cold-start coverage and per-bucket minimum policy |
+| `golden_max_samples_per_page_type` | 3 | Maximum non-stale goldens per site/page type |
 | `mass_invalid_target_ratio` | 0.3 | Alert if >30% of a site's 24h runs are invalid_target |
 | `mass_invalid_target_absolute` | 20 | Or if absolute count exceeds this |
 
-Override via env vars (`SCRAPING_REPAIR_MODEL_LADDER='["qwen-3.7-plus","qwen-3.7-plus"]'` etc.).
+Override via env vars, for example:
+
+```bash
+SCRAPING_REPAIR_MODEL_LADDER='["deepseek-v4-flash","deepseek-v4-pro"]'
+SCRAPING_COLD_START_PAGE_REQUIRE_MANDATORY='{"multipack": false, "membership": false}'
+SCRAPING_GOLDEN_MAX_SAMPLES_PER_PAGE_TYPE=2
+```
+
+LLM models, endpoints, key names, JSON-mode support, and thinking toggles live only in `providers.py`. To switch the ladder to DeepSeek, set the model list above and add `DEEPSEEK_KEY` to `.env`; no scraper or repair code changes are needed.
+
+### Shrinking the golden set
+
+Lowering the cap never deletes automatically. Preview and apply an age/provenance-aware shrink explicitly:
+
+```bash
+python -m src.scraping.storage.migrations.add_golden_created_by
+python -m src.scraping.scripts.prune_goldens --site tesco
+python -m src.scraping.scripts.prune_goldens --site tesco --apply
+```
+
+The default is a dry run. Stale samples are evicted first, then oldest auto-seeded samples, then oldest human-confirmed cold-start samples. The configured mandatory minimum is never crossed.
 
 ## Verification
 
-Every milestone ships with a runnable verify script. To reproduce the full 172-check pass:
+Every milestone ships with a runnable verify script. To reproduce the relevant verification set:
 
 ```bash
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m1_m3
@@ -293,9 +318,13 @@ PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m10
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m11   # real Qwen
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m12   # real BrightData + Qwen, per-site batch
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m13   # offline — mocked BD, proves no duplicate triggers
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m14   # offline tiers; Qwen tier skips without a key
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m15   # offline data-quality gates
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m17   # offline — Excel contract + golden caps/pruning
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m18   # offline — provider registry/client factory
 ```
 
-Latest results are saved to [tests/verify_m*_output.log](tests/). See [tests/README.md](tests/README.md) for the inventory (194 checks across M1–M13) and re-run instructions.
+Latest results are saved to [tests/verify_m*_output.log](tests/). See [tests/README.md](tests/README.md) for the 306+ check inventory and re-run instructions.
 
 ## Design
 
@@ -322,9 +351,9 @@ Full design spec: [scraping_module_spec_v1_2.md](scraping_module_spec_v1_2.md) (
 ## External dependencies
 
 - **BrightData** — [Web Unlocker](https://docs.brightdata.com/scraping-automation/web-unlocker/introduction) for HTML, Datasets API for Amazon, DCA collectors for Tesco backup
-- **Qwen** (via DashScope) — OpenAI-compatible LLM endpoint (`https://dashscope.aliyuncs.com/compatible-mode/v1`)
+- **LLM providers** — Qwen via DashScope by default; DeepSeek through its official OpenAI-compatible endpoint; registry in `providers.py`
 - **Python 3.12** — some upstream deps lack 3.14 wheels
-- Key libraries: `pydantic`, `httpx`, `lxml`, `beautifulsoup4`, `langchain-openai`, `pydantic-settings`, `pyyaml`
+- Key libraries: `pydantic`, `httpx`, `lxml`, `beautifulsoup4`, `openpyxl`, `langchain-openai`, `pydantic-settings`, `pyyaml`
 
 ## Contributing
 

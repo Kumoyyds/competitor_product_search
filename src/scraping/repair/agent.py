@@ -25,6 +25,7 @@ from ..config import get_config
 from ..exceptions import ScrapeFailed
 from ..models.product_data import ProductData
 from ..models.results import InvalidTargetResult
+from ..providers import make_chat_client
 from ..storage import PhraseStore, ScrapeDB
 from ..validation import validate
 from .golden import GoldenRejection, promote_candidate
@@ -294,37 +295,18 @@ async def _try_repair(
 
 
 def _make_llm(model: str, temperature: float = 0.1, enable_thinking: bool = False):
-    """Build a Qwen LangChain client.
+    """Build the configured provider's LangChain client.
 
     Args:
-      model: model id (e.g. "qwen-3.7-plus")
+      model: registered model id, optionally prefixed with ``provider/``
       temperature: sampling temperature (0.1 for judgments, ramp for parser_gen)
-      enable_thinking: when True, enables Qwen's reasoning/thinking mode via
-        `extra_body={"enable_thinking": True}`.
-        Only used on the last repair-ladder attempt so the model can reason
-        through hard cases (spec-driven parser generation on gnarly pages).
+      enable_thinking: enable provider-specific thinking on the last ladder node
     """
-    try:
-        from langchain_openai import ChatOpenAI
-    except ImportError:
-        logger.error("langchain_openai not installed")
-        return None
-
-    cfg = get_config()
-    if not cfg.qwen_key:
-        logger.warning("QWEN_KEY not set — repair ladder cannot invoke LLM")
-        return None
-
-    model_kwargs: dict[str, Any] = {"response_format": {"type": "json_object"}}
-    if enable_thinking:
-        model_kwargs["extra_body"] = {"enable_thinking": True}
-
-    return ChatOpenAI(
-        api_key=cfg.qwen_key,
-        base_url=cfg.qwen_base_url,
+    return make_chat_client(
         model=model,
         temperature=temperature,
-        model_kwargs=model_kwargs,
+        enable_thinking=enable_thinking,
+        purpose="repair ladder",
     )
 
 

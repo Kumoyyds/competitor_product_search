@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import AliasChoices, Field
+from dotenv import dotenv_values
+from pydantic import AliasChoices, Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings
+
+from .models.enums import PAGE_TYPES
 
 
 class ScrapingConfig(BaseSettings):
+    _provider_env_file: Any = PrivateAttr(default=".env")
+    _provider_dotenv_values: Optional[dict[str, Optional[str]]] = PrivateAttr(
+        default=None
+    )
+
     # --- Bright Data ---
     bright_data_key: str = Field(
         default="",
@@ -36,8 +45,9 @@ class ScrapingConfig(BaseSettings):
     bd_async_poll_interval_seconds: float = 4.0  # sleep between poll GETs
 
     # --- repair (HTML route) ---
-    # Number of attempts = len(repair_model_ladder). Edit the lists together to
-    # change attempt count (they must have equal length; validated at startup).
+    # Choose model ids from providers.py. Changing provider only requires the
+    # model name here plus that provider's key in .env. Edit both ladder lists
+    # together to change attempt count (their lengths are checked at runtime).
     repair_model_ladder: list[str] = Field(
         default=["qwen3.7-plus", "qwen3.7-plus"]
     )
@@ -58,8 +68,18 @@ class ScrapingConfig(BaseSettings):
         default=["bs4", "lxml", "re", "json"]
     )
 
-    # --- promote ---
-    promote_min_samples_per_page_type: int = 1
+    # --- cold start / golden set page_type policy ---
+    # Missing keys are deliberately treated as mandatory by the accessors below.
+    cold_start_page_require_mandatory: dict[str, bool] = Field(
+        default_factory=lambda: {
+            "standard": True,
+            "discounted": True,
+            "out_of_stock": True,
+            "membership": True,
+            "multipack": False,
+        }
+    )
+    golden_max_samples_per_page_type: int = 3
 
     # --- dedup ---
     scrape_runs_dedup_window_seconds: int = 3600
@@ -78,7 +98,80 @@ class ScrapingConfig(BaseSettings):
         "env_prefix": "SCRAPING_",
         "env_file": ".env",
         "extra": "ignore",
+        "populate_by_name": True,
     }
+
+    def __init__(self, **values: Any) -> None:
+        provider_env_file = values.get(
+            "_env_file", self.model_config.get("env_file")
+        )
+        super().__init__(**values)
+        self._provider_env_file = provider_env_file
+
+    def api_key_for(self, key_name: str) -> str:
+        """Resolve a provider API key from environment or configured env file.
+
+        Precedence is ``SCRAPING_<KEY>`` then ``<KEY>`` in ``os.environ``,
+        followed by those names in the configured dotenv file. A matching
+        settings field is the final compatibility fallback (for example,
+        programmatic ``ScrapingConfig(qwen_key=...)`` in existing callers).
+        Dotenv files are parsed at most once per config instance.
+        """
+        prefixed_name = (
+            key_name if key_name.startswith("SCRAPING_") else f"SCRAPING_{key_name}"
+        )
+        for name in (prefixed_name, key_name):
+            if name in os.environ:
+                return os.environ[name]
+
+        if self._provider_dotenv_values is None:
+            self._provider_dotenv_values = self._read_provider_dotenv()
+        for name in (prefixed_name, key_name):
+            if name in self._provider_dotenv_values:
+                return self._provider_dotenv_values[name] or ""
+
+        configured = getattr(self, key_name.lower(), "")
+        return configured if isinstance(configured, str) else ""
+
+    def _read_provider_dotenv(self) -> dict[str, Optional[str]]:
+        env_file = self._provider_env_file
+        if env_file is None:
+            return {}
+        paths = env_file if isinstance(env_file, (list, tuple)) else (env_file,)
+        merged: dict[str, Optional[str]] = {}
+        for path in paths:
+            merged.update(dotenv_values(path))
+        return merged
+
+    @field_validator("cold_start_page_require_mandatory")
+    @classmethod
+    def _validate_page_type_policy(cls, value: dict[str, bool]) -> dict[str, bool]:
+        unknown = sorted(set(value) - set(PAGE_TYPES))
+        if unknown:
+            raise ValueError(
+                "unknown page_type key(s): "
+                f"{', '.join(unknown)}; legal values: {', '.join(PAGE_TYPES)}"
+            )
+        return value
+
+    @field_validator("golden_max_samples_per_page_type")
+    @classmethod
+    def _validate_golden_max(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("golden_max_samples_per_page_type must be >= 1")
+        return value
+
+    def is_mandatory_page_type(self, page_type: str) -> bool:
+        return self.cold_start_page_require_mandatory.get(page_type, True)
+
+    def golden_min_for(self, page_type: str) -> int:
+        return 1 if self.is_mandatory_page_type(page_type) else 0
+
+    def golden_max_for(self, page_type: str) -> int:
+        return self.golden_max_samples_per_page_type
+
+    def mandatory_page_types(self) -> tuple[str, ...]:
+        return tuple(pt for pt in PAGE_TYPES if self.is_mandatory_page_type(pt))
 
 
 _config: Optional[ScrapingConfig] = None

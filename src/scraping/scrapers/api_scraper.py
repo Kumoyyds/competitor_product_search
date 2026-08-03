@@ -102,8 +102,15 @@ class DirectAPIScraper(BaseScraper):
             if product is not None:
                 self._cache_heal(json_data, mapped, healed)
                 latency = int((time.monotonic() - start) * 1000)
-                self._record_run(url, host, "success", "agent_repaired",
-                                 model_used="qwen-3.7-plus", latency=latency)
+                cfg = get_config()
+                self._record_run(
+                    url,
+                    host,
+                    "success",
+                    "agent_repaired",
+                    model_used=cfg.repair_model_ladder[0],
+                    latency=latency,
+                )
                 self._store_result(product)
                 return product
             errors.extend(errors2)

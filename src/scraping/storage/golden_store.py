@@ -16,11 +16,19 @@ class GoldenStore:
         page_type: str,
         html_snapshot: str,
         expected_output: dict[str, Any],
+        created_by: str = "auto",
     ) -> int:
         cur = self._db.conn.execute(
-            "INSERT INTO golden_samples (site, page_type, html_snapshot, expected_output) "
-            "VALUES (?, ?, ?, ?)",
-            (site, page_type, html_snapshot, json.dumps(expected_output, default=str)),
+            "INSERT INTO golden_samples "
+            "(site, page_type, html_snapshot, expected_output, created_by) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                site,
+                page_type,
+                html_snapshot,
+                json.dumps(expected_output, default=str),
+                created_by,
+            ),
         )
         self._db.conn.commit()
         return cur.lastrowid  # type: ignore[return-value]

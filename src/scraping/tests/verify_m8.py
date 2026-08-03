@@ -78,11 +78,12 @@ async def run() -> None:
     )
 
     section("M8.1 - Config and LLM setup")
-    check("QWEN_KEY loaded", HAS_LLM, "key present" if HAS_LLM else "MISSING")
     if HAS_LLM:
+        check("QWEN_KEY loaded", True, "key present")
         llm = _make_llm("qwen-3.7-plus")
         check("_make_llm returns client with qwen-3.7-plus", llm is not None)
     else:
+        skip("QWEN_KEY loaded", "MISSING")
         llm_missing = _make_llm("qwen-3.7-plus")
         check("_make_llm returns None when key missing", llm_missing is None)
 

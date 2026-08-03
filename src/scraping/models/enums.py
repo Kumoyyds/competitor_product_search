@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 SourceType = Literal["html", "api"]
 
@@ -26,3 +26,5 @@ EscalationReason = Literal[
 ParserStatus = Literal["active", "retired"]
 
 PageType = Literal["standard", "out_of_stock", "discounted", "multipack", "membership"]
+
+PAGE_TYPES: tuple[str, ...] = get_args(PageType)

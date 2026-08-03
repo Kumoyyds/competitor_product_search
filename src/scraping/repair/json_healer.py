@@ -14,6 +14,7 @@ import logging
 from typing import Any, Optional
 
 from ..config import get_config
+from ..providers import make_chat_client
 from .prompts import json_heal_precheck_prompt, json_heal_remap_prompt
 
 logger = logging.getLogger(__name__)
@@ -92,23 +93,11 @@ async def heal_json(
 
 
 def _make_llm():
-    try:
-        from langchain_openai import ChatOpenAI
-    except ImportError:
-        logger.error("langchain_openai not installed — cannot heal")
-        return None
-
     cfg = get_config()
-    if not cfg.qwen_key:
-        logger.warning("QWEN_KEY not set — skipping json_heal")
-        return None
-
-    return ChatOpenAI(
-        api_key=cfg.qwen_key,
-        base_url=cfg.qwen_base_url,
-        model="qwen3.7-plus",
+    return make_chat_client(
+        model=cfg.repair_model_ladder[0],
         temperature=0.1,
-        model_kwargs={"response_format": {"type": "json_object"}},
+        purpose="JSON healer",
     )
 
 

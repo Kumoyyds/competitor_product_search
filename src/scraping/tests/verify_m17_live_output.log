@@ -1,0 +1,23 @@
+M17 LIVE SMOKE — hard budget: Bright Data <=4, Qwen <=1, retries=0
+BD row=2 declared=membership status=401 html_chars=13 error=-
+BD row=3 declared=discounted status=401 html_chars=13 error=-
+BD row=4 declared=standard status=401 html_chars=13 error=-
+BD row=5 declared=out_of_stock status=401 html_chars=13 error=-
+CALL_LEDGER {"bright_data": 4, "qwen": 0}
+RESULT FAIL: no valid HTML; Qwen was not called
+QWEN_ONCE request=1 max_retries=0
+QWEN_ONCE FAIL NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen-3.7-plus` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': None, 'code': 'model_not_found'}, 'request_id': 'd7926274-a130-9828-879f-3bd4e1ba48c0'}
+CALL_LEDGER_TOTAL {"bright_data": 4, "qwen": 1}
+M17 LIVE SMOKE ROUND 2 — hard budget: Bright Data <=4, Qwen <=1, retries=0
+BD row=2 declared=membership status=200 html_chars=453772 error=-
+BD row=3 declared=discounted status=200 html_chars=457412 error=-
+BD row=4 declared=standard status=200 html_chars=430577 error=-
+BD row=5 declared=out_of_stock status=200 html_chars=440479 error=-
+QWEN model=qwen3.7-plus source=live Bright Data HTML
+QWEN parser_chars=4565
+PARSE row=2 gate_errors=['membership_price equals price — price is duplicated into membership_price; no real membership price present'] FAIL
+PARSE row=3 PASS declared=discounted classified=standard mismatch=True title='GEEPAS 1.7L Illuminating Electric Glass Kettle 2200W' price=18.99 list_price=None member=None in_stock=True
+PARSE row=4 PASS declared=standard classified=standard mismatch=False title='BuzzBallz Strawberry Rita 200ml' price=4.1 list_price=None member=None in_stock=True
+PARSE row=5 PASS declared=out_of_stock classified=standard mismatch=True title='Tesco Salted Caramel Churro Flavour Popcorn 100g' price=1.25 list_price=None member=None in_stock=True
+CALL_LEDGER {"bright_data": 4, "qwen": 1}
+RESULT PASS: 3/4 rows passed gates

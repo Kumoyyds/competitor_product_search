@@ -1,0 +1,45 @@
+DEEPSEEK_KEY not set -- cannot invoke provider=deepseek for missing-key check
+
+======================================================================
+M18.1 - provider resolution
+======================================================================
+  [PASS] registered DeepSeek model resolves
+  [PASS] explicit provider prefix wins
+  [PASS] registered Qwen model resolves
+  [PASS] unknown model falls back without raising
+  [PASS] unknown-model fallback emits warning
+
+======================================================================
+M18.2 - dynamic provider key resolution
+======================================================================
+  [PASS] key loads from configured dotenv only
+  [PASS] SCRAPING_ dotenv alias is honored
+  [PASS] os.environ has precedence over dotenv
+  [PASS] explicit empty environment key masks dotenv
+  [PASS] programmatic legacy key remains compatible
+
+======================================================================
+M18.3 - unified client factory
+======================================================================
+  [PASS] DeepSeek client is constructed
+  [PASS] DeepSeek official endpoint selected
+  [PASS] DeepSeek key channel is independent
+  [PASS] explicit prefix is stripped from model
+  [PASS] JSON object response format retained
+  [PASS] DeepSeek ordinary node disables default thinking
+  [PASS] DeepSeek last node enables thinking
+  [PASS] Qwen uses its own thinking parameter
+  [PASS] legacy Qwen endpoint override remains compatible
+  [PASS] missing provider key degrades to None
+
+======================================================================
+M18.4 - all call sites use configured models
+======================================================================
+  [PASS] repair _make_llm remains a working thin wrapper
+  [PASS] repair wrapper forwards model/temperature/thinking  ({'model': 'deepseek-v4-pro', 'temperature': 0.4, 'enable_thinking': True, 'purpose': 'repair ladder'})
+  [PASS] JSON healer constructs a client
+  [PASS] JSON healer uses ladder first model  (configured-first-model)
+
+======================================================================
+SUMMARY: 24 passed, 0 failed
+======================================================================

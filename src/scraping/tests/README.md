@@ -94,13 +94,26 @@ Failure handling across the scraper list and operational alerting:
 
 ### M11 — Cold Start CLI
 Bootstrap a new site with zero manual parser writing. Uses **real Qwen API**:
-- **Interactive flow**: `python -m src.scraping.coldstart --site <site> --urls-file <file>` →
+- **Interactive flow**: `python -m src.scraping.coldstart --site <site> --input <file.xlsx>` →
   1. Fetch all URLs via BrightData.
   2. Pick the largest 200-OK HTML as representative.
   3. LLM generates the first parser from that HTML.
   4. For each URL: run parser → display result → user confirms (y/n/q).
   5. Accepted URLs → seeded as golden samples; first parser inserted as `created_by=initial`.
 - **This is the only manual step in the pipeline's lifetime** — after cold start, repair + promote/prune handle ongoing maintenance.
+
+### M17 — Excel cold-start contract + golden-set caps
+
+- Validates `page_type` / `url` Excel input, normalization, all-row errors, and mandatory coverage before extraction.
+- Seeds the human-declared bucket, warns on classifier mismatch, and returns exit 2 for post-review coverage shortfalls.
+- Applies one global per-page-type cap to cold start and runtime auto-seeding, with duplicate-URL protection.
+- Adds `golden_samples.created_by` plus a dry-run-first prune command that evicts stale → oldest auto → oldest cold-start samples.
+
+### M18 — Provider-aware LLM clients
+
+- Centralizes model IDs, endpoints, key names, JSON-mode support, and thinking toggles in `providers.py`.
+- Routes repair, JSON healing, and cold start through one client factory.
+- Supports Qwen and the official DeepSeek V4 API, explicit `provider/model` names, dynamic dotenv keys, and unknown-model fallback.
 
 ### M12 — End-to-End Live Scraping
 
@@ -200,7 +213,7 @@ Key aspects:
 | `verify_m8.py` | M8 — repair agent no_product judgment, JSON healer D25 red line, end-to-end parser gen on real HTML | **real Qwen** |
 | `verify_m8_output.log` | Latest run — 14 checks, 0 failed | — |
 | `verify_m9.py` | M9 — page_type classification, promote_candidate (accept/reject), hard-cap prune, natural prune | offline |
-| `verify_m9_output.log` | Latest run — 17 checks, 0 failed | — |
+| `verify_m9_output.log` | Latest run — 20 checks, 0 failed | — |
 | `verify_m10.py` | M10 — escalation writing (parser_broken / api_malformed / infra_failure), signature dedup, mass_invalid_target thresholds, INFRA ALERT log | offline |
 | `verify_m10_output.log` | Latest run — 14 checks, 0 failed | — |
 | `verify_m11.py` | M11 — cold start CLI end-to-end: fetch → LLM gen → user confirm (y/n/q) → seed parser + goldens | **real Qwen** |
@@ -214,8 +227,13 @@ Key aspects:
 | `verify_m14_output.log` | Latest run — 41 checks, 0 failed (Tier 1+2) | — |
 | `verify_m15.py` | M15 — Promotion signal detection (structural, site-agnostic), availability_raw normalization (schema.org token recovery), gate2 structural price rules, fast-path distrust guard, prompt rewrite (visual-value-bar-first) | offline |
 | `verify_m15_output.log` | Latest run — 44 checks, 0 failed | — |
+| `verify_m17.py` | M17 — Excel input contract, config policy, declared buckets, caps/URL dedup, provenance migration, dry-run/apply pruning | offline |
+| `verify_m17_output.log` | Latest run — 40 checks, 0 failed | — |
+| `verify_m17_live_output.log` | Bounded live smoke: round 1 exposed invalid BD token + hard-coded Qwen model; after fixes, round 2 used exactly 4 BD + 1 Qwen calls with zero retries — BD 4/4 HTTP 200, Qwen parser generated, 3/4 rows passed gates | **real BrightData + Qwen** |
+| `verify_m18.py` | M18 — provider resolution, dynamic dotenv key lookup, unified client args, thinking toggles, and call-site model forwarding | offline |
+| `verify_m18_output.log` | Latest run — 24 checks, 0 failed | — |
 
-**Total: 266+ checks passed across all milestones (M1–M14: 222; M15: 44). M12 adds live end-to-end validation. M13 proves the duplicate-trigger bug is fixed. M14 adds price-aware context feeding. M15 adds data-quality gates (promotion detection + availability normalization + fast-path distrust) so a reused parser can never surface a blob or a wrong price mapping.**
+**Total: 330+ checks passed across all milestones (through M15: 266+; M17: 40; M18: 24). M12 adds live end-to-end validation. M13 proves the duplicate-trigger bug is fixed. M14 adds price-aware context feeding. M15 adds data-quality gates. M17 adds the validated Excel cold-start contract and capped, provenance-aware golden lifecycle. M18 adds provider-aware LLM clients.**
 
 ## How to re-run
 
@@ -234,6 +252,8 @@ python -m src.scraping.tests.verify_m12  | tee src/scraping/tests/verify_m12_out
 python -m src.scraping.tests.verify_m13  | tee src/scraping/tests/verify_m13_output.log
 python -m src.scraping.tests.verify_m14  | tee src/scraping/tests/verify_m14_output.log
 python -m src.scraping.tests.verify_m15  | tee src/scraping/tests/verify_m15_output.log
+python -m src.scraping.tests.verify_m17  | tee src/scraping/tests/verify_m17_output.log
+python -m src.scraping.tests.verify_m18  | tee src/scraping/tests/verify_m18_output.log
 ```
 
 On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTHONIOENCODING="utf-8"`) so `->` and similar ASCII arrows don't crash cp1252.

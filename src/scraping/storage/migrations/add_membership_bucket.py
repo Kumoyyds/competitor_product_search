@@ -38,9 +38,20 @@ def migration_needed(db_path: str) -> bool:
 def run_migration(db_path: str) -> None:
     """Add 'membership' to golden_samples CHECK constraint via table recreation."""
     conn = sqlite3.connect(db_path)
+    columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(golden_samples)").fetchall()
+    }
+    has_created_by = "created_by" in columns
 
     # 1. Create new table with expanded CHECK
-    conn.executescript("""
+    created_by_ddl = (
+        ",\n            created_by TEXT NOT NULL DEFAULT 'auto' "
+        "CHECK(created_by IN ('coldstart', 'auto'))"
+        if has_created_by
+        else ""
+    )
+    conn.executescript(f"""
         CREATE TABLE IF NOT EXISTS golden_samples_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             site TEXT NOT NULL,
@@ -48,13 +59,20 @@ def run_migration(db_path: str) -> None:
             html_snapshot TEXT NOT NULL,
             expected_output TEXT NOT NULL,
             captured_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-            is_stale INTEGER NOT NULL DEFAULT 0
+            is_stale INTEGER NOT NULL DEFAULT 0{created_by_ddl}
         );
     """)
 
     # 2. Copy rows from old table
+    copy_columns = (
+        "id, site, page_type, html_snapshot, expected_output, captured_at, "
+        "is_stale, created_by"
+        if has_created_by
+        else "id, site, page_type, html_snapshot, expected_output, captured_at, is_stale"
+    )
     conn.execute(
-        "INSERT INTO golden_samples_new SELECT * FROM golden_samples"
+        f"INSERT INTO golden_samples_new ({copy_columns}) "
+        f"SELECT {copy_columns} FROM golden_samples"
     )
 
     # 3. Drop old table

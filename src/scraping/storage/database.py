@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS golden_samples (
     html_snapshot TEXT NOT NULL,
     expected_output TEXT NOT NULL,
     captured_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    is_stale INTEGER NOT NULL DEFAULT 0
+    is_stale INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT 'auto' CHECK(created_by IN ('coldstart', 'auto'))
 );
 
 CREATE TABLE IF NOT EXISTS scrape_runs (
