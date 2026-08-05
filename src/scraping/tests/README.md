@@ -237,6 +237,8 @@ Key aspects:
 | `verify_m19_output.log` | Latest run — 38 checks, 0 failed | — |
 | `verify_m20.py` | M20 — canonical standard/discounted/membership price contract, Gate 2 ordering, prompt wording, and cold-start clear-value feedback | offline |
 | `verify_m20_output.log` | Latest run — 15 checks, 0 failed | — |
+| `verify_clear_db.py` | `ScrapeDB.clear_site()` — FK-safe delete ordering, atomicity, idempotency, cross-site isolation, schema preservation, foreign_keys=OFF compat | offline |
+| `verify_clear_db_output.log` | Latest run — 42 checks, 0 failed | — |
 
 **Total: 385+ checks passed across all milestones. M18 adds output-cap delivery checks; M19 adds 38 fully offline checks for the cold-start repair/review lifecycle, ladder fall-through on an unusable node reply, and golden snapshot reuse; M20 adds 15 offline price-contract checks.**
 
@@ -261,6 +263,7 @@ python -m src.scraping.tests.verify_m17  | tee src/scraping/tests/verify_m17_out
 python -m src.scraping.tests.verify_m18  | tee src/scraping/tests/verify_m18_output.log
 python -m src.scraping.tests.verify_m19  | tee src/scraping/tests/verify_m19_output.log
 python -m src.scraping.tests.verify_m20  | tee src/scraping/tests/verify_m20_output.log
+python src/scraping/tests/verify_clear_db.py | tee src/scraping/tests/verify_clear_db_output.log
 ```
 
 On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTHONIOENCODING="utf-8"`) so `->` and similar ASCII arrows don't crash cp1252.

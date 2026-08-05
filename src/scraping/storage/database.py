@@ -135,6 +135,39 @@ class ScrapeDB:
             self.conn.rollback()
             raise
 
+    def clear_site(self, site: str) -> dict[str, int]:
+        """Hard-delete *site*'s rows from ``parsers`` and ``golden_samples``.
+
+        Before the parser delete, ``scrape_runs.winning_parser_id`` is set
+        to NULL for the site so the foreign-key constraint does not block
+        the ``DELETE``.  Run-history rows are kept; the pointer is dropped.
+
+        No other tables are touched.  No schema changes — only
+        ``DELETE`` and ``UPDATE … SET … = NULL`` inside one transaction.
+        """
+        counts: dict[str, int] = {}
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            cur = self.conn.execute(
+                "UPDATE scrape_runs SET winning_parser_id = NULL "
+                "WHERE site = ? AND winning_parser_id IS NOT NULL",
+                (site,),
+            )
+            counts["scrape_runs_detached"] = cur.rowcount
+            cur = self.conn.execute(
+                "DELETE FROM parsers WHERE site = ?", (site,)
+            )
+            counts["parsers"] = cur.rowcount
+            cur = self.conn.execute(
+                "DELETE FROM golden_samples WHERE site = ?", (site,)
+            )
+            counts["golden_samples"] = cur.rowcount
+            self.conn.commit()
+            return counts
+        except Exception:
+            self.conn.rollback()
+            raise
+
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()

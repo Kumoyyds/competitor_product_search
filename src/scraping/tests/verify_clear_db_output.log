@@ -1,0 +1,66 @@
+﻿
+========================================================================
+clear_site: basic correctness
+========================================================================
+  [PASS] 001 seed: site_a has 1 parser
+  [PASS] 002 seed: site_a has 2 golden_samples
+  [PASS] 003 seed: site_a has 2 scrape_runs
+  [PASS] 004 seed: site_b has 1 parser
+  [PASS] 005 seed: site_b has 2 golden_samples
+  [PASS] 006 seed: site_b has 1 scrape_run
+  [PASS] 007 seed: scrape_run references site_a parser
+  [PASS] 008 clear returns dict
+  [PASS] 009 clear: parsers count  (got 1)
+  [PASS] 010 clear: golden_samples count  (got 2)
+  [PASS] 011 clear: scrape_runs_detached count  (got 1)
+  [PASS] 012 post-clear: site_a parsers      = 0
+  [PASS] 013 post-clear: site_a golden_samples = 0
+  [PASS] 014 post-clear: site_a scrape_runs kept
+  [PASS] 015 post-clear: all site_a runs have winning_parser_id NULL
+  [PASS] 016 post-clear: site_b parsers        = 1
+  [PASS] 017 post-clear: site_b golden_samples = 2
+  [PASS] 018 post-clear: site_b scrape_runs    = 1
+  [PASS] 019 post-clear: site_b FK still intact
+
+========================================================================
+clear_site: idempotency
+========================================================================
+  [PASS] 020 idempotent: first pass had deletes
+  [PASS] 021 idempotent: second parsers = 0  (got 0)
+  [PASS] 022 idempotent: second golden_samples = 0  (got 0)
+  [PASS] 023 idempotent: second scrape_runs_detached = 0  (got 0)
+
+========================================================================
+clear_site: unknown site is a no-op
+========================================================================
+  [PASS] 024 unknown site: parsers = 0
+  [PASS] 025 unknown site: golden_samples = 0
+  [PASS] 026 unknown site: scrape_runs_detached = 0
+
+========================================================================
+clear_site: schema preservation
+========================================================================
+  [PASS] 027 schema: same table count  (before=6 after=6)
+  [PASS] 028 schema: escalations columns unchanged  (before=[('id', 'INTEGER', 0, None), ('signature', 'TEXT', 1, None), ('reason', 'TEXT', 1, None), ('affected_count', 'INTEGER', 1, '1'), ('snapshot', 'TEXT', 0, None), ('status', 'TEXT', 1, "'open'"), ('created_at', 'TEXT', 1, "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')")] after=[('id', 'INTEGER', 0, None), ('signature', 'TEXT', 1, None), ('reason', 'TEXT', 1, None), ('affected_count', 'INTEGER', 1, '1'), ('snapshot', 'TEXT', 0, None), ('status', 'TEXT', 1, "'open'"), ('created_at', 'TEXT', 1, "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')")])
+  [PASS] 029 schema: escalations indexes unchanged  (before=['sqlite_autoindex_escalations_1'] after=['sqlite_autoindex_escalations_1'])
+  [PASS] 028 schema: golden_samples columns unchanged  (before=[('id', 'INTEGER', 0, None), ('site', 'TEXT', 1, None), ('page_type', 'TEXT', 1, None), ('html_snapshot', 'TEXT', 1, None), ('expected_output', 'TEXT', 1, None), ('captured_at', 'TEXT', 1, "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"), ('is_stale', 'INTEGER', 1, '0'), ('created_by', 'TEXT', 1, "'auto'")] after=[('id', 'INTEGER', 0, None), ('site', 'TEXT', 1, None), ('page_type', 'TEXT', 1, None), ('html_snapshot', 'TEXT', 1, None), ('expected_output', 'TEXT', 1, None), ('captured_at', 'TEXT', 1, "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"), ('is_stale', 'INTEGER', 1, '0'), ('created_by', 'TEXT', 1, "'auto'")])
+  [PASS] 029 schema: golden_samples indexes unchanged  (before=['idx_golden_site_page'] after=['idx_golden_site_page'])
+  [PASS] 028 schema: invalid_target_phrases columns unchanged  (before=[('id', 'INTEGER', 0, None), ('site', 'TEXT', 1, None), ('phrase', 'TEXT', 1, None), ('source', 'TEXT', 1, "'agent_backfill'"), ('added_at', 'TEXT', 1, "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')")] after=[('id', 'INTEGER', 0, None), ('site', 'TEXT', 1, None), ('phrase', 'TEXT', 1, None), ('source', 'TEXT', 1, "'agent_backfill'"), ('added_at', 'TEXT', 1, "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')")])
+  [PASS] 029 schema: invalid_target_phrases indexes unchanged  (before=['idx_phrases_site'] after=['idx_phrases_site'])
+  [PASS] 028 schema: parsers columns unchanged  (before=[('id', 'INTEGER', 0, None), ('site', 'TEXT', 1, None), ('version', 'TEXT', 1, None), ('code', 'TEXT', 1, None), ('page_type_scope', 'TEXT', 0, None), ('status', 'TEXT', 1, "'active'"), ('created_at', 'TEXT', 1, "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"), ('created_by', 'TEXT', 1, "'initial'")] after=[('id', 'INTEGER', 0, None), ('site', 'TEXT', 1, None), ('version', 'TEXT', 1, None), ('code', 'TEXT', 1, None), ('page_type_scope', 'TEXT', 0, None), ('status', 'TEXT', 1, "'active'"), ('created_at', 'TEXT', 1, "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"), ('created_by', 'TEXT', 1, "'initial'")])
+  [PASS] 029 schema: parsers indexes unchanged  (before=['idx_parsers_site_status'] after=['idx_parsers_site_status'])
+  [PASS] 028 schema: results columns unchanged  (before=[('id', 'INTEGER', 0, None), ('url', 'TEXT', 1, None), ('site', 'TEXT', 1, None), ('scraped_at', 'TEXT', 1, None), ('product_data', 'TEXT', 1, None)] after=[('id', 'INTEGER', 0, None), ('url', 'TEXT', 1, None), ('site', 'TEXT', 1, None), ('scraped_at', 'TEXT', 1, None), ('product_data', 'TEXT', 1, None)])
+  [PASS] 029 schema: results indexes unchanged  (before=['idx_results_site_scraped', 'idx_results_url'] after=['idx_results_site_scraped', 'idx_results_url'])
+  [PASS] 028 schema: scrape_runs columns unchanged  (before=[('id', 'INTEGER', 0, None), ('url', 'TEXT', 1, None), ('host', 'TEXT', 1, None), ('site', 'TEXT', 1, None), ('scraper', 'TEXT', 1, None), ('scraped_at', 'TEXT', 1, "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"), ('outcome', 'TEXT', 1, None), ('path', 'TEXT', 1, None), ('winning_parser_id', 'INTEGER', 0, None), ('attempts', 'INTEGER', 1, '1'), ('model_used', 'TEXT', 0, None), ('latency_ms', 'INTEGER', 0, None), ('cost', 'REAL', 0, None)] after=[('id', 'INTEGER', 0, None), ('url', 'TEXT', 1, None), ('host', 'TEXT', 1, None), ('site', 'TEXT', 1, None), ('scraper', 'TEXT', 1, None), ('scraped_at', 'TEXT', 1, "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"), ('outcome', 'TEXT', 1, None), ('path', 'TEXT', 1, None), ('winning_parser_id', 'INTEGER', 0, None), ('attempts', 'INTEGER', 1, '1'), ('model_used', 'TEXT', 0, None), ('latency_ms', 'INTEGER', 0, None), ('cost', 'REAL', 0, None)])
+  [PASS] 029 schema: scrape_runs indexes unchanged  (before=['idx_scrape_runs_site', 'idx_scrape_runs_url_scraped'] after=['idx_scrape_runs_site', 'idx_scrape_runs_url_scraped'])
+
+========================================================================
+clear_site: succeeds even when foreign_keys is OFF
+========================================================================
+  [PASS] 030 no-FK: parsers deleted  (got 0)
+  [PASS] 031 no-FK: golden_samples deleted
+  [PASS] 032 no-FK: scrape_runs still present
+
+========================================================================
+SUMMARY: 42 passed, 0 failed
+========================================================================
