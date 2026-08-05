@@ -1,11 +1,11 @@
 """Verification for M11 — cold start CLI.
 
-Uses REAL Qwen API. Uses local HTML samples (mocks BrightData fetch).
+Uses the configured REAL cold-start LLM. Uses local HTML samples (mocks BrightData fetch).
 
 Covers:
   - End-to-end cold start seeds parser + goldens on user accept
   - 'q' aborts the review loop, nothing seeded
-  - 'n' skips a URL, only accepted URLs become goldens
+  - 'n' blocks parser/golden persistence under the all-cases-pass gate
   - declared page_type during seeding
   - _pick_representative_html picks largest HTML
   - read_coldstart_input parses a valid Excel workbook
@@ -37,8 +37,10 @@ from src.scraping import config as _config
 _config._config = None
 cfg = _config.get_config()
 
-DATA_DIR = Path(__file__).parent.parent / "data"
-HAS_LLM = bool(cfg.qwen_key)
+DATA_DIR = Path(__file__).parent.parent / "data" / "html_sample"
+from src.scraping.providers import resolve_provider
+_, _coldstart_provider = resolve_provider(cfg.cold_start_model_ladder[0])
+HAS_LLM = bool(cfg.api_key_for(_coldstart_provider.key_name))
 
 PASSED: list[str] = []
 FAILED: list[tuple[str, str]] = []
@@ -104,12 +106,12 @@ async def run() -> None:
     check("None when no OK", rep is None)
 
     if not HAS_LLM:
-        skip("M11.3-M11.5", "QWEN_KEY not set")
+        skip("M11.3-M11.5", f"{_coldstart_provider.key_name} not set")
         return
 
     section("M11.3 - Cold start with 'y y' accepts both URLs")
-    argos_html_1 = (DATA_DIR / "argos_response_1.html").read_text(encoding="utf-8")
-    argos_html_2 = (DATA_DIR / "argos_response_2.html").read_text(encoding="utf-8")
+    argos_html_1 = (DATA_DIR / "argos_game_normal.html").read_text(encoding="utf-8")
+    argos_html_2 = (DATA_DIR / "argos_frame_discount.html").read_text(encoding="utf-8")
 
     fake_fetch_map = {
         "https://www.argos.co.uk/product/3284476": (200, argos_html_1),
@@ -137,6 +139,7 @@ async def run() -> None:
 
     db = ScrapeDB(_DB_PATH); db.init_db()
     parsers = ParserStore(db).get_active("argos")
+    parser_source = parsers[0]["code"] if parsers else ""
     check("parser row in DB (created_by=initial)",
           any(p["created_by"] == "initial" for p in parsers),
           str([(p["id"], p["created_by"]) for p in parsers]))
@@ -144,6 +147,9 @@ async def run() -> None:
     check("goldens present in coverage",
           sum(coverage.values()) == 2, str(coverage))
     db.close()
+
+    async def _reuse_generated_parser(site, html):
+        return parser_source
 
     section("M11.4 - Cold start with 'q' aborts review loop")
     # Clean DB
@@ -153,7 +159,10 @@ async def run() -> None:
     db.conn.commit()
     db.close()
 
-    with patch.object(bd_mod.BrightDataUnlocker, "fetch", new=_fake_fetch):
+    with (
+        patch.object(bd_mod.BrightDataUnlocker, "fetch", new=_fake_fetch),
+        patch("src.scraping.coldstart._gen_initial_parser", new=_reuse_generated_parser),
+    ):
         inputs = iter(["q"])
         result = await run_coldstart(
             site="argos",
@@ -166,24 +175,27 @@ async def run() -> None:
     check("q aborts: no goldens seeded", result["seeded_goldens"] == 0,
           str(result["seeded_goldens"]))
 
-    section("M11.5 - Cold start with 'n y': one accepted, one skipped")
+    section("M11.5 - Cold start rejection blocks all persistence")
     db = ScrapeDB(_DB_PATH); db.init_db()
     db.conn.execute("DELETE FROM parsers WHERE site='argos'")
     db.conn.execute("DELETE FROM golden_samples WHERE site='argos'")
     db.conn.commit()
     db.close()
 
-    with patch.object(bd_mod.BrightDataUnlocker, "fetch", new=_fake_fetch):
-        inputs = iter(["n", "y"])
+    with (
+        patch.object(bd_mod.BrightDataUnlocker, "fetch", new=_fake_fetch),
+        patch("src.scraping.coldstart._gen_initial_parser", new=_reuse_generated_parser),
+    ):
+        inputs = iter(["n", "", "", "y", "n"])
         result = await run_coldstart(
             site="argos",
             rows=[ColdStartRow("standard", url, i + 2) for i, url in enumerate(fake_fetch_map)],
             input_fn=lambda prompt: next(inputs),
         )
 
-    check("parser_id created", result["parser_id"] is not None)
+    check("parser_id not created", result["parser_id"] is None)
     check("only 1 accepted", result["accepted"] == 1, str(result["accepted"]))
-    check("only 1 golden seeded", result["seeded_goldens"] == 1,
+    check("no goldens seeded", result["seeded_goldens"] == 0,
           str(result["seeded_goldens"]))
 
 

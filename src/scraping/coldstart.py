@@ -5,8 +5,9 @@ New site with empty parsers table:
     2. Fetch pages via HTMLScraper._get_unlocker()
     3. LLM generates first-version parser from a representative HTML
     4. Sandbox-execute parser against every URL's HTML
-    5. Human confirms each result (y/n/q)
-    6. Confirmed → seed parsers (created_by='initial') + golden_samples
+    5. Human reviews every result and supplies structured corrections
+    6. Later cold-start ladder nodes repair and rerun all cases as needed
+    7. All fetched/in-scope cases pass → seed parser + golden_samples together
 
 Run:
     python -m src.scraping.coldstart --site tesco --input tesco.xlsx
@@ -35,9 +36,9 @@ from .models.enums import PAGE_TYPES
 from .models.product_data import ProductData
 from .providers import make_chat_client
 from .registry import get_scrapers
-from .repair.golden import classify_page_type
+from .repair.golden import _matches_expected, classify_page_type
 from .repair.prepass import build_price_aware_context
-from .repair.prompts import initial_parser_gen_prompt
+from .repair.prompts import coldstart_repair_prompt, initial_parser_gen_prompt
 from .repair.sandbox import run_in_sandbox
 from .storage import GoldenStore, ParserStore, ScrapeDB
 from .validation import validate
@@ -52,10 +53,34 @@ class ColdStartRow:
     row_no: int
 
 
+@dataclass(frozen=True)
+class FieldCorrection:
+    field: str
+    correct_value: str
+
+
+@dataclass(frozen=True)
+class ReviewFeedback:
+    url: str
+    page_type: str
+    corrections: tuple[FieldCorrection, ...]
+    hint: str
+
+
+@dataclass(frozen=True)
+class _ReviewCase:
+    row: ColdStartRow
+    html: str
+    product: Optional[ProductData]
+    failure_kind: Optional[str] = None
+    failure_detail: Optional[str] = None
+
+
 async def run_coldstart(
     site: str,
     rows: list[ColdStartRow],
     input_fn=input,
+    force_fetch: bool = False,
 ) -> dict[str, Any]:
     """End-to-end cold start for a site.
 
@@ -63,99 +88,194 @@ async def run_coldstart(
         site: site identifier (e.g. "tesco")
         rows: validated page_type + URL declarations
         input_fn: injectable input function for testing (defaults to builtins.input)
+        force_fetch: bypass reusable non-stale golden HTML snapshots
 
     Returns:
         Cold-start result including coverage_shortfall.
     """
     scraper_cls = _pick_html_scraper(site)
     scraper = scraper_cls()
+    cfg = get_config()
+    ladder = cfg.cold_start_model_ladder
+    temperatures = cfg.cold_start_temperature_ladder
+    assert ladder, "cold_start_model_ladder must contain at least one model"
+    assert len(temperatures) == len(ladder), (
+        f"cold_start_temperature_ladder length ({len(temperatures)}) != "
+        f"cold_start_model_ladder length ({len(ladder)})"
+    )
 
     print(f"\n== Cold start for site '{site}' ==")
-    print(f"Fetching {len(rows)} URLs via {scraper_cls.__name__}...")
+    print(f"Resolving {len(rows)} URLs via golden cache / {scraper_cls.__name__}...")
 
-    fetched = await _batch_fetch(scraper, [row.url for row in rows])
-    print(f"Fetched {len(fetched)} pages ({sum(1 for _, s, _ in fetched if s == 200)} OK).")
+    fetched = await _resolve_html(scraper, rows, force_fetch=force_fetch)
+    print(
+        f"Resolved {len(fetched)} pages "
+        f"({sum(1 for _, status, _, _ in fetched if status == 200)} OK)."
+    )
 
     representative_html = _pick_representative_html(fetched)
     if representative_html is None:
         print("No valid HTML fetched — aborting cold start.")
         return _empty_result(aborted=True)
 
-    print("\nGenerating first-version parser via LLM...")
-    parser_code = await _gen_initial_parser(site, representative_html)
-    if not parser_code:
-        print("LLM did not return usable parser code — aborting.")
-        return _empty_result(aborted=True)
-
-    print("\nRunning parser against all fetched HTMLs (sandbox)...")
-    candidates = []
-    for row, (url, status, html) in zip(rows, fetched):
-        if status != 200 or not html:
-            candidates.append((row, html, None, "extraction_failed"))
-            continue
-        result = await run_in_sandbox(parser_code, html, url)
-        if isinstance(result, dict):
-            wrapped = _wrap(result, site, url)
-            product, errors = validate(wrapped)
-            candidates.append((row, html, product, errors if errors else None))
-        else:
-            candidates.append((row, html, None, f"sandbox: {type(result).__name__}"))
-
-    print(f"\n{len(candidates)} candidates for review.\n")
-
-    cfg = get_config()
     existing_coverage = _get_existing_coverage(site)
-    accepted_by_type: Counter[str] = Counter()
+    feedback_history: list[ReviewFeedback] = []
+    failure_history: list[str] = []
+    previously_accepted: dict[str, ProductData] = {}
+    parser_code: Optional[str] = None
     accepted: list[tuple[ColdStartRow, str, ProductData]] = []
-    aborted = False
-    for i, (row, html, product, error) in enumerate(candidates, 1):
-        current_count = existing_coverage.get(row.page_type, 0) + accepted_by_type[row.page_type]
-        if current_count >= cfg.golden_max_for(row.page_type):
-            print(
-                f"\n[{i}/{len(candidates)}] {row.url}\n"
-                f"  bucket '{row.page_type}' already has {current_count} goldens — "
-                "skipping (spare)"
-            )
-            continue
 
-        print(f"\n[{i}/{len(candidates)}] {row.url}")
-        print(f"  declared page_type = {row.page_type}")
-        if product is None:
-            print(f"  ERROR: {error} — marking skipped")
-            continue
-        classified = classify_page_type(product)
-        if classified != row.page_type:
-            print(
-                f"  !! MISMATCH: extracted fields look like '{classified}', "
-                f"not declared '{row.page_type}'"
+    for node_index, model in enumerate(ladder):
+        is_last = node_index == len(ladder) - 1
+        # There is nothing to repair until a node returns usable code, so a node
+        # that produced nothing (truncated reply, unparsable JSON) leaves the
+        # next one generating from scratch rather than aborting the run.
+        if parser_code is None:
+            print(f"\nGenerating first-version parser via {model}...")
+            new_code = await _gen_initial_parser(
+                site,
+                representative_html,
+                model=model,
+                temperature=temperatures[node_index],
+                enable_thinking=is_last,
             )
-        print("  Extracted:")
-        for field in ("title", "brand", "price", "currency", "list_price", "in_stock", "gtin"):
-            val = getattr(product, field, None)
-            print(f"    {field:12s} = {val}")
-
-        ans = input_fn("  Accept? [y/N/q] ").strip().lower()
-        if ans == "q":
-            print("  Aborting review loop.")
-            aborted = True
-            break
-        if ans == "y":
-            accepted.append((row, html, product))
-            accepted_by_type[row.page_type] += 1
-            print("  → accepted")
         else:
-            print("  → skipped")
+            role = "last" if is_last else "middle"
+            print(f"\nRepairing parser via {model} (round {node_index + 1})...")
+            new_code = await _gen_repaired_parser(
+                site=site,
+                html=representative_html,
+                current_code=parser_code,
+                feedbacks=feedback_history,
+                failures=failure_history,
+                index=node_index,
+                model=model,
+                temperature=temperatures[node_index],
+                is_last=is_last,
+                role=role,
+                confirmed_fields=_display_fields() if previously_accepted else [],
+            )
 
-    if not accepted:
-        print("\nNo confirmations — nothing seeded.")
-        return {
-            **_empty_result(aborted=aborted),
-            "coverage_shortfall": _coverage_shortfall(existing_coverage),
-        }
+        if not new_code:
+            if is_last:
+                print("LLM did not return usable parser code — aborting.")
+                return _failed_result(existing_coverage, aborted=True)
+            print(
+                f"{model} returned no usable parser code — "
+                "falling through to the next ladder node."
+            )
+            continue
+        parser_code = new_code
 
-    parser_id, seeded_count = _seed(site, parser_code, accepted)
+        print("\nRunning parser against all resolved HTMLs (sandbox)...")
+        cases = await _run_review_cases(site, rows, fetched, parser_code)
+        print(f"\n{len(cases)} cold-start cases for review.\n")
+
+        accepted = []
+        accepted_by_type: Counter[str] = Counter()
+        sandbox_failed: list[tuple[ColdStartRow, str]] = []
+        human_rejected: list[tuple[ColdStartRow, ReviewFeedback]] = []
+        extraction_failed: list[tuple[ColdStartRow, str]] = []
+        aborted = False
+
+        for i, case in enumerate(cases, 1):
+            row = case.row
+            current_count = (
+                existing_coverage.get(row.page_type, 0)
+                + accepted_by_type[row.page_type]
+            )
+            if current_count >= cfg.golden_max_for(row.page_type):
+                print(
+                    f"\n[{i}/{len(cases)}] {row.url}\n"
+                    f"  bucket '{row.page_type}' already has {current_count} goldens — "
+                    "skipping (spare)"
+                )
+                continue
+
+            print(f"\n[{i}/{len(cases)}] {row.url}")
+            print(f"  declared page_type = {row.page_type}")
+            if case.product is None:
+                detail = case.failure_detail or "unknown failure"
+                if case.failure_kind == "extraction_failed":
+                    extraction_failed.append((row, detail))
+                    print(f"  FETCH ERROR: {detail} — not counted against parser")
+                else:
+                    sandbox_failed.append((row, detail))
+                    print(f"  PARSER ERROR: {detail}")
+                continue
+
+            product = case.product
+            classified = classify_page_type(product)
+            if classified != row.page_type:
+                print(
+                    f"  !! MISMATCH: extracted fields look like '{classified}', "
+                    f"not declared '{row.page_type}'"
+                )
+            _print_product_panel(product, row.page_type)
+
+            previous = previously_accepted.get(row.url)
+            if previous is not None and _products_match(product, previous):
+                accepted.append((row, case.html, product))
+                accepted_by_type[row.page_type] += 1
+                print("  → unchanged since prior acceptance; accepted automatically")
+                continue
+
+            ans = input_fn("  Accept? [y/N/q] ").strip().lower()
+            if ans == "q":
+                print("  Aborting review loop.")
+                aborted = True
+                break
+            if ans == "y":
+                accepted.append((row, case.html, product))
+                accepted_by_type[row.page_type] += 1
+                print("  → accepted")
+                continue
+
+            feedback = _collect_feedback(row, input_fn)
+            human_rejected.append((row, feedback))
+            print("  → rejected")
+
+        if aborted:
+            _print_failure_summary(sandbox_failed, human_rejected, extraction_failed)
+            return _failed_result(
+                existing_coverage,
+                aborted=True,
+                accepted=len(accepted),
+            )
+
+        if not sandbox_failed and not human_rejected:
+            if extraction_failed:
+                _print_failure_summary([], [], extraction_failed)
+            parser_id, seeded_count = _seed(site, parser_code, accepted)
+            break
+
+        _print_failure_summary(sandbox_failed, human_rejected, extraction_failed)
+        feedback_history.extend(feedback for _, feedback in human_rejected)
+        failure_history.extend(
+            f"{row.url} ({row.page_type}): {detail}"
+            for row, detail in sandbox_failed
+        )
+        previously_accepted = {row.url: product for row, _, product in accepted}
+
+        if is_last:
+            print("\nCold-start model ladder exhausted — parser was not saved.")
+            return _failed_result(
+                existing_coverage,
+                aborted=False,
+                accepted=len(accepted),
+            )
+        if input_fn("\nContinue 纠错? [y/N] ").strip().lower() != "y":
+            print("Parser was not saved.")
+            return _failed_result(
+                existing_coverage,
+                aborted=True,
+                accepted=len(accepted),
+            )
+    else:  # pragma: no cover - the non-empty ladder always returns or breaks
+        return _failed_result(existing_coverage, aborted=False)
+
     final_coverage = dict(existing_coverage)
-    for page_type, count in accepted_by_type.items():
+    for page_type, count in Counter(row.page_type for row, _, _ in accepted).items():
         final_coverage[page_type] = final_coverage.get(page_type, 0) + count
     coverage_shortfall = _coverage_shortfall(final_coverage)
     if coverage_shortfall:
@@ -200,6 +320,19 @@ def _empty_result(aborted: bool) -> dict[str, Any]:
     }
 
 
+def _failed_result(
+    existing_coverage: dict[str, int],
+    *,
+    aborted: bool,
+    accepted: int = 0,
+) -> dict[str, Any]:
+    return {
+        **_empty_result(aborted=aborted),
+        "accepted": accepted,
+        "coverage_shortfall": _coverage_shortfall(existing_coverage),
+    }
+
+
 def _get_existing_coverage(site: str) -> dict[str, int]:
     cfg = get_config()
     db = ScrapeDB(cfg.db_path)
@@ -235,21 +368,91 @@ async def _batch_fetch(scraper, urls: list[str]) -> list[tuple[str, int, str]]:
     return list(results)
 
 
+async def _resolve_html(
+    scraper,
+    rows: list[ColdStartRow],
+    force_fetch: bool,
+) -> list[tuple[str, int, str, str]]:
+    """Resolve HTML from non-stale goldens first, then fetch cache misses."""
+    cached: dict[str, str] = {}
+    if not force_fetch:
+        cfg = get_config()
+        db = ScrapeDB(cfg.db_path)
+        db.init_db()
+        try:
+            gs = GoldenStore(db)
+            samples = [
+                sample
+                for page_type in PAGE_TYPES
+                for sample in gs.get_by_site_and_type(
+                    scraper.site, page_type, exclude_stale=True
+                )
+            ]
+            for sample in sorted(samples, key=lambda item: item["id"], reverse=True):
+                url = sample["expected_output"].get("url")
+                html = sample.get("html_snapshot")
+                if url and html and url not in cached:
+                    cached[url] = html
+        finally:
+            db.close()
+
+    missing_urls = list(dict.fromkeys(row.url for row in rows if row.url not in cached))
+    fetched = await _batch_fetch(scraper, missing_urls) if missing_urls else []
+    fetched_by_url = {url: (status, html) for url, status, html in fetched}
+
+    resolved: list[tuple[str, int, str, str]] = []
+    for row in rows:
+        if row.url in cached:
+            item = (row.url, 200, cached[row.url], "goldset")
+        else:
+            status, html = fetched_by_url.get(row.url, (0, ""))
+            item = (row.url, status, html, "brightdata")
+        resolved.append(item)
+        print(f"  [{item[3]}] {row.url}")
+    return resolved
+
+
 def _pick_representative_html(
-    fetched: list[tuple[str, int, str]]
+    fetched: list[tuple[Any, ...]]
 ) -> Optional[str]:
     """Pick the largest 200 HTML as representative for LLM parser generation."""
-    ok = [(url, html) for url, status, html in fetched if status == 200 and html]
+    ok = [
+        (item[0], item[2])
+        for item in fetched
+        if item[1] == 200 and item[2]
+    ]
     if not ok:
         return None
     return max(ok, key=lambda t: len(t[1]))[1]
 
 
-async def _gen_initial_parser(site: str, html: str) -> Optional[str]:
+async def _gen_initial_parser(
+    site: str,
+    html: str,
+    *,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    enable_thinking: Optional[bool] = None,
+) -> Optional[str]:
+    """Generate a parser from scratch.
+
+    The ladder driver passes the node it is currently on; the defaults keep the
+    node-0 behaviour for direct callers.
+    """
     cfg = get_config()
+    ladder = cfg.cold_start_model_ladder
+    temperatures = cfg.cold_start_temperature_ladder
+    assert ladder, "cold_start_model_ladder must contain at least one model"
+    assert len(temperatures) == len(ladder), (
+        f"cold_start_temperature_ladder length ({len(temperatures)}) != "
+        f"cold_start_model_ladder length ({len(ladder)})"
+    )
     llm = make_chat_client(
-        model=cfg.repair_model_ladder[0],
-        temperature=0.1,
+        model=model if model is not None else ladder[0],
+        temperature=temperature if temperature is not None else temperatures[0],
+        enable_thinking=(
+            enable_thinking if enable_thinking is not None else len(ladder) == 1
+        ),
         purpose="cold start",
     )
     if llm is None:
@@ -259,10 +462,77 @@ async def _gen_initial_parser(site: str, html: str) -> Optional[str]:
         price_ctx = build_price_aware_context(html, f"https://dummy/{site}")
         resp = await llm.ainvoke(initial_parser_gen_prompt(price_ctx, site))
     except Exception as e:
-        logger.exception("initial parser gen failed: %s", e)
+        _log_llm_failure("initial parser gen", e)
         return None
 
     content = resp.content if hasattr(resp, "content") else str(resp)
+    return _extract_parser_code(content)
+
+
+async def _gen_repaired_parser(
+    *,
+    site: str,
+    html: str,
+    current_code: str,
+    feedbacks: list[ReviewFeedback],
+    failures: list[str],
+    index: int,
+    model: str,
+    temperature: float,
+    is_last: bool,
+    role: str,
+    confirmed_fields: list[str],
+) -> Optional[str]:
+    llm = make_chat_client(
+        model=model,
+        temperature=temperature,
+        enable_thinking=is_last,
+        purpose="cold start repair",
+    )
+    if llm is None:
+        print("LLM provider key not set — cannot repair parser.")
+        return None
+    try:
+        price_ctx = build_price_aware_context(html, f"https://dummy/{site}")
+        prompt = coldstart_repair_prompt(
+            price_ctx,
+            site,
+            current_code,
+            feedbacks,
+            failures,
+            role=role,
+            attempt_index=index,
+            model=model,
+            confirmed_fields=confirmed_fields,
+        )
+        resp = await llm.ainvoke(prompt)
+    except Exception as exc:
+        _log_llm_failure("cold start parser repair", exc)
+        return None
+    content = resp.content if hasattr(resp, "content") else str(resp)
+    return _extract_parser_code(content)
+
+
+def _log_llm_failure(stage: str, exc: Exception) -> None:
+    """Log an LLM call failure, calling out output truncation explicitly.
+
+    A truncated reply arrives as ``LengthFinishReasonError``: the provider hit
+    the output cap mid-JSON and the OpenAI SDK discards the partial content, so
+    there is nothing to salvage — the ladder must move on to the next node.
+    """
+    if type(exc).__name__ == "LengthFinishReasonError":
+        logger.error(
+            "%s hit the model output limit — the reply was truncated before the "
+            "JSON closed. Raise the provider's max_output_tokens in providers.py "
+            "if this repeats.",
+            stage,
+        )
+        print(f"{stage} exceeded the model output limit (truncated reply).")
+        return
+    logger.exception("%s failed: %s", stage, exc)
+
+
+def _extract_parser_code(content: str) -> Optional[str]:
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError:
@@ -273,6 +543,184 @@ async def _gen_initial_parser(site: str, html: str) -> Optional[str]:
         except Exception:
             return None
     return parsed.get("parser_code")
+
+
+async def _run_review_cases(
+    site: str,
+    rows: list[ColdStartRow],
+    fetched: list[tuple[str, int, str, str]],
+    parser_code: str,
+) -> list[_ReviewCase]:
+    cases: list[_ReviewCase] = []
+    for row, (url, status, html, _) in zip(rows, fetched):
+        if status != 200 or not html:
+            cases.append(
+                _ReviewCase(
+                    row=row,
+                    html=html,
+                    product=None,
+                    failure_kind="extraction_failed",
+                    failure_detail=f"HTTP/status {status}",
+                )
+            )
+            continue
+
+        result = await run_in_sandbox(parser_code, html, url)
+        if not isinstance(result, dict):
+            cases.append(
+                _ReviewCase(
+                    row=row,
+                    html=html,
+                    product=None,
+                    failure_kind="sandbox_failed",
+                    failure_detail=_describe_sandbox_failure(result),
+                )
+            )
+            continue
+
+        product, errors = validate(_wrap(result, site, url))
+        if product is None:
+            cases.append(
+                _ReviewCase(
+                    row=row,
+                    html=html,
+                    product=None,
+                    failure_kind="sandbox_failed",
+                    failure_detail="gate: " + "; ".join(errors),
+                )
+            )
+            continue
+        cases.append(_ReviewCase(row=row, html=html, product=product))
+    return cases
+
+
+def _describe_sandbox_failure(result: Any) -> str:
+    if hasattr(result, "type_name"):
+        message = getattr(result, "message", "")
+        return f"{result.type_name}: {message}".rstrip(": ")
+    if hasattr(result, "reason"):
+        return f"{type(result).__name__}: {result.reason}"
+    if hasattr(result, "timeout"):
+        return f"{type(result).__name__}: {result.timeout}s"
+    return type(result).__name__
+
+
+_TRACING_FIELDS = frozenset(
+    {"url", "website", "scraped_at", "source_type", "parser_version", "raw"}
+)
+
+_PAGE_TYPE_KEY_FIELDS: dict[str, tuple[str, ...]] = {
+    "standard": ("price",),
+    "membership": ("membership_price",),
+    "discounted": ("list_price", "price"),
+    "out_of_stock": ("in_stock", "image_urls"),
+    "multipack": ("variant",),
+}
+
+
+def _display_fields() -> list[str]:
+    """Return reviewable ProductData fields in model declaration order."""
+    return [
+        name for name in ProductData.model_fields
+        if name not in _TRACING_FIELDS
+    ]
+
+
+def _print_product_panel(product: ProductData, page_type: str) -> None:
+    print("  Extracted:")
+    key_fields = set(_PAGE_TYPE_KEY_FIELDS.get(page_type, ()))
+    for field in _display_fields():
+        value = getattr(product, field)
+        rendered = _format_display_value(value)
+        warning = ""
+        if field in key_fields and value in (None, "", [], {}):
+            warning = "  !! 该桶关键字段为空"
+        print(f"    {field:18s} = {rendered}{warning}")
+
+
+def _format_display_value(value: Any) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, list):
+        if not value:
+            return "0 项"
+        return f"{len(value)} 项 ({_truncate(str(value[0]), 80)})"
+    if isinstance(value, str):
+        return _truncate(value, 80)
+    return str(value)
+
+
+def _truncate(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[:limit] + "…"
+
+
+def _collect_feedback(row: ColdStartRow, input_fn) -> ReviewFeedback:
+    fields = _display_fields()
+    print("  Which fields are wrong?")
+    print("    " + "  ".join(f"{i}.{field}" for i, field in enumerate(fields, 1)))
+    raw = input_fn("  (comma-separated, Enter to skip) > ").strip()
+    selected: list[str] = []
+    for token in (part.strip() for part in raw.split(",")):
+        if not token:
+            continue
+        if token.isdigit() and 1 <= int(token) <= len(fields):
+            field = fields[int(token) - 1]
+        elif token in fields:
+            field = token
+        else:
+            print(f"  note: ignored unknown field selection {token!r}")
+            continue
+        if field not in selected:
+            selected.append(field)
+
+    corrections = tuple(
+        FieldCorrection(
+            field=field,
+            correct_value=_normalize_correction_value(
+                input_fn(f"  correct {field}? > ").strip()
+            ),
+        )
+        for field in selected
+    )
+    hint = input_fn("  Any hint? (Enter to skip) > ").strip()
+    return ReviewFeedback(
+        url=row.url,
+        page_type=row.page_type,
+        corrections=corrections,
+        hint=hint,
+    )
+
+
+def _normalize_correction_value(value: str) -> str:
+    """Render common human 'clear this field' input unambiguously for the LLM."""
+    if value.lower() in {"-", "none", "null", "n/a", "na"}:
+        return "None (clear or omit this field)"
+    return value
+
+
+def _products_match(current: ProductData, previous: ProductData) -> bool:
+    return _matches_expected(
+        current.model_dump(mode="json"), previous.model_dump(mode="json")
+    ) is None
+
+
+def _print_failure_summary(
+    sandbox_failed: list[tuple[ColdStartRow, str]],
+    human_rejected: list[tuple[ColdStartRow, ReviewFeedback]],
+    extraction_failed: list[tuple[ColdStartRow, str]],
+) -> None:
+    failed_count = len(sandbox_failed) + len(human_rejected)
+    if failed_count:
+        print(f"\nParser NOT saved — {failed_count} cold-start case(s) did not pass:")
+        for row, detail in sandbox_failed:
+            print(f"  [PARSER CRASH] {row.url} ({row.page_type})  {detail}")
+        for row, feedback in human_rejected:
+            wrong = ", ".join(c.field for c in feedback.corrections) or "unspecified"
+            print(f"  [REJECTED]     {row.url} ({row.page_type})  wrong: {wrong}")
+    if extraction_failed:
+        print("\nThese URLs could not be fetched (not the parser's fault):")
+        for row, detail in extraction_failed:
+            print(f"  [FETCH FAIL]   {row.url} ({row.page_type})  {detail}")
 
 
 def _wrap(raw: dict[str, Any], site: str, url: str) -> dict[str, Any]:
@@ -443,6 +891,11 @@ def main() -> int:
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument(
+        "--force-fetch",
+        action="store_true",
+        help="ignore reusable golden HTML snapshots and fetch every URL",
+    )
     args = parser.parse_args()
 
     if args.verbose:
@@ -457,7 +910,9 @@ def main() -> int:
         print(f"No data rows in {args.input_path}")
         return 1
 
-    result = asyncio.run(run_coldstart(args.site, rows))
+    result = asyncio.run(
+        run_coldstart(args.site, rows, force_fetch=args.force_fetch)
+    )
     return _result_exit_code(result)
 
 

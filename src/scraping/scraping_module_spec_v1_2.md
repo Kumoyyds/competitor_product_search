@@ -253,13 +253,20 @@
 **适用范围:所有 scraper 路线中,未被 invalid_target 拦截的产出。**
 
 门1(Pydantic):单字段类型/结构,`price` optional。
-门2(feasible_check):跨字段语义。下表中"有值"指 `price`/`list_price`/`membership_price` 任一 > 0。
+门2(feasible_check):跨字段语义。
 
-| in_stock | 任一正价格信号 | 判定 |
+| in_stock | price | 判定 |
 |---|---|---|
-| True | None | **故障** → 按路线分流 |
-| False | None | 合法(缺货无价,或仅剩 membership_price 作为商品信号) |
-| False | 有值 | 合法(缺货仍挂末价) |
+| True | 缺失或 `<= 0` | **故障** → 按路线分流 |
+| True | `> 0` | 合法；可再带折扣/会员价格 |
+| False | 任意 | 合法，但必须保留图片或任一价格等商品信号 |
+
+价格字段遵守固定的客户语义：
+
+- standard：仅 `price`；
+- discounted：`price + list_price`，且 `list_price > price`；
+- membership：`price + membership_price`，且 `membership_price < price`；只有页面另行展示更高 Was/RRP 时才可附带 `list_price`；
+- 三价同时出现时：`list_price > price > membership_price`。
 
 - HTML 路线两门失败共享 repair 预算(D8);API 路线两门失败进受限 JSON 自愈判定(§5.14)。
 

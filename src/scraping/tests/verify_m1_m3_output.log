@@ -1,13 +1,13 @@
-﻿Verification script for M1 + M2 + M3
+Verification script for M1 + M2 + M3
 
 ======================================================================
 M1 - ProductData schema + two gates (validation)
 ======================================================================
   [PASS] in_stock=True + price present -> passes both gates  ([])
   [PASS] price stays as Decimal after validation  (Decimal)
-  [PASS] in_stock=True + price=None -> Gate 2 catches fault  (['in_stock=True but no positive price, list_price, or membership_price'])
-  [PASS] Gate 2 error message mentions price  (['in_stock=True but no positive price, list_price, or membership_price'])
-  [PASS] in_stock=True + only membership_price > 0 -> passes Gate 2  ([])
+  [PASS] in_stock=True + price=None -> Gate 2 catches fault  (['in_stock=True but price must be a positive ordinary customer price'])
+  [PASS] Gate 2 error message mentions price  (['in_stock=True but price must be a positive ordinary customer price'])
+  [PASS] in_stock=True + only membership_price -> Gate 2 requires price  (['in_stock=True but price must be a positive ordinary customer price'])
   [PASS] in_stock=False + only membership_price -> passes (product signal present)  ([])
   [PASS] in_stock=False + price=None + image -> legal (product signal present)  ([])
   [PASS] in_stock=False + price present -> legal  ([])

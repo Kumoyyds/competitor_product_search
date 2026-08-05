@@ -6,6 +6,7 @@ Each builder returns a list of chat messages in LangChain format:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 SCHEMA_HINT = """\
@@ -21,17 +22,20 @@ OPTIONAL (return None or omit if unavailable):
   brand (str)
   gtin (str) — EAN/UPC barcode; do NOT put ASIN or SKU here
   variant (dict) — {"size": ..., "color": ..., "pack_qty": ...} keys as available
-  price (Decimal-compatible string, e.g. "19.99")—the price for normal customer — REQUIRED by Gate 2 when in_stock is True (or list_price / membership_price — any one > 0 qualifies)
+  price (Decimal-compatible string, e.g. "19.99") — ordinary non-member current price; REQUIRED and positive when in_stock is True
   currency (str) — ISO-4217 code like "GBP", "EUR", never a symbol like "£"
-  list_price (Decimal-compatible string) — original/RRP price for discount detection (only normal discount, not membership_discount)
-  membership_price (Decimal-compatible string) — Special price gated behind a named loyalty/membership program (e.g. Tesco Clubcard, Amazon Prime, Nectar, member/loyalty card).  Only set this when the PAGE VISIBLY SHOWS membership gating — a program badge, \"Clubcard Price\" / \"Prime member price\" label, or \"only available with <program>\" text.  A plain \"Was £X Now £Y\" markdown is NOT membership even if JSON-LD tags the offer with a member tier — that is a normal discount (→ list_price + price).
+  list_price (Decimal-compatible string) — higher Was/RRP/original reference price for a normal non-member discount; only set it when it is strictly greater than price
+  membership_price (Decimal-compatible string) — lower price gated behind a named loyalty/membership program (e.g. Tesco Clubcard, Amazon Prime, Nectar, member/loyalty card). Only set this when the PAGE VISIBLY SHOWS membership gating — a program badge, \"Clubcard Price\" / \"Prime member price\" label, or \"only available with <program>\" text. It must be strictly lower than price. A plain \"Was £X Now £Y\" markdown is NOT membership even if JSON-LD tags the offer with a member tier — that is a normal discount (→ list_price + price).
   unit_price (Decimal-compatible string) — e.g. "£/kg" numeric value
   unit (str) — e.g. "kg", "l"
   availability_raw (str) — a SHORT human-readable stock label ("In stock", "Out of stock", "Auf Lager", etc.).  NEVER return the raw JSON-LD script block or a long JSON string here — navigate to the `offers.availability` schema.org token (e.g. \"http://schema.org/InStock\") and map it to a short label, or derive from visible DOM text.
 
-  REMINDER: 
-- when you recognize discount please distinguish between membership discount and normal discount. for normal discount it normally shows list_price and price, and for membership discount it normally show price and membership_price. If all three prices  appear at the same time (price + list_price + membership_price), fill in all three fields; they are not mutually exclusive.
-- coupon/promo-code discounts are normal discount (goes to price), not membership discount
+  PRICE FIELD CONTRACT:
+  - standard product: price only; omit list_price and membership_price
+  - normal discounted product: price + list_price, with list_price > price
+  - membership product: price + membership_price, with membership_price < price; list_price is optional only when a separate higher Was/RRP is visibly shown
+  - when all three prices occur: list_price > price > membership_price
+  - coupon/promo-code discounts are normal discounts (→ price + list_price), not membership discounts
 
 CRITICAL:
   - in_stock MUST be a Python literal True or False (not a string, not None)
@@ -160,8 +164,8 @@ _ROLE_STRATEGY: dict[str, str] = {
         "or thousands separator (strip non-numeric chars before returning), "
         "(c) the JSON-LD block was structured as `@graph` with multiple entries "
         "(iterate and pick `@type == 'Product'`), (d) in_stock was set True but "
-        "no price, list_price, or membership_price was returned (check JSON-LD offers, "
-        "DOM price blocks, and member/loyalty price labels). If the current approach "
+        "no ordinary `price` was returned (check JSON-LD offers, DOM price blocks, "
+        "and member/loyalty price labels). If the current approach "
         "seems fundamentally wrong (e.g. JSON-LD has no Product schema but you kept "
         "parsing it), switch to DOM selectors."
     ),
@@ -177,8 +181,8 @@ _ROLE_STRATEGY: dict[str, str] = {
         "Corporation)? Iterate them and pick the Product one. "
         "(3) if the HTML is genuinely a product page but some fields are missing, "
         "DO NOT return `{}` — return what fields you CAN find, leaving optional "
-        "fields as None. Gate 2 will accept out-of-stock products with images or "
-        "list_price, and in-stock products with price OR list_price. "
+        "fields as None. Gate 2 accepts out-of-stock products with product signals, "
+        "but every in-stock product requires a positive ordinary `price`. "
         "(4) if this is genuinely NOT a product page (error, category, search), "
         "return `{}` explicitly."
     ),
@@ -217,6 +221,11 @@ def parser_gen_prompt(
         "program (a program badge/logo, \"Clubcard Price\" / \"Prime member price\" / "
         "\"会员价\", or \"only available with <program>\") → the gated price goes to "
         "`membership_price` and the regular price to `price`.\n"
+        "- **PRICE FIELD CONTRACT (mandatory)**: standard = `price` only; normal "
+        "discount = `price` + higher `list_price`; membership = `price` + lower "
+        "`membership_price` (+ optional higher `list_price`). Therefore, when both "
+        "values are present, enforce `list_price > price > membership_price`. Never "
+        "copy `price` into either other field.\n"
         "- Check the [PROMOTION SIGNAL] below — it classifies the main price container "
         "structurally.  When it says \"discount\" or \"membership\", use that as the "
         "primary signal.\n"
@@ -232,8 +241,9 @@ def parser_gen_prompt(
         "basket-guide-price / price-value) are NOT product prices — ignore them.\n"
         "- Unit prices (e.g. £/kg, /litre, /100g) are NOT product prices; capture them "
         "separately as `unit_price` + `unit` if available.\n"
-        "- Coupon / promo-code discounts are normal discounts (→ `price`), not membership "
-        "discounts.\n\n"
+        "- Coupon / promo-code discounts are normal discounts: put the payable "
+        "non-member price in `price` and a separately displayed higher Was/RRP in "
+        "`list_price`; never use `membership_price` unless membership gating is visible.\n\n"
         "ROBUST PRICE EXTRACTION (apply to ALL sites — handles dirty/mojibake/malformed HTML):\n"
         "- NEVER strip only the currency symbol (e.g. `text.replace('£','').strip()`). "
         "Stray characters from encoding errors (`Â`), non-breaking spaces (`\\xa0`), "
@@ -374,6 +384,69 @@ def _format_record(rec: Any) -> str:
 def initial_parser_gen_prompt(price_context, site: str) -> list[dict[str, str]]:
     """Cold-start (M11): first parser generation, no error history yet."""
     return parser_gen_prompt(price_context, site, role="first", initial_errors=[], attempts=[])
+
+
+def coldstart_repair_prompt(
+    price_context,
+    site: str,
+    current_code: str,
+    feedbacks: list[Any],
+    failures: list[str],
+    *,
+    role: str,
+    attempt_index: int,
+    model: str,
+    confirmed_fields: list[str] | None = None,
+) -> list[dict[str, str]]:
+    """Build a cold-start repair prompt from code and in-memory review evidence.
+
+    This deliberately reuses ``parser_gen_prompt`` and its retry strategies.  A
+    lightweight record with the same attributes as ``AttemptRecord`` avoids a
+    prompts -> agent import cycle while still using the shared formatter.
+    """
+    errors: list[str] = []
+    if confirmed_fields:
+        errors.append(
+            "【已确认正确，保留现有 selector，不要改动】\n  - "
+            + ", ".join(confirmed_fields)
+        )
+
+    if feedbacks:
+        lines = ["【提取错误，需修复】"]
+        for feedback in feedbacks:
+            lines.append(f"URL: {feedback.url} ({feedback.page_type})")
+            if feedback.corrections:
+                for correction in feedback.corrections:
+                    expected = correction.correct_value or "(人工未提供正确值)"
+                    lines.append(f"- {correction.field}: 正确值应为 {expected!r}")
+            else:
+                lines.append("- 人工确认结果有误，但未指定字段")
+            if feedback.hint:
+                lines.append(f"人工提示：{feedback.hint}")
+        errors.append("\n".join(lines))
+
+    if failures:
+        errors.append(
+            "【Sandbox / Gate 失败，需修复】\n"
+            + "\n".join(f"- {failure}" for failure in failures)
+        )
+
+    record = SimpleNamespace(
+        index=attempt_index - 1,
+        model=model,
+        code=current_code,
+        output=None,
+        capture=None,
+        failure_stage="coldstart_review",
+        errors=errors,
+    )
+    return parser_gen_prompt(
+        price_context,
+        site,
+        role=role,
+        initial_errors=[],
+        attempts=[record],
+    )
 
 
 def json_heal_precheck_prompt(

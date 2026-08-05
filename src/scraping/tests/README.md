@@ -4,7 +4,7 @@ Each milestone's verification is persisted here so you can audit and re-run at a
 
 ## Milestone Overview
 
-The scraping module was built incrementally across 15 milestones (M1–M15). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
+The scraping module was built incrementally across 20 milestones (M1–M20). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
 
 ### M1 — ProductData Schema + Two Gates
 Defines the canonical `ProductData` Pydantic model (url, website, title, price, currency, in_stock, image_urls, …) and the two-gate validation pipeline:
@@ -114,6 +114,7 @@ Bootstrap a new site with zero manual parser writing. Uses **real Qwen API**:
 - Centralizes model IDs, endpoints, key names, JSON-mode support, and thinking toggles in `providers.py`.
 - Routes repair, JSON healing, and cold start through one client factory.
 - Supports Qwen and the official DeepSeek V4 API, explicit `provider/model` names, dynamic dotenv keys, and unknown-model fallback.
+- Sends each provider's registered output cap (`ProviderSpec.max_output_tokens`) as a body-level `max_tokens`. Without it DeepSeek applies its own 8192 default and truncates parser-generation replies mid-JSON; the OpenAI SDK then raises `LengthFinishReasonError` and discards the partial content. The cap cannot ride on `ChatOpenAI(max_tokens=...)` — langchain renames that to `max_completion_tokens`, which DeepSeek accepts and ignores (verified live: 12-token cap honored as `max_tokens`, ignored as `max_completion_tokens`).
 
 ### M12 — End-to-End Live Scraping
 
@@ -126,7 +127,7 @@ Fixes three defects discovered in a live M12 re-run (buzzballz case: JSON-LD blo
 - **Central `availability_raw` normalizer** (`models/product_data.py` — `@model_validator(mode="after")`) — recovers a schema.org availability token from anywhere inside a blob (`InStock → "In stock"`, `OutOfStock → "Out of stock"`, `PreOrder → "Pre-order"`, etc.) or derives from `in_stock`. A parser can never surface a blob again — this is a single choke point for both HTML and API routes. Site-agnostic (schema.org vocabulary is W3C-standard).
 - **`detect_promotion(soup) → Optional[dict]`** (`repair/prepass.py`) — new reusable promotion-signal detector that classifies the main price container structurally (not hard-coded to any site's keywords). Discount = a struck/reference higher price with **no** membership-gating marker nearby. Membership = a price gated behind a named loyalty/membership program (badge, "Clubcard/Prime price", "only available with <program>", schema.org `validForMemberTier` corroborated by visible gating). Negation prefixes (`non-`, `not-`, `no-`) on membership-hint class tokens explicitly override. Detection reuses the existing BeautifulSoup parse; a growable lexicon of example tokens seeds each category.
 - **Fast-path distrust guard** (`scrapers/html_scraper.py` — `_fast_path_sane()`) — after a reused parser passes both gates, the guard runs lightweight structural checks: (1) is `availability_raw` a JSON blob? (2) does the page carry a visible promotion signal (discount or membership) that the parser failed to capture (neither `list_price` nor `membership_price` returned)? If suspicious → the parser is skipped and the repair ladder self-heals to a better `vN+1` parser. Uses the same `detect_promotion` detector (no duplicate parsing).
-- **Gate 2 structural price rules** (`validation/gate2.py` — `_structural_price_rule()`) — route-agnostic: `list_price == price` → fault (price duplicated); `membership_price == price` → fault. Catches both Alivio and Peroni mis-mappings regardless of whether the parser came from the fast path or repair.
+- **Gate 2 structural price rules** (`validation/gate2.py` — `_structural_price_rule()`) — route-agnostic: `list_price <= price` and `membership_price >= price` are faults. Catches duplicate and inverted Alivio/Peroni-style mappings regardless of whether the parser came from the fast path or repair.
 - **Prompt rewrite** (`repair/prompts.py`) — demotes `validForMemberTier` from an imperative "→ `membership_price` — use it" to "a **corroborating hint only**; the visible price presentation is authoritative and overrides it." Renders a new `[PROMOTION SIGNAL]` section in the PriceContext bundle showing the structural classification. SCHEMA_HINT updated: `membership_price` now mentions "VISIBLY SHOWS membership gating", `availability_raw` warns "NEVER return the raw JSON-LD."
 
 **Verification**: `verify_m15.py` — 44 offline checks (Tier 1: promotion signal detection on Alivio/Peroni/standard, including negation-proof; Tier 2: availability normalization including blob→label, token recovery, model_validator wiring; Tier 3: gate2 structural rules including list==price, member==price, valid discount/membership, feasible_check wiring; Tier 4: fast-path guard on blob availability / missed-promotion / correct-extraction / standard-page; Tier 5: prompt rendering — PROMOTION SIGNAL section, old "use it" text absent, new principles present).
@@ -216,7 +217,7 @@ Key aspects:
 | `verify_m9_output.log` | Latest run — 20 checks, 0 failed | — |
 | `verify_m10.py` | M10 — escalation writing (parser_broken / api_malformed / infra_failure), signature dedup, mass_invalid_target thresholds, INFRA ALERT log | offline |
 | `verify_m10_output.log` | Latest run — 14 checks, 0 failed | — |
-| `verify_m11.py` | M11 — cold start CLI end-to-end: fetch → LLM gen → user confirm (y/n/q) → seed parser + goldens | **real Qwen** |
+| `verify_m11.py` | M11 — cold start CLI end-to-end: fetch → configured LLM gen → user review → seed parser + goldens | **real configured cold-start LLM** |
 | `verify_m11_output.log` | Latest run — 15 checks, 0 failed | — |
 | `verify_m12.py` | M12 — End-to-end live scraping (per-site batch from `tesco_test.xlsx.xlsx` / `argos_test.xlsx.xlsx`, concurrent, real BrightData + Qwen) | **real BrightData + Qwen** |
 | `verify_m12_output.log` | Latest tesco run — 6 checks, 0 failed | — |
@@ -228,12 +229,16 @@ Key aspects:
 | `verify_m15.py` | M15 — Promotion signal detection (structural, site-agnostic), availability_raw normalization (schema.org token recovery), gate2 structural price rules, fast-path distrust guard, prompt rewrite (visual-value-bar-first) | offline |
 | `verify_m15_output.log` | Latest run — 44 checks, 0 failed | — |
 | `verify_m17.py` | M17 — Excel input contract, config policy, declared buckets, caps/URL dedup, provenance migration, dry-run/apply pruning | offline |
-| `verify_m17_output.log` | Latest run — 40 checks, 0 failed | — |
+| `verify_m17_output.log` | Latest run — 39 checks, 0 failed | — |
 | `verify_m17_live_output.log` | Bounded live smoke: round 1 exposed invalid BD token + hard-coded Qwen model; after fixes, round 2 used exactly 4 BD + 1 Qwen calls with zero retries — BD 4/4 HTTP 200, Qwen parser generated, 3/4 rows passed gates | **real BrightData + Qwen** |
-| `verify_m18.py` | M18 — provider resolution, dynamic dotenv key lookup, unified client args, thinking toggles, and call-site model forwarding | offline |
-| `verify_m18_output.log` | Latest run — 24 checks, 0 failed | — |
+| `verify_m18.py` | M18 — provider resolution, dynamic dotenv key lookup, unified client args, output-cap delivery, thinking toggles, and call-site model forwarding | offline |
+| `verify_m18_output.log` | Latest run — 30 checks, 0 failed | — |
+| `verify_m19.py` | M19 — cold-start all-pass gate, structured feedback repair loop, review reuse/panel, stale-golden control, and HTML snapshot reuse | offline |
+| `verify_m19_output.log` | Latest run — 38 checks, 0 failed | — |
+| `verify_m20.py` | M20 — canonical standard/discounted/membership price contract, Gate 2 ordering, prompt wording, and cold-start clear-value feedback | offline |
+| `verify_m20_output.log` | Latest run — 15 checks, 0 failed | — |
 
-**Total: 330+ checks passed across all milestones (through M15: 266+; M17: 40; M18: 24). M12 adds live end-to-end validation. M13 proves the duplicate-trigger bug is fixed. M14 adds price-aware context feeding. M15 adds data-quality gates. M17 adds the validated Excel cold-start contract and capped, provenance-aware golden lifecycle. M18 adds provider-aware LLM clients.**
+**Total: 385+ checks passed across all milestones. M18 adds output-cap delivery checks; M19 adds 38 fully offline checks for the cold-start repair/review lifecycle, ladder fall-through on an unusable node reply, and golden snapshot reuse; M20 adds 15 offline price-contract checks.**
 
 ## How to re-run
 
@@ -254,6 +259,8 @@ python -m src.scraping.tests.verify_m14  | tee src/scraping/tests/verify_m14_out
 python -m src.scraping.tests.verify_m15  | tee src/scraping/tests/verify_m15_output.log
 python -m src.scraping.tests.verify_m17  | tee src/scraping/tests/verify_m17_output.log
 python -m src.scraping.tests.verify_m18  | tee src/scraping/tests/verify_m18_output.log
+python -m src.scraping.tests.verify_m19  | tee src/scraping/tests/verify_m19_output.log
+python -m src.scraping.tests.verify_m20  | tee src/scraping/tests/verify_m20_output.log
 ```
 
 On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTHONIOENCODING="utf-8"`) so `->` and similar ASCII arrows don't crash cp1252.
@@ -270,20 +277,24 @@ On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTH
 | M8 | Repair agent + JSON healer (real Qwen) | **real** | offline |
 | M9 | Golden set + promote/prune | offline | offline |
 | M10 | Escalation writing, signature dedup, mass_invalid_target | offline | offline |
-| M11 | Cold start CLI (real Qwen) | **real** | offline |
+| M11 | Cold start CLI (configured cold-start provider) | **real** | offline |
 | M12 | End-to-end live scraping | **real** | **real** |
 | M13 | Amazon/Tesco DCA polling fix (no duplicate triggers) | offline | offline |
 | M14 | Price-aware pre-pass + anchoring + prompt rewrite + membership golden bucket + API membership mapping | offline (Tier 1+2); real Qwen (Tier 3) | offline |
 | M15 | Promotion detection + availability normalization + gate2 structural rules + fast-path distrust guard + prompt rewrite (visual-value-bar-first) | offline | offline |
 | M16 | UTF-8 mojibake resilience (extraction choke point) + anchoring hardening (cross-source corroboration, buy-box container) + promotion container scored selection + robust-extraction prompt | offline (M14+M15 re-run on fixed fixtures) | offline |
+| M17 | Validated Excel cold-start contract + capped/provenance-aware goldens | offline | offline |
+| M18 | Provider-aware Qwen/DeepSeek client registry | offline | offline |
+| M19 | Cold-start repair loop, all-pass gate, review panel/reuse, stale-golden control, HTML cache | offline | offline |
+| M20 | Canonical price-field contract, strict ordering Gate 2, prompt and cold-start feedback normalization | offline | offline |
 
-**Total: 266+ checks passed across all milestones (M1–M14: 222; M15: 44; M16 verified by re-running M14+M15 on fixed fixtures, 0 failures).**
+**Total: 385+ checks passed across all milestones.**
 
 ## LLM-dependent tests
 
-**verify_m8** and **verify_m11** hit the real Qwen API (per user decision — see plan file). Requirements:
-- `QWEN_KEY` set in `.env` (loaded automatically via `python-dotenv`).
-- Small cost per full run: ~$0.01-0.05 across a handful of `qwen-3.7-plus` requests.
+**verify_m8** hits real Qwen; **verify_m11** uses the provider selected by `cold_start_model_ladder` (DeepSeek by default). Requirements:
+- The selected provider key (`QWEN_KEY` or `DEEPSEEK_KEY`) is set in `.env`.
+- Small API cost per full run.
 - **LLM output varies**: parser code generated on the same HTML can differ between runs. The verify scripts test *machinery* (ladder progresses, phrases backfill, D25 red line, coldstart seeds correctly), not exact parser code output. A rerun that produces a slightly worse parser may show more `[SKIP]` outputs but should not `[FAIL]`.
 
 ## Reading the log

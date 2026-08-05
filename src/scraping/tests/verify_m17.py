@@ -260,15 +260,15 @@ async def verify_coldstart_and_runtime() -> None:
 
     set_test_config(
         qwen_key="offline-test-key",
-        repair_model_ladder=["configured-coldstart-model"],
-        repair_temperature_ladder=[0.1],
+        cold_start_model_ladder=["configured-coldstart-model"],
+        cold_start_temperature_ladder=[0.1],
     )
     with patch("langchain_openai.ChatOpenAI", new=FakeChatOpenAI):
         generated = await _gen_initial_parser(
             "tesco", "<html><h1>Product</h1><span>£12.34</span></html>"
         )
     check(
-        "cold start uses configured first repair model",
+        "cold start uses configured first cold-start model",
         generated == FIXED_PARSER
         and captured_llm_args.get("model") == "configured-coldstart-model",
         str(captured_llm_args.get("model")),
@@ -299,11 +299,19 @@ async def verify_coldstart_and_runtime() -> None:
         ColdStartRow("out_of_stock", "https://example/o", 4),
         ColdStartRow("membership", "https://example/m", 5),
     ]
-    result, output, _ = await run_coldstart_with_answers(required_rows, ["y", "y", "y", "n"])
-    check("mandatory rejection reports shortfall", result["coverage_shortfall"] == ["membership"], str(result))
-    check("accepted data still seeded", result["seeded_goldens"] == 3)
-    check("shortfall returns exit code 2", _result_exit_code(result) == 2)
-    check("warning block emitted", "WARNING" in output and "membership" in output)
+    result, output, _ = await run_coldstart_with_answers(
+        required_rows,
+        ["y", "y", "y", "n", "", "", "n"],
+    )
+    check(
+        "blocked persistence leaves all mandatory buckets short",
+        result["coverage_shortfall"]
+        == ["standard", "out_of_stock", "discounted", "membership"],
+        str(result),
+    )
+    check("rejection blocks all seeding", result["seeded_goldens"] == 0)
+    check("rejection returns exit code 1", _result_exit_code(result) == 1)
+    check("failure block emitted", "Parser NOT saved" in output and "membership" in output)
 
     section("M17.4 - runtime cap and URL dedup")
     reset_site()

@@ -16,46 +16,47 @@ def register_feasible_rule(site: str, rule: FeasibleRule) -> None:
 def _structural_price_rule(data: ProductData) -> str | None:
     """Reject price-field assignments that are structurally impossible.
 
-    A parser that copies the same value into both price and list_price (or both
-    price and membership_price) has confused the two — there is no real discount
-    or membership price.  Rejecting it here (route-agnostic) causes the fast path
-    to fall through to the repair ladder, and prevents a golden promotion that
-    would lock the bug in.
+    Price fields have distinct customer-context meanings:
+    - ``price`` is the ordinary non-member current price;
+    - ``list_price`` is a higher Was/RRP reference price;
+    - ``membership_price`` is a lower, membership-gated price.
+
+    Rejecting impossible orderings here (route-agnostic) causes the fast path to
+    fall through to the repair ladder, and prevents a golden promotion that
+    would lock a semantic mapping error in.
     """
     if data.price is not None:
-        if data.list_price is not None and data.list_price == data.price:
+        if data.list_price is not None and data.list_price <= data.price:
             return (
-                "list_price equals price — price is duplicated into list_price; "
-                "no real discount present"
+                "list_price must be greater than price — list_price is only a "
+                "higher Was/RRP reference price, not the current/member price"
             )
-        if data.membership_price is not None and data.membership_price == data.price:
+        if (
+            data.membership_price is not None
+            and data.membership_price >= data.price
+        ):
             return (
-                "membership_price equals price — price is duplicated into "
-                "membership_price; no real membership price present"
+                "membership_price must be lower than price — membership_price "
+                "is a gated discount, not the ordinary price"
             )
+    if data.membership_price is not None and data.membership_price <= 0:
+        return "membership_price must be positive when present"
     return None
 
 
 def _core_price_rule(data: ProductData) -> str | None:
-    """in_stock=True must be paired with a positive price signal (D13).
+    """Require the ordinary current price for every in-stock product (D13).
 
-    Accepts price, list_price, OR membership_price (any one > 0 qualifies).
-    A parser that correctly extracts list_price or membership_price but misses
-    the current-price DOM node should still pass — we never silently reassign
-    to price (on discount pages that would record the wrong value as current).
-    The gate merely checks that *some* positive price exists.
-
-    Still rejects:
-      - All three None
-      - A hallucinated 0.0 even when another field carries a real value
+    ``list_price`` and ``membership_price`` qualify the ordinary price; neither
+    replaces it. This gives every in-stock product one stable comparable price,
+    and keeps the page-type combinations unambiguous:
+    standard = price; discounted = price + list_price; membership = price +
+    membership_price (+ optional list_price).
     """
     if not data.in_stock:
         return None
-    has_price = data.price is not None and data.price > 0
-    has_list = data.list_price is not None and data.list_price > 0
-    has_member = data.membership_price is not None and data.membership_price > 0
-    if not (has_price or has_list or has_member):
-        return "in_stock=True but no positive price, list_price, or membership_price"
+    if data.price is None or data.price <= 0:
+        return "in_stock=True but price must be a positive ordinary customer price"
     return None
 
 

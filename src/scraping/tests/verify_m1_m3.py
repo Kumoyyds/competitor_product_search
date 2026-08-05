@@ -69,10 +69,10 @@ def verify_m1() -> None:
     check("Gate 2 error message mentions price",
           errs2 and "price" in errs2[0].lower(), str(errs2))
 
-    # in_stock=True + only membership_price > 0 -> passes Gate 2
+    # in_stock=True + only membership_price > 0 -> price is still required
     pd5, errs5 = validate({**base, "price": None, "membership_price": Decimal("14.99")})
-    check("in_stock=True + only membership_price > 0 -> passes Gate 2",
-          pd5 is not None and not errs5, str(errs5))
+    check("in_stock=True + only membership_price -> Gate 2 requires price",
+          pd5 is None and errs5 and "price" in errs5[0].lower(), str(errs5))
 
     # in_stock=False + no images + membership_price present -> passes (product signal)
     pd6, errs6 = validate({

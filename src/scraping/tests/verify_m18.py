@@ -166,11 +166,11 @@ def verify_client_factory() -> None:
     )
     check(
         "DeepSeek ordinary node disables default thinking",
-        plain_args.get("extra_body") == {"thinking": {"type": "disabled"}},
+        plain_args.get("extra_body", {}).get("thinking") == {"type": "disabled"},
     )
     check(
         "DeepSeek last node enables thinking",
-        thinking_args.get("extra_body") == {"thinking": {"type": "enabled"}},
+        thinking_args.get("extra_body", {}).get("thinking") == {"type": "enabled"},
     )
     check(
         "Qwen uses its own thinking parameter",
@@ -179,6 +179,42 @@ def verify_client_factory() -> None:
     check(
         "legacy Qwen endpoint override remains compatible",
         qwen_args.get("base_url") == "https://qwen-compatible.example/v1",
+    )
+    # The cap must ride in extra_body: ChatOpenAI(max_tokens=...) is renamed to
+    # max_completion_tokens, which DeepSeek ignores.
+    check(
+        "registered output cap is sent as body max_tokens",
+        plain_args.get("extra_body", {}).get("max_tokens")
+        == PROVIDERS["deepseek"].max_output_tokens,
+        str(plain_args.get("extra_body")),
+    )
+    check(
+        "cap is not routed through the renamed langchain field",
+        "max_tokens" not in plain_args,
+    )
+    check(
+        "provider without a registered cap sends no cap",
+        "max_tokens" not in (qwen_args.get("extra_body") or {}),
+    )
+
+    FakeChatOpenAI.calls.clear()
+    with (
+        patch("langchain_openai.ChatOpenAI", new=FakeChatOpenAI),
+        patch.object(ScrapingConfig, "api_key_for", return_value="deepseek-test-key"),
+    ):
+        make_chat_client("deepseek-v4-flash", max_tokens=4096, purpose="m18 cap")
+    check(
+        "explicit max_tokens overrides the registered cap",
+        FakeChatOpenAI.calls[0].get("extra_body", {}).get("max_tokens") == 4096,
+    )
+    check(
+        "overriding the cap preserves the provider thinking body",
+        FakeChatOpenAI.calls[0].get("extra_body", {}).get("thinking")
+        == {"type": "disabled"},
+    )
+    check(
+        "registered spec is not mutated by the override",
+        PROVIDERS["deepseek"].non_thinking_extra_body == {"thinking": {"type": "disabled"}},
     )
 
     with (

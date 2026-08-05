@@ -32,22 +32,22 @@ Legal page_type values: standard, out_of_stock, discounted, multipack, membershi
 ========================================================================
 M17.3 - cold-start caps, declared buckets, and shortfalls
 ========================================================================
-  [PASS] cold start uses configured first repair model  (configured-coldstart-model)
+  [PASS] cold start uses configured first cold-start model  (configured-coldstart-model)
   [PASS] cap seeds only three goldens  ({'parser_id': 1, 'seeded_goldens': 3, 'accepted': 3, 'aborted': False, 'coverage_shortfall': ['out_of_stock', 'discounted', 'membership']})
   [PASS] spares skipped without prompting  (3)
   [PASS] spare message emitted
   [PASS] declared bucket wins
   [PASS] mismatch warning shown
   [PASS] cold-start provenance stored
-  [PASS] mandatory rejection reports shortfall  ({'parser_id': 3, 'seeded_goldens': 3, 'accepted': 3, 'aborted': False, 'coverage_shortfall': ['membership']})
-  [PASS] accepted data still seeded
-  [PASS] shortfall returns exit code 2
-  [PASS] warning block emitted
+  [PASS] blocked persistence leaves all mandatory buckets short  ({'parser_id': None, 'seeded_goldens': 0, 'accepted': 3, 'aborted': True, 'coverage_shortfall': ['standard', 'out_of_stock', 'discounted', 'membership']})
+  [PASS] rejection blocks all seeding
+  [PASS] rejection returns exit code 1
+  [PASS] failure block emitted
 
 ========================================================================
 M17.4 - runtime cap and URL dedup
 ========================================================================
-  [PASS] three distinct runtime URLs seeded  ([8, 9, 10, None])
+  [PASS] three distinct runtime URLs seeded  ([5, 6, 7, None])
   [PASS] fourth URL blocked by cap
   [PASS] repeat URL blocked before cap
 
@@ -57,7 +57,7 @@ M17.5 - prune ordering and schema guard
   [PASS] dry run chooses stale then oldest auto
   [PASS] dry run deletes nothing
   [PASS] apply deletes planned rows
-  [PASS] human and newest auto survive  ({14, 15})
+  [PASS] human and newest auto survive  ({11, 12})
   [PASS] schema guard adds provenance column
   [PASS] legacy rows backfilled as auto
   [PASS] schema guard is idempotent

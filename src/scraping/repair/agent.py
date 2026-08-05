@@ -98,13 +98,13 @@ RepairOutcome = Union[NoProductVerdict, SourceAbsent, CandidateFailed, Candidate
 def summarize_capture(output: dict[str, Any]) -> dict[str, Any]:
     """Compute which ProductData fields a parser output captured/missed.
 
-    Uses the current gate2 semantics (price OR list_price satisfies in_stock).
+    Uses the current gate2 semantics (every in-stock product needs price).
     Feeds into the next attempt's prompt so the LLM sees exactly what to fix.
     """
     required = ["title", "in_stock"]
     if output.get("in_stock") is True:
-        if not (output.get("price") or output.get("list_price") or output.get("membership_price")):
-            required.append("price_or_list_price_or_membership_price")
+        if not output.get("price"):
+            required.append("price")
     optional = [
         "brand", "gtin", "image_urls", "currency", "list_price",
         "membership_price", "unit_price", "unit", "availability_raw", "variant",

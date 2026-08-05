@@ -1,9 +1,9 @@
 
 ======================================================================
-M11.1 - _read_urls parses text file
+M11.1 - read_coldstart_input parses Excel file
 ======================================================================
-  [PASS] comment stripped
-  [PASS] 2 URLs read (blanks/comments skipped)  (['https://www.argos.co.uk/product/1', 'https://www.argos.co.uk/product/2'])
+  [PASS] 4 rows read  ([ColdStartRow(page_type='standard', url='https://www.argos.co.uk/product/1', row_no=2), ColdStartRow(page_type='out_of_stock', url='https://www.argos.co.uk/product/2', row_no=3), ColdStartRow(page_type='discounted', url='https://www.argos.co.uk/product/3', row_no=4), ColdStartRow(page_type='membership', url='https://www.argos.co.uk/product/4', row_no=5)])
+  [PASS] declared page types retained
 
 ======================================================================
 M11.2 - _pick_representative_html picks largest OK HTML
@@ -16,37 +16,60 @@ M11.3 - Cold start with 'y y' accepts both URLs
 ======================================================================
 
 == Cold start for site 'argos' ==
-Fetching 2 URLs via ArgosScraper...
-Fetched 2 pages (2 OK).
+Resolving 2 URLs via golden cache / ArgosScraper...
+  [brightdata] https://www.argos.co.uk/product/3284476
+  [brightdata] https://www.argos.co.uk/product/8747437
+Resolved 2 pages (2 OK).
 
-Generating first-version parser via LLM...
+Generating first-version parser via deepseek-v4-flash...
 
-Running parser against all fetched HTMLs (sandbox)...
+Running parser against all resolved HTMLs (sandbox)...
 
-2 candidates for review.
+2 cold-start cases for review.
 
 
 [1/2] https://www.argos.co.uk/product/3284476
+  declared page_type = standard
+  !! MISMATCH: extracted fields look like 'out_of_stock', not declared 'standard'
   Extracted:
-    title        = Forest Pressure Treated Wooden Shed Base - 6 x 3ft
-    brand        = Forest Garden
-    price        = 52.20
-    currency     = GBP
-    list_price   = None
-    in_stock     = False
-    gtin         = 5013050000000
+    title              = Grand Theft Auto VI Xbox Series X & S Game Pre-Order
+    brand              = Grand Theft Auto VI
+    gtin               = 5026555370073
+    image_urls         = 11 项 (https://media.4rgos.it/i/Argos/8747437_R_Z001A)
+    variant            = —
+    price              = 69.99
+    currency           = GBP
+    list_price         = —
+    membership_price   = —
+    unit_price         = —
+    unit               = —
+    in_stock           = False
+    availability_raw   = Out of stock
   → accepted
 
 [2/2] https://www.argos.co.uk/product/8747437
+  declared page_type = standard
+  !! MISMATCH: extracted fields look like 'out_of_stock', not declared 'standard'
   Extracted:
-    title        = Grand Theft Auto VI Xbox Series X & S Game Pre-Order
-    brand        = Grand Theft Auto VI
-    price        = 69.99
-    currency     = GBP
-    list_price   = None
-    in_stock     = False
-    gtin         = 5026555370073
+    title              = Forest Pressure Treated Wooden Shed Base - 6 x 3ft
+    brand              = Forest Garden
+    gtin               = 5013050000000
+    image_urls         = 4 项 (https://media.4rgos.it/i/Argos/3284476_R_Z001A)
+    variant            = —
+    price              = 52.20
+    currency           = GBP
+    list_price         = 58.00
+    membership_price   = —
+    unit_price         = —
+    unit               = —
+    in_stock           = False
+    availability_raw   = Pre-order Games
   → accepted
+
+WARNING: mandatory golden coverage is still incomplete:
+  - out_of_stock: needs >= 1, has 0
+  - discounted: needs >= 1, has 0
+  - membership: needs >= 1, has 0
 
 == Cold start complete ==
   parser_id     = 1
@@ -56,76 +79,109 @@ Running parser against all fetched HTMLs (sandbox)...
   [PASS] accepted count = 2  (2)
   [PASS] not aborted
   [PASS] parser row in DB (created_by=initial)  ([(1, 'initial')])
-  [PASS] goldens present in coverage  ({'out_of_stock': 2})
+  [PASS] goldens present in coverage  ({'standard': 2})
 
 ======================================================================
 M11.4 - Cold start with 'q' aborts review loop
 ======================================================================
 
 == Cold start for site 'argos' ==
-Fetching 2 URLs via ArgosScraper...
-Fetched 2 pages (2 OK).
+Resolving 2 URLs via golden cache / ArgosScraper...
+  [brightdata] https://www.argos.co.uk/product/3284476
+  [brightdata] https://www.argos.co.uk/product/8747437
+Resolved 2 pages (2 OK).
 
-Generating first-version parser via LLM...
+Generating first-version parser via deepseek-v4-flash...
 
-Running parser against all fetched HTMLs (sandbox)...
+Running parser against all resolved HTMLs (sandbox)...
 
-2 candidates for review.
+2 cold-start cases for review.
 
 
 [1/2] https://www.argos.co.uk/product/3284476
-  ERROR: ['in_stock=True but price is missing'] — marking skipped
-
-[2/2] https://www.argos.co.uk/product/8747437
-  ERROR: ['in_stock=True but price is missing'] — marking skipped
-
-No confirmations — nothing seeded.
+  declared page_type = standard
+  !! MISMATCH: extracted fields look like 'out_of_stock', not declared 'standard'
+  Extracted:
+    title              = Grand Theft Auto VI Xbox Series X & S Game Pre-Order
+    brand              = Grand Theft Auto VI
+    gtin               = 5026555370073
+    image_urls         = 11 项 (https://media.4rgos.it/i/Argos/8747437_R_Z001A)
+    variant            = —
+    price              = 69.99
+    currency           = GBP
+    list_price         = —
+    membership_price   = —
+    unit_price         = —
+    unit               = —
+    in_stock           = False
+    availability_raw   = Out of stock
+  Aborting review loop.
   [PASS] q aborts: no parser seeded  (id=None)
   [PASS] q aborts: no goldens seeded  (0)
 
 ======================================================================
-M11.5 - Cold start with 'n y': one accepted, one skipped
+M11.5 - Cold start rejection blocks all persistence
 ======================================================================
 
 == Cold start for site 'argos' ==
-Fetching 2 URLs via ArgosScraper...
-Fetched 2 pages (2 OK).
+Resolving 2 URLs via golden cache / ArgosScraper...
+  [brightdata] https://www.argos.co.uk/product/3284476
+  [brightdata] https://www.argos.co.uk/product/8747437
+Resolved 2 pages (2 OK).
 
-Generating first-version parser via LLM...
+Generating first-version parser via deepseek-v4-flash...
 
-Running parser against all fetched HTMLs (sandbox)...
+Running parser against all resolved HTMLs (sandbox)...
 
-2 candidates for review.
+2 cold-start cases for review.
 
 
 [1/2] https://www.argos.co.uk/product/3284476
+  declared page_type = standard
+  !! MISMATCH: extracted fields look like 'out_of_stock', not declared 'standard'
   Extracted:
-    title        = Forest Pressure Treated Wooden Shed Base - 6 x 3ft
-    brand        = Forest Garden
-    price        = 52.20
-    currency     = GBP
-    list_price   = None
-    in_stock     = False
-    gtin         = 5013050000000
-  → skipped
+    title              = Grand Theft Auto VI Xbox Series X & S Game Pre-Order
+    brand              = Grand Theft Auto VI
+    gtin               = 5026555370073
+    image_urls         = 11 项 (https://media.4rgos.it/i/Argos/8747437_R_Z001A)
+    variant            = —
+    price              = 69.99
+    currency           = GBP
+    list_price         = —
+    membership_price   = —
+    unit_price         = —
+    unit               = —
+    in_stock           = False
+    availability_raw   = Out of stock
+  Which fields are wrong?
+    1.title  2.brand  3.gtin  4.image_urls  5.variant  6.price  7.currency  8.list_price  9.membership_price  10.unit_price  11.unit  12.in_stock  13.availability_raw
+  → rejected
 
 [2/2] https://www.argos.co.uk/product/8747437
+  declared page_type = standard
+  !! MISMATCH: extracted fields look like 'out_of_stock', not declared 'standard'
   Extracted:
-    title        = Grand Theft Auto VI Xbox Series X & S Game Pre-Order
-    brand        = Grand Theft Auto VI
-    price        = 69.99
-    currency     = GBP
-    list_price   = None
-    in_stock     = False
-    gtin         = 5026555370073
+    title              = Forest Pressure Treated Wooden Shed Base - 6 x 3ft
+    brand              = Forest Garden
+    gtin               = 5013050000000
+    image_urls         = 4 项 (https://media.4rgos.it/i/Argos/3284476_R_Z001A)
+    variant            = —
+    price              = 52.20
+    currency           = GBP
+    list_price         = 58.00
+    membership_price   = —
+    unit_price         = —
+    unit               = —
+    in_stock           = False
+    availability_raw   = Pre-order Games
   → accepted
 
-== Cold start complete ==
-  parser_id     = 2
-  goldens seeded = 1
-  [PASS] parser_id created
+Parser NOT saved — 1 cold-start case(s) did not pass:
+  [REJECTED]     https://www.argos.co.uk/product/3284476 (standard)  wrong: unspecified
+Parser was not saved.
+  [PASS] parser_id not created
   [PASS] only 1 accepted  (1)
-  [PASS] only 1 golden seeded  (1)
+  [PASS] no goldens seeded  (0)
 
 ======================================================================
 SUMMARY: 15 passed, 0 failed, 0 skipped

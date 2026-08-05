@@ -1,4 +1,3 @@
-DEEPSEEK_KEY not set -- cannot invoke provider=deepseek for missing-key check
 
 ======================================================================
 M18.1 - provider resolution
@@ -30,6 +29,12 @@ M18.3 - unified client factory
   [PASS] DeepSeek last node enables thinking
   [PASS] Qwen uses its own thinking parameter
   [PASS] legacy Qwen endpoint override remains compatible
+  [PASS] registered output cap is sent as body max_tokens  ({'thinking': {'type': 'disabled'}, 'max_tokens': 32768})
+  [PASS] cap is not routed through the renamed langchain field
+  [PASS] provider without a registered cap sends no cap
+  [PASS] explicit max_tokens overrides the registered cap
+  [PASS] overriding the cap preserves the provider thinking body
+  [PASS] registered spec is not mutated by the override
   [PASS] missing provider key degrades to None
 
 ======================================================================
@@ -41,5 +46,5 @@ M18.4 - all call sites use configured models
   [PASS] JSON healer uses ladder first model  (configured-first-model)
 
 ======================================================================
-SUMMARY: 24 passed, 0 failed
+SUMMARY: 30 passed, 0 failed
 ======================================================================

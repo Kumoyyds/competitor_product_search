@@ -2,7 +2,7 @@
 
 Extracts structured product data from marketplace pages. Given a `(url, site)` pair, it returns a validated `ProductData` object with title, price, list_price, membership_price, stock, images, brand, etc. — or explains cleanly why it couldn't.
 
-> **Status**: Phase 0 complete. M1–M18 implemented. 328+ checks, 0 failures. M12: end-to-end live-scraping (Tesco+Argos). M13: DCA polling fix. M14: price-aware pre-pass. M15: data-quality gates. M16: UTF-8 mojibake resilience + anchoring hardening. M17: validated Excel cold start + capped golden lifecycle. M18: provider-aware LLM registry (Qwen + DeepSeek). See [tests/](tests/).
+> **Status**: Phase 0 complete. M1–M20 implemented. M20 defines the canonical price-field contract: standard = `price`; discounted = `price + list_price`; membership = `price + membership_price` (+ optional RRP). See [tests/](tests/).
 
 ## What it does
 
@@ -69,12 +69,12 @@ Under the hood:
 
 - **Invalid-target detection** — before parsing, checks JSON-LD, HTTP status, structural absence, page length, and a learned phrase list. Delisted / error pages are caught before wasting a parse.
 - **Ordered parser list** — each site has multiple parsers ranked by real-time hit rate. First to pass both gates wins.
-- **Two gates** — Gate 1 = Pydantic types. Gate 2 = `feasible_check`: rejects `in_stock=True` with no price, hallucinated zero prices, and out-of-stock items with zero product signals.
+- **Two gates** — Gate 1 = Pydantic types. Gate 2 = `feasible_check`: every in-stock product needs a positive ordinary `price`; `list_price > price` and `membership_price < price` when those fields are present; out-of-stock items still need a product signal.
 - **Trigger/poll split (M13)** — for async BD APIs (Datasets/DCA): `_trigger()` is wrapped in retry (safe — failed POST → no snapshot), `_poll()` owns the full budget and **never re-triggers**. One URL → at most one BD snapshot. Configurable poll budget via `bd_async_poll_max_seconds` (300s default). The old blind-re-trigger-on-timeout bug for Amazon is fixed.
 - **Self-healing** — when all parsers fail, a provider-configured LLM generates a candidate, sandboxes it, tests against golden samples, and promotes it if it passes. API routes use JSON remapping only (D25 red line — never fabricates).
 - **Fallback ladder** — a site can register multiple scrapers (e.g. Tesco = HTML primary + DCA backup). Terminal failure → next scraper; all exhausted → escalation ticket (`parser_broken / api_malformed / infra_failure / mass_invalid_target`).
 - **Golden set** — successful scrapes grow each page-type bucket to the config-driven cap (3 by default), with duplicate-URL protection. Five buckets (precedence order): `out_of_stock` > `membership` > `discounted` > `multipack` > `standard`. Future promotions must reproduce all goldens exactly.
-- **Cold start** — a validated Excel sheet declares each URL's page type; required coverage is checked before any paid fetch, then the LLM-generated parser and human-confirmed goldens are seeded.
+- **Cold start** — a validated Excel sheet declares each URL's page type; required coverage is checked before paid work. The dedicated cold-start model ladder generates and repairs one parser from sandbox failures plus structured human corrections. The parser and confirmed goldens are written only when every fetched, in-scope case passes; fetch failures remain non-blocking and are reported separately.
 
 ## Quick start
 
@@ -93,11 +93,12 @@ pip install -r requirements.txt
 Copy `.env.sample` to `.env` and fill in:
 
 ```
-BRIGHT_DATA_KEY  = your Bright Data API key
-QWEN_KEY        = your Qwen API key (used by both search and scraping)
+BRIGHT_DATA_KEY = your Bright Data API key
+QWEN_KEY        = your Qwen API key (runtime repair + JSON healing by default)
+DEEPSEEK_KEY    = your DeepSeek API key (cold start by default)
 ```
 
-BrightData is used for extraction (Web Unlocker for HTML, Datasets API for Amazon). Qwen is used for the repair Agent and cold start.
+BrightData is used for extraction (Web Unlocker for HTML, Datasets API for Amazon). Runtime repair defaults to Qwen; cold start has its own ladder and defaults to DeepSeek V4 Flash → Pro.
 
 ### 3. Scrape a URL
 
@@ -126,17 +127,19 @@ If you want to add a site that isn't yet in the parser table:
 # 2. Register an HTMLScraper subclass in scrapers/sites/
 # 3. Run cold start with a representative Excel input
 python -m src.scraping.coldstart --site newsite --input newsite.xlsx
+# Ignore reusable non-stale golden snapshots when a fresh fetch is required:
+python -m src.scraping.coldstart --site newsite --input newsite.xlsx --force-fetch
 ```
 
 The first row must contain `page_type` and `url` (case-insensitive; extra columns are ignored). Legal page types are `standard`, `discounted`, `out_of_stock`, `membership`, and `multipack`. By default the first four are mandatory and `multipack` is optional. Multiple rows per type are useful as spares: once a bucket reaches its cap, remaining rows are skipped without another prompt.
 
-The CLI validates coverage before spending Bright Data/Qwen calls, then prompts interactively (`y` / `n` / `q`) for each usable extraction:
+The CLI validates coverage before paid calls, reuses matching non-stale golden HTML snapshots when possible, and then prompts interactively (`y` / `n` / `q`) for each usable extraction. The review panel derives its fields from `ProductData`, summarizes lists/long strings, and warns when a declared bucket's critical field is empty.
 
-- `y` — accept the row: it is seeded as a golden sample for the declared `page_type` (`created_by=coldstart`) and counts toward mandatory coverage
-- `n` — skip the row (the default; plain Enter skips too): nothing is seeded, review continues with the next row
-- `q` — abort the review loop: unreviewed rows are abandoned, but already-accepted rows are still seeded; the run exits with code `1`
+- `y` — accept this case for the current round
+- `n` — reject it, optionally identify incorrect fields, enter correct values, and add a free-text hint
+- `q` — abort the whole run without writing the parser or any goldens
 
-A declared/extracted type disagreement is shown as `MISMATCH`; accepting still stores the declared type. Exit codes are `0` for complete coverage, `1` for input/abort/no seed, and `2` when accepted rows were seeded but mandatory coverage remains incomplete.
+After the full review round, rejected/crashed cases can be sent to the next cold-start ladder node. Every node reruns every URL so a repair cannot silently regress an accepted case; unchanged accepted outputs are reused without prompting. A parser and all accepted goldens are committed together only after there are no parser crashes or human rejections. Fetch failures do not block persistence because the parser had no opportunity to prove itself, but can leave a coverage shortfall. A declared/extracted type disagreement is shown as `MISMATCH`; accepting still stores the declared type. Exit codes are `0` for complete coverage, `1` for input/abort/failed gate/no seed, and `2` for a successful seed with incomplete mandatory coverage.
 
 ## Module structure
 
@@ -272,8 +275,10 @@ All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (s
 
 | Setting | Default | Notes |
 |---------|---------|-------|
-| `repair_model_ladder` | `qwen3.7-plus` x2 | Provider-registered model per attempt; length = attempt count; cold start and JSON healing use the first model |
+| `repair_model_ladder` | `qwen3.7-plus` x2 | Runtime HTML repair models; JSON healing uses the first model |
 | `repair_temperature_ladder` | `0.1 → 0.4` | Parser-generation temperature per attempt (must match model ladder) |
+| `cold_start_model_ladder` | `deepseek-v4-flash → deepseek-v4-pro` | Node 0 generates; later nodes repair from accumulated review feedback |
+| `cold_start_temperature_ladder` | `0.1 → 0.4` | Must match the cold-start model ladder; final node enables thinking |
 | `bd_async_poll_max_seconds` | 300 | Wall-clock budget for Datasets/DCA snapshot polling (M13) |
 | `bd_async_poll_interval_seconds` | 4 | Sleep between Datasets/DCA poll GETs (M13) |
 | `json_heal_budget` | 1 | Single-shot for API route |
@@ -290,6 +295,8 @@ Override via env vars, for example:
 
 ```bash
 SCRAPING_REPAIR_MODEL_LADDER='["deepseek-v4-flash","deepseek-v4-pro"]'
+SCRAPING_COLD_START_MODEL_LADDER='["qwen3.7-plus","qwen3.7-plus"]'
+SCRAPING_COLD_START_TEMPERATURE_LADDER='[0.1,0.4]'
 SCRAPING_COLD_START_PAGE_REQUIRE_MANDATORY='{"multipack": false, "membership": false}'
 SCRAPING_GOLDEN_MAX_SAMPLES_PER_PAGE_TYPE=2
 ```
@@ -318,6 +325,9 @@ PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m6
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m7
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m8    # real Qwen
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m9
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m17
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m18
+PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m19
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m10
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m11   # real Qwen
 PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m12   # real BrightData + Qwen, per-site batch

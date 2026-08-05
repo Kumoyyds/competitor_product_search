@@ -1,6 +1,6 @@
 # Scraping Module
 
-**Status**: M1–M18 complete. Full Phase 0 lifecycle. M1–M15: 266+ offline checks pass. M12: end-to-end live-scraping (Tesco+Argos). M13: Amazon/Tesco DCA polling fix (trigger/poll split — no duplicate Bright Data triggers). M14: price-aware pre-pass + membership golden bucket + prompt rewrite (evidence-driven, site-agnostic). M15: data-quality gates — promotion detection (structural, visual-value-bar-first), availability normalization (schema.org token recovery), fast-path distrust guard (single-parser reuse → self-heal), gate2 structural price rules, prompt demoted `validForMemberTier` from imperative to corroborating hint. M16: UTF-8 mojibake resilience at extraction + anchoring/promotion hardening (cross-source corroboration, scored buy-box container, robust-extraction prompt). M17: validated Excel cold start and capped golden lifecycle. M18: provider-aware LLM registry (Qwen + DeepSeek). See `src/scraping/tests/`.
+**Status**: M1–M20 complete. Full Phase 0 lifecycle. M20: canonical price-field contract — standard = `price`; discounted = `price + list_price`; membership = `price + membership_price` (+ optional RRP), with Gate 2 ordering enforcement. See `src/scraping/tests/`.
 
 ## Responsibility
 
@@ -37,8 +37,9 @@ BaseScraper (ABC)
 
 - Gate 1: Pydantic type/structure validation (`price` optional at this layer)
 - Gate 2: `feasible_check` cross-field semantics:
-  - `in_stock=True + price=None` → fault (unless `list_price` OR `membership_price` is present and >0)
-  - `in_stock=True + price<=0` → fault (hallucinated zero from LLM default)
+  - `in_stock=True + price=None/<=0` → fault; `price` is always the ordinary non-member price
+  - `list_price` may be present only when `list_price > price` (higher Was/RRP)
+  - `membership_price` may be present only when `membership_price < price` (lower gated member price)
   - `in_stock=False + no_images + no_price + no_list_price + no_membership_price` → fault (likely an error/stub page, not a real out-of-stock product)
 
 ### Repair Ladder (§5.5)
@@ -62,7 +63,7 @@ When the ladder has 2 nodes, Turn B (source_absence) is skipped (attempt 1 is th
 - **Promotion signal detector (M15)**: `detect_promotion(soup)` classifies the main price container structurally (not site-hard-coded): struck/reference higher price with no membership gating → discount; gated membership/loyalty program badge or text → membership. Exposed on `PriceContext.promotion_signal` and rendered as `[PROMOTION SIGNAL]` in the prompt. Used by the fast-path distrust guard.
 - **Fast-path distrust guard (M15)**: After a reused parser passes both gates, `_fast_path_sane()` runs lightweight structural checks: (1) is `availability_raw` a JSON blob? (2) does the page carry a visible promotion signal the parser missed? If suspicious → the parser is skipped and the repair ladder self-heals to a better parser. Uses the same `detect_promotion` detector (no duplicate parsing).
 - **`availability_raw` normalizer (M15)**: `ProductData.@model_validator(mode="after")` recovers a schema.org availability token from anywhere inside a blob or derives from `in_stock`. Single choke point for both HTML and API routes — a parser can never surface a blob.
-- **Gate 2 structural price rules (M15)**: `_structural_price_rule()` rejects `list_price == price` and `membership_price == price` (route-agnostic). Prevents a parser from duplicating the same value into two price fields and slipping past gates.
+- **Gate 2 structural price rules (M20)**: `_structural_price_rule()` enforces `list_price > price > membership_price` where the respective fields are present (route-agnostic). Prevents duplicate, inverted, and non-positive membership-price mappings from slipping past gates.
 - **GoldenRejection**: `promote_candidate` returns which golden/field/expected/actual on mismatch, fed back into the next attempt's errors.
 
 ### BrightData extraction hardening (added after M12 findings)
@@ -125,7 +126,7 @@ src/scraping/
 ├── router.py               # Two-hop dispatch + fallback loop + escalation writer (M10)
 ├── registry.py             # @register_scraper decorator
 ├── hosts.yaml              # host → site mapping (edit here to add sites)
-├── coldstart.py            # CLI cold start (M11/M17: validated Excel + declared page types)
+├── coldstart.py            # CLI cold start (M11/M17/M19: validated Excel + review/repair loop + golden HTML reuse)
 ├── models/                 # ProductData (M15: availability_raw normalizer), enums, InvalidTargetResult
 ├── validation/             # gate1 (Pydantic), gate2 (feasible_check + M15 structural price rules)
 ├── scrapers/
@@ -146,7 +147,7 @@ src/scraping/
 ├── storage/
 │   ├── database.py         # 6 SQLite tables (golden_samples CHECK incl. membership since M14)
 │   └── ...                 # store classes (golden, parser, run, result, escalation, phrase)
-└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M18)
+└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M20)
 ```
 
 ## Milestone Status
@@ -163,7 +164,7 @@ src/scraping/
 | M8 | Agent repair ladder + JSON healer (real Qwen) | ✔ verify_m8.py |
 | M9 | Golden set + promote/prune | ✔ verify_m9.py |
 | M10 | Scraper-level fallback + escalation writing | ✔ verify_m10.py |
-| M11 | Cold start CLI (real Qwen) | ✔ verify_m11.py |
+| M11 | Cold start CLI (real configured cold-start provider) | ✔ verify_m11.py |
 | M12 | End-to-end live scraping (real BrightData + Qwen, 4-way concurrent, config-driven ladder) | ✔ verify_m12.py |
 | M13 | Datasets/DCA polling fix — trigger/poll split (no duplicate BD triggers) | ✔ verify_m13.py |
 | M14 | Price-aware pre-pass + anchoring + prompt rewrite (evidence-driven, site-agnostic) + membership golden bucket (5 types) + API membership mapping | ✔ verify_m14.py |
@@ -171,6 +172,8 @@ src/scraping/
 | M16 | UTF-8 mojibake resilience (extraction choke point) + anchoring hardening (cross-source value corroboration, buy-box container membership) + promotion container scored selection + robust-extraction prompt guidance | ✔ verify_m14.py + verify_m15.py (re-run on fixed fixtures) |
 | M17 | Validated Excel cold-start input + config-driven page-type requirements + global golden caps/URL dedup + provenance-aware dry-run pruning | ✔ verify_m17.py |
 | M18 | Provider-aware LLM registry + unified Qwen/DeepSeek client factory + dynamic dotenv key lookup | ✔ verify_m18.py |
+| M19 | Cold-start structured correction loop + all-pass persistence gate + full review panel + stale-golden control + HTML snapshot reuse | ✔ verify_m19.py |
+| M20 | Canonical price-field contract + Gate ordering rules + cold-start clear-value feedback | ✔ verify_m20.py |
 
 ## Public API
 
@@ -187,13 +190,14 @@ result = await scrape("https://www.argos.co.uk/product/3284476")
 python -m src.scraping.coldstart --site tesco --input src/scraping/data/cold_start/tesco.xlsx
 ```
 
-The workbook requires `page_type` + `url`. Mandatory coverage is validated before network spend. Interactive review shows declared type and any classifier mismatch; accepted rows seed the declared bucket with `created_by=coldstart`. Exit 2 means accepted data was seeded but mandatory coverage remains incomplete.
+The workbook requires `page_type` + `url`. Mandatory coverage is validated before network spend. Non-stale golden HTML for the same URL is reused unless `--force-fetch` is passed. Interactive review shows every non-tracing `ProductData` field plus declared-bucket warnings. A rejection collects structured field corrections and a free-text hint; after the full round the next cold-start model node repairs the current parser and all URLs are rerun. Unchanged prior acceptances are reused. Parser + goldens are written only when every fetched/in-scope case passes; extraction failures are non-blocking but can leave coverage incomplete (exit 2). Abort, rejection without continuation, or ladder exhaustion writes nothing (exit 1).
 
 ## Key Config (all in `ScrapingConfig`, spec §7)
 
 - `BRIGHT_DATA_KEY` / provider keys such as `QWEN_KEY` and `DEEPSEEK_KEY` — loaded from `.env`
 - `SCRAPING_DB_PATH` — SQLite path (default: `scraping.db`)
-- `repair_model_ladder` / `repair_temperature_ladder` — model + temperature per attempt (default: `["qwen3.7-plus", "qwen3.7-plus"]` / `[0.1, 0.4]`; lengths must match); models resolve through `providers.py`; cold start and JSON healing use the first configured model
+- `repair_model_ladder` / `repair_temperature_ladder` — runtime HTML-repair model + temperature per attempt (default: `["qwen3.7-plus", "qwen3.7-plus"]` / `[0.1, 0.4]`; lengths must match); JSON healing uses the first repair model
+- `cold_start_model_ladder` / `cold_start_temperature_ladder` — independent cold-start generation/repair ladder (default: `["deepseek-v4-flash", "deepseek-v4-pro"]` / `[0.1, 0.4]`; lengths must match); last node enables thinking
 - `bd_async_poll_max_seconds` / `bd_async_poll_interval_seconds` — Datasets/DCA poll budget (default: 300s / 4s; from M13 Amazon fix)
 - `json_heal_budget = 1`
 - `sandbox_timeout = 10s`, `sandbox_import_whitelist = [bs4, lxml, re, json]`
@@ -214,7 +218,15 @@ The workbook requires `page_type` + `url`. Mandatory coverage is validated befor
 - **BrightData Web Unlocker** — raw HTML (Tesco, Argos)
 - **BrightData Datasets API** — structured JSON (Amazon)
 - **BrightData DCA** — structured JSON (Tesco backup)
-- **Provider-aware repair LLM** — Qwen via DashScope by default; DeepSeek via its official OpenAI-compatible API. Add models/vendors only in `providers.py`, then set the provider key in `.env`.
+- **Provider-aware LLMs** — runtime repair defaults to Qwen via DashScope; cold start defaults to DeepSeek via its official OpenAI-compatible API. Add models/vendors only in `providers.py`, then set the selected provider key in `.env`.
+
+### Output cap (`ProviderSpec.max_output_tokens`)
+
+Parser generation emits the whole `parse()` source as a JSON-escaped string, so replies run long. Providers apply a small default when no cap is requested — DeepSeek uses 8192, which truncates the reply mid-JSON; because `providers.py` sets `response_format={"type": "json_object"}`, langchain takes the OpenAI SDK's `.parse()` path, which raises `LengthFinishReasonError` and **discards the partial content**. Cold start then had nothing to salvage and aborted the whole run.
+
+Each `ProviderSpec` therefore registers `max_output_tokens` (DeepSeek: 32768, well under its 384K ceiling); `None` keeps the provider default. `make_chat_client(..., max_tokens=N)` overrides per call.
+
+The cap is injected into `extra_body` as a body-level `max_tokens`, **not** passed as `ChatOpenAI(max_tokens=...)`: langchain rewrites that field to `max_completion_tokens`, which DeepSeek accepts and silently ignores (verified live — a 12-token cap truncated the reply as `max_tokens` and had no effect as `max_completion_tokens`). Anything raising a cap must keep using the body-level name.
 
 ## Verification Discipline (mandatory)
 
@@ -226,7 +238,28 @@ For each new milestone:
 3. **Update [tests/README.md](tests/README.md)** — add the new files to the table.
 4. **Prefer offline** — mock BrightData / LLM where possible. Real API only when strictly needed (e.g., LLM-generated parser correctness).
 
-See [tests/README.md](tests/README.md) for the full inventory (currently 266+ checks across 11 log files).
+See [tests/README.md](tests/README.md) for the full inventory (385+ checks, including 30 offline M18 checks, 38 offline M19 checks, and 15 offline M20 checks).
+
+## M19 — Cold-start correction and golden reuse
+
+- Cold start has an independent provider-aware model/temperature ladder. Node 0 generates the parser; later nodes receive the current code, accumulated human field corrections/hints, and sandbox/gate failures. The final node enables provider-specific thinking.
+- A node that returns no usable code (truncated reply, unparsable JSON) no longer aborts the run: there is nothing to repair, so the next node generates from scratch at its own model/temperature, and only the last node's failure is terminal. A node that fails *after* usable code exists keeps the previous code rather than discarding it.
+- Review is round-based. Every repair reruns every resolved URL; a previously accepted result is auto-accepted only when all golden-compared fields remain equal.
+- Persistence is atomic at workflow level: any parser/gate crash or human rejection blocks both parser and golden writes. Fetch failures are reported separately and do not blame/block the parser.
+- The review panel derives fields from `ProductData.model_fields`, excludes only tracing/debug fields, summarizes image lists and long strings, and flags empty page-type-critical fields.
+- Cold start reads same-URL HTML from non-stale `golden_samples` before BrightData. `--force-fetch` bypasses this cache. Resolution never writes unreviewed snapshots.
+- Golden rot detection is now real: when a candidate fails a golden, every active parser is sandboxed against that sample. If none reproduces the expectation (including the orphan-golden case), the golden is marked stale and does not reject the candidate.
+
+**Verification**: `verify_m19.py` — 38 offline checks covering the persistence gate, correction convergence/feedback, review reuse, model forwarding/thinking, ladder fall-through on an unusable node reply, panel rendering, stale-golden behavior, and snapshot cache/force-fetch semantics.
+
+## M20 — Canonical price-field contract
+
+- `price` is the ordinary, non-member current customer price. Every in-stock result must have a positive value.
+- `list_price` is only a separately displayed higher Was/RRP reference: normal discounted products use `price + list_price` and require `list_price > price`.
+- `membership_price` is only a visibly gated lower loyalty/member price: membership products use `price + membership_price` and require `membership_price < price`. A separate higher Was/RRP remains optional, producing `list_price > price > membership_price`.
+- Gate 2 enforces those relations for every route, and parser/cold-start repair prompts repeat the same contract. In the cold-start review UI, `-`, `none`, `null`, and `n/a` now explicitly mean “clear or omit this field”, so a rejected field cannot be accidentally taught as a literal hyphen.
+
+**Verification**: `verify_m20.py` — 15 offline checks covering valid standard/discounted/membership/triple-price combinations, invalid equality/inversion/zero cases, in-stock price requirement, prompt wording, and clear-value feedback normalization.
 
 ## Observations from M12 Qwen Live Run (2026-07-19)
 

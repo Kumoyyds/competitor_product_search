@@ -23,6 +23,11 @@ class ProviderSpec:
     thinking_extra_body: Optional[dict[str, Any]] = None
     non_thinking_extra_body: Optional[dict[str, Any]] = None
     supports_json_object: bool = True
+    # Output cap requested per call. Providers apply a small default (DeepSeek
+    # uses 8192) when the field is omitted, which truncates parser-generation
+    # replies mid-JSON; the SDK then raises LengthFinishReasonError and drops
+    # the partial content. ``None`` keeps the provider default.
+    max_output_tokens: Optional[int] = None
 
 
 PROVIDERS: dict[str, ProviderSpec] = {
@@ -45,6 +50,9 @@ PROVIDERS: dict[str, ProviderSpec] = {
         # DeepSeek V4 defaults to thinking mode, so explicitly disable it on
         # ordinary ladder nodes to preserve the existing last-node-only policy.
         non_thinking_extra_body={"thinking": {"type": "disabled"}},
+        # V4 allows up to 384K output; 32K is far above any parser we generate
+        # while staying well clear of the cap.
+        max_output_tokens=32768,
     ),
 }
 
@@ -81,8 +89,12 @@ def make_chat_client(
     enable_thinking: bool = False,
     *,
     purpose: str = "",
+    max_tokens: Optional[int] = None,
 ):
     """Build a LangChain ChatOpenAI client for a registered provider.
+
+    ``max_tokens`` overrides the provider's registered output cap; when both are
+    ``None`` no cap is sent and the provider's own default applies.
 
     Returns ``None`` when ``langchain_openai`` is unavailable or the resolved
     provider key is unset, preserving the scraping module's graceful-degradation
@@ -129,12 +141,21 @@ def make_chat_client(
     if spec is PROVIDERS["qwen"] and cfg.qwen_base_url:
         base_url = cfg.qwen_base_url
 
+    # Sent through extra_body, not ChatOpenAI(max_tokens=...): langchain renames
+    # that field to `max_completion_tokens`, which DeepSeek accepts and then
+    # silently ignores (verified — the reply runs past the requested cap).
+    # `max_tokens` is the parameter these OpenAI-compatible endpoints honor.
+    output_cap = max_tokens if max_tokens is not None else spec.max_output_tokens
+    if output_cap is not None:
+        extra_body = {**(extra_body or {}), "max_tokens": output_cap}
+
     logger.info(
-        "Creating LLM client purpose=%s provider=%s model=%s base_url=%s",
+        "Creating LLM client purpose=%s provider=%s model=%s base_url=%s max_tokens=%s",
         purpose or "unspecified",
         provider_name,
         bare_model,
         base_url,
+        output_cap if output_cap is not None else "provider-default",
     )
     return ChatOpenAI(
         api_key=api_key,

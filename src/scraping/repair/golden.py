@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -130,6 +131,16 @@ async def promote_candidate(
             return _do_promote(db, site, code, current_html, current_product)
 
         # Run candidate against every non-stale golden
+        stale_cache: dict[int, bool] = {}
+
+        async def _is_stale(sample: dict[str, Any]) -> bool:
+            sample_id = int(sample["id"])
+            if sample_id not in stale_cache:
+                stale_cache[sample_id] = await _no_active_parser_passes(
+                    db, site, sample
+                )
+            return stale_cache[sample_id]
+
         for page_type, samples in covered.items():
             for sample in samples:
                 sandbox_result = await run_in_sandbox(
@@ -140,7 +151,7 @@ async def promote_candidate(
                         "promote reject: candidate failed sandbox on golden id=%s (%s)",
                         sample["id"], type(sandbox_result).__name__,
                     )
-                    if _no_active_parser_passes(db, site, sample):
+                    if await _is_stale(sample):
                         gs.mark_stale(sample["id"])
                         continue
                     return GoldenRejection(
@@ -151,7 +162,7 @@ async def promote_candidate(
 
                 mismatch = _matches_expected(sandbox_result, sample["expected_output"])
                 if mismatch is not None:
-                    if _no_active_parser_passes(db, site, sample):
+                    if await _is_stale(sample):
                         gs.mark_stale(sample["id"])
                         continue
                     logger.info(
@@ -283,11 +294,42 @@ def _normalize(v: Any) -> Any:
     return v
 
 
-def _no_active_parser_passes(db: ScrapeDB, site: str, sample: dict[str, Any]) -> bool:
-    """A golden is considered stale if no currently-active parser can reproduce its expected_output."""
-    # Simple heuristic: don't run all active parsers here (async needed).
-    # Just return False conservatively — mark_stale only fires on candidate mismatch when we can't verify.
-    return False
+async def _no_active_parser_passes(
+    db: ScrapeDB,
+    site: str,
+    sample: dict[str, Any],
+) -> bool:
+    """Return whether no active parser can reproduce a golden's expectation.
+
+    Candidate failure alone cannot tell a bad candidate from a rotten golden.
+    Re-running the currently active parsers supplies that missing control.  An
+    orphan golden (no active parser) is stale by definition.
+    """
+    active_parsers = ParserStore(db).get_active(site)
+    if not active_parsers:
+        return True
+
+    expected = sample["expected_output"]
+    sample_url = expected.get("url") or "golden://"
+    for parser in active_parsers:
+        result = await run_in_sandbox(
+            parser["code"], sample["html_snapshot"], sample_url
+        )
+        if not isinstance(result, dict):
+            continue
+        wrapped = dict(result)
+        wrapped.setdefault("url", sample_url)
+        wrapped["website"] = site
+        wrapped["source_type"] = "html"
+        wrapped["scraped_at"] = datetime.now(timezone.utc)
+        wrapped["parser_version"] = f"golden_control_{parser['id']}"
+        product, errors = validate(wrapped)
+        if product is None or errors:
+            continue
+        normalized = product.model_dump(mode="json")
+        if _matches_expected(normalized, expected) is None:
+            return False
+    return True
 
 
 def _recent_window_hit_ids(db: ScrapeDB, site: str, window: int) -> set[int]:

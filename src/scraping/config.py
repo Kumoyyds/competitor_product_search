@@ -55,6 +55,16 @@ class ScrapingConfig(BaseSettings):
         default=[0.1, 0.4]
     )
 
+    # --- cold start (independent from the runtime repair ladder) ---
+    # Node 0 generates the initial parser; every later node repairs it using
+    # sandbox failures and human review feedback from all previous rounds.
+    cold_start_model_ladder: list[str] = Field(
+        default=["deepseek-v4-flash", "deepseek-v4-flash"]
+    )
+    cold_start_temperature_ladder: list[float] = Field(
+        default=[0.1, 0.4]
+    )
+
     # --- JSON self-healing (API route) ---
     json_heal_budget: int = 1
 

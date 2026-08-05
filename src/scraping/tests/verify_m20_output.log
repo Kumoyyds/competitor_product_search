@@ -1,0 +1,27 @@
+
+========================================================================
+M20.1 - Gate 2 price combinations
+========================================================================
+  [PASS] standard price-only product passes  ([])
+  [PASS] discount needs higher list_price and classifies discounted  ([])
+  [PASS] membership needs lower membership_price and classifies membership  ([])
+  [PASS] membership may also carry a higher list_price  ([])
+  [PASS] equal list_price is rejected  (['list_price must be greater than price — list_price is only a higher Was/RRP reference price, not the current/member price'])
+  [PASS] lower list_price is rejected  (['list_price must be greater than price — list_price is only a higher Was/RRP reference price, not the current/member price'])
+  [PASS] equal membership_price is rejected  (['membership_price must be lower than price — membership_price is a gated discount, not the ordinary price'])
+  [PASS] higher membership_price is rejected  (['membership_price must be lower than price — membership_price is a gated discount, not the ordinary price'])
+  [PASS] zero membership_price is rejected  (['membership_price must be positive when present'])
+  [PASS] in-stock membership product still requires ordinary price  (['in_stock=True but price must be a positive ordinary customer price'])
+  [PASS] out-of-stock product may retain membership price without price  ([])
+
+========================================================================
+M20.2 - prompt and cold-start feedback contract
+========================================================================
+  [PASS] prompt names standard/discounted/membership combinations
+  [PASS] prompt states strict ordering
+  [PASS] dash correction means clear/omit
+  [PASS] None correction means clear/omit
+
+========================================================================
+SUMMARY: 15 passed, 0 failed
+========================================================================
