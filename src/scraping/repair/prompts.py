@@ -396,7 +396,8 @@ def coldstart_repair_prompt(
     role: str,
     attempt_index: int,
     model: str,
-    confirmed_fields: list[str] | None = None,
+    resolved_ledger: dict[str, list[str]],
+    regressions: dict[str, list[str]],
 ) -> list[dict[str, str]]:
     """Build a cold-start repair prompt from code and in-memory review evidence.
 
@@ -405,14 +406,15 @@ def coldstart_repair_prompt(
     prompts -> agent import cycle while still using the shared formatter.
     """
     errors: list[str] = []
-    if confirmed_fields:
-        errors.append(
-            "【已确认正确，保留现有 selector，不要改动】\n  - "
-            + ", ".join(confirmed_fields)
-        )
+
+    if regressions:
+        lines = ["【回退警告 — 上一轮修复弄坏了已通过的字段】"]
+        for url, fields in sorted(regressions.items()):
+            lines.append(f"- {url}: {', '.join(fields)}")
+        errors.append("\n".join(lines))
 
     if feedbacks:
-        lines = ["【提取错误，需修复】"]
+        lines = ["【提取错误，需修复】(本轮)"]
         for feedback in feedbacks:
             lines.append(f"URL: {feedback.url} ({feedback.page_type})")
             if feedback.corrections:
@@ -427,12 +429,18 @@ def coldstart_repair_prompt(
 
     if failures:
         errors.append(
-            "【Sandbox / Gate 失败，需修复】\n"
+            "【Sandbox / Gate 失败，需修复】(本轮)\n"
             + "\n".join(f"- {failure}" for failure in failures)
         )
 
+    if resolved_ledger:
+        lines = ["【历史已修复，保持现状勿回退】"]
+        for url, fields in sorted(resolved_ledger.items()):
+            lines.append(f"- {url}: {', '.join(fields)}")
+        errors.append("\n".join(lines))
+
     record = SimpleNamespace(
-        index=attempt_index - 1,
+        index=attempt_index,
         model=model,
         code=current_code,
         output=None,

@@ -4,7 +4,7 @@ Each milestone's verification is persisted here so you can audit and re-run at a
 
 ## Milestone Overview
 
-The scraping module was built incrementally across 20 milestones (M1–M20). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
+The scraping module was built incrementally across 21 milestones (M1–M21). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
 
 ### M1 — ProductData Schema + Two Gates
 Defines the canonical `ProductData` Pydantic model (url, website, title, price, currency, in_stock, image_urls, …) and the two-gate validation pipeline:
@@ -115,6 +115,12 @@ Bootstrap a new site with zero manual parser writing. Uses **real Qwen API**:
 - Routes repair, JSON healing, and cold start through one client factory.
 - Supports Qwen and the official DeepSeek V4 API, explicit `provider/model` names, dynamic dotenv keys, and unknown-model fallback.
 - Sends each provider's registered output cap (`ProviderSpec.max_output_tokens`) as a body-level `max_tokens`. Without it DeepSeek applies its own 8192 default and truncates parser-generation replies mid-JSON; the OpenAI SDK then raises `LengthFinishReasonError` and discards the partial content. The cap cannot ride on `ChatOpenAI(max_tokens=...)` — langchain renames that to `max_completion_tokens`, which DeepSeek accepts and ignores (verified live: 12-token cap honored as `max_tokens`, ignored as `max_completion_tokens`).
+
+### M21 — Human-terminated cold-start repair
+
+- Decouples review/repair rounds from the model ladder; the final model and temperature repeat with thinking enabled until review succeeds or the human stops.
+- Keeps repair prompts bounded to the immediately preceding round plus a compact resolved/regression ledger.
+- Adds explicit continue, abandon, and partial-save outcomes, a configurable safety cap, and a two-consecutive-unusable-reply guard.
 
 ### M12 — End-to-End Live Scraping
 
@@ -234,13 +240,15 @@ Key aspects:
 | `verify_m18.py` | M18 — provider resolution, dynamic dotenv key lookup, unified client args, output-cap delivery, thinking toggles, and call-site model forwarding | offline |
 | `verify_m18_output.log` | Latest run — 30 checks, 0 failed | — |
 | `verify_m19.py` | M19 — cold-start all-pass gate, structured feedback repair loop, review reuse/panel, stale-golden control, and HTML snapshot reuse | offline |
-| `verify_m19_output.log` | Latest run — 38 checks, 0 failed | — |
+| `verify_m19_output.log` | Latest run — 41 checks, 0 failed | — |
 | `verify_m20.py` | M20 — canonical standard/discounted/membership price contract, Gate 2 ordering, prompt wording, and cold-start clear-value feedback | offline |
 | `verify_m20_output.log` | Latest run — 15 checks, 0 failed | — |
+| `verify_m21.py` | M21 — repeating cold-start final rung, sliding feedback/ledger, regression warnings, continue/quit/partial-save, and termination guards | offline |
+| `verify_m21_output.log` | Latest run — 31 checks, 0 failed | — |
 | `verify_clear_db.py` | `ScrapeDB.clear_site()` — FK-safe delete ordering, atomicity, idempotency, cross-site isolation, schema preservation, foreign_keys=OFF compat | offline |
 | `verify_clear_db_output.log` | Latest run — 42 checks, 0 failed | — |
 
-**Total: 385+ checks passed across all milestones. M18 adds output-cap delivery checks; M19 adds 38 fully offline checks for the cold-start repair/review lifecycle, ladder fall-through on an unusable node reply, and golden snapshot reuse; M20 adds 15 offline price-contract checks.**
+**Total: 410+ checks passed across all milestones. M19 covers the cold-start repair/review lifecycle and golden snapshot reuse; M20 adds 15 offline price-contract checks; M21 adds 31 offline checks for extended repair rounds, bounded feedback, regression tracking, partial save, and termination guards.**
 
 ## How to re-run
 
@@ -290,8 +298,9 @@ On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTH
 | M18 | Provider-aware Qwen/DeepSeek client registry | offline | offline |
 | M19 | Cold-start repair loop, all-pass gate, review panel/reuse, stale-golden control, HTML cache | offline | offline |
 | M20 | Canonical price-field contract, strict ordering Gate 2, prompt and cold-start feedback normalization | offline | offline |
+| M21 | Human-terminated cold-start repair, repeating final rung, bounded feedback ledger, partial save | offline | offline |
 
-**Total: 385+ checks passed across all milestones.**
+**Total: 410+ checks passed across all milestones.**
 
 ## LLM-dependent tests
 

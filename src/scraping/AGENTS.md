@@ -1,6 +1,6 @@
 # Scraping Module
 
-**Status**: M1–M20 complete. Full Phase 0 lifecycle. M20: canonical price-field contract — standard = `price`; discounted = `price + list_price`; membership = `price + membership_price` (+ optional RRP), with Gate 2 ordering enforcement. See `src/scraping/tests/`.
+**Status**: M1–M21 complete. Full Phase 0 lifecycle. M21 extends cold-start repair until human termination, with a repeating final model rung, bounded feedback context, regression ledger, and partial save. See `src/scraping/tests/`.
 
 ## Responsibility
 
@@ -147,7 +147,7 @@ src/scraping/
 ├── storage/
 │   ├── database.py         # 6 SQLite tables (golden_samples CHECK incl. membership since M14)
 │   └── ...                 # store classes (golden, parser, run, result, escalation, phrase)
-└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M20)
+└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M21)
 ```
 
 ## Milestone Status
@@ -174,6 +174,7 @@ src/scraping/
 | M18 | Provider-aware LLM registry + unified Qwen/DeepSeek client factory + dynamic dotenv key lookup | ✔ verify_m18.py |
 | M19 | Cold-start structured correction loop + all-pass persistence gate + full review panel + stale-golden control + HTML snapshot reuse | ✔ verify_m19.py |
 | M20 | Canonical price-field contract + Gate ordering rules + cold-start clear-value feedback | ✔ verify_m20.py |
+| M21 | Human-terminated cold-start repair + repeating final rung + sliding feedback/ledger + partial save | ✔ verify_m21.py |
 
 ## Public API
 
@@ -190,14 +191,15 @@ result = await scrape("https://www.argos.co.uk/product/3284476")
 python -m src.scraping.coldstart --site tesco --input src/scraping/data/cold_start/tesco.xlsx
 ```
 
-The workbook requires `page_type` + `url`. Mandatory coverage is validated before network spend. Non-stale golden HTML for the same URL is reused unless `--force-fetch` is passed. Interactive review shows every non-tracing `ProductData` field plus declared-bucket warnings. A rejection collects structured field corrections and a free-text hint; after the full round the next cold-start model node repairs the current parser and all URLs are rerun. Unchanged prior acceptances are reused. Parser + goldens are written only when every fetched/in-scope case passes; extraction failures are non-blocking but can leave coverage incomplete (exit 2). Abort, rejection without continuation, or ladder exhaustion writes nothing (exit 1).
+The workbook requires `page_type` + `url`. Mandatory coverage is validated before network spend. Non-stale golden HTML for the same URL is reused unless `--force-fetch` is passed. Interactive review shows every non-tracing `ProductData` field plus declared-bucket warnings. A rejection collects structured field corrections and a free-text hint; after the full round the parser is repaired and all URLs are rerun. The model ladder is a warm-up schedule: its last rung and temperature repeat, with thinking enabled, until all cases pass, the human quits, or the safety cap is reached. Each repair prompt contains only the preceding round's failures plus a compact resolved/regression ledger. Unchanged prior acceptances are reused. Complete success writes the parser + accepted goldens (exit 0, or exit 2 for incomplete coverage); `s` saves the current parser + this round's accepted goldens as a partial result (exit 2); `q` writes nothing (exit 1).
 
 ## Key Config (all in `ScrapingConfig`, spec §7)
 
 - `BRIGHT_DATA_KEY` / provider keys such as `QWEN_KEY` and `DEEPSEEK_KEY` — loaded from `.env`
 - `SCRAPING_DB_PATH` — SQLite path (default: `scraping.db`)
 - `repair_model_ladder` / `repair_temperature_ladder` — runtime HTML-repair model + temperature per attempt (default: `["qwen3.7-plus", "qwen3.7-plus"]` / `[0.1, 0.4]`; lengths must match); JSON healing uses the first repair model
-- `cold_start_model_ladder` / `cold_start_temperature_ladder` — independent cold-start generation/repair ladder (default: `["deepseek-v4-flash", "deepseek-v4-pro"]` / `[0.1, 0.4]`; lengths must match); last node enables thinking
+- `cold_start_model_ladder` / `cold_start_temperature_ladder` — independent cold-start warm-up schedule (default: `["deepseek-v4-flash", "deepseek-v4-flash"]` / `[0.1, 0.4]`; lengths must match); the last rung repeats with thinking enabled
+- `cold_start_max_repair_rounds = 10` — runaway guard for the otherwise human-terminated cold-start repair loop
 - `bd_async_poll_max_seconds` / `bd_async_poll_interval_seconds` — Datasets/DCA poll budget (default: 300s / 4s; from M13 Amazon fix)
 - `json_heal_budget = 1`
 - `sandbox_timeout = 10s`, `sandbox_import_whitelist = [bs4, lxml, re, json]`
@@ -238,12 +240,12 @@ For each new milestone:
 3. **Update [tests/README.md](tests/README.md)** — add the new files to the table.
 4. **Prefer offline** — mock BrightData / LLM where possible. Real API only when strictly needed (e.g., LLM-generated parser correctness).
 
-See [tests/README.md](tests/README.md) for the full inventory (385+ checks, including 30 offline M18 checks, 38 offline M19 checks, and 15 offline M20 checks).
+See [tests/README.md](tests/README.md) for the full inventory (410+ checks, including 41 offline M19 checks, 15 offline M20 checks, and 31 offline M21 checks).
 
 ## M19 — Cold-start correction and golden reuse
 
-- Cold start has an independent provider-aware model/temperature ladder. Node 0 generates the parser; later nodes receive the current code, accumulated human field corrections/hints, and sandbox/gate failures. The final node enables provider-specific thinking.
-- A node that returns no usable code (truncated reply, unparsable JSON) no longer aborts the run: there is nothing to repair, so the next node generates from scratch at its own model/temperature, and only the last node's failure is terminal. A node that fails *after* usable code exists keeps the previous code rather than discarding it.
+- Cold start has an independent provider-aware model/temperature warm-up schedule. Node 0 generates the parser; later rounds receive the current code and immediately preceding review evidence. M21 makes the final rung repeat with provider-specific thinking.
+- A round that returns no usable code (truncated reply, unparsable JSON) falls through: with no prior code the next round generates from scratch, while a usable current parser is retained. M21 makes two consecutive unusable replies terminal.
 - Review is round-based. Every repair reruns every resolved URL; a previously accepted result is auto-accepted only when all golden-compared fields remain equal.
 - Persistence is atomic at workflow level: any parser/gate crash or human rejection blocks both parser and golden writes. Fetch failures are reported separately and do not blame/block the parser.
 - The review panel derives fields from `ProductData.model_fields`, excludes only tracing/debug fields, summarizes image lists and long strings, and flags empty page-type-critical fields.
@@ -260,6 +262,15 @@ See [tests/README.md](tests/README.md) for the full inventory (385+ checks, incl
 - Gate 2 enforces those relations for every route, and parser/cold-start repair prompts repeat the same contract. In the cold-start review UI, `-`, `none`, `null`, and `n/a` now explicitly mean “clear or omit this field”, so a rejected field cannot be accidentally taught as a literal hyphen.
 
 **Verification**: `verify_m20.py` — 15 offline checks covering valid standard/discounted/membership/triple-price combinations, invalid equality/inversion/zero cases, in-stock price requirement, prompt wording, and clear-value feedback normalization.
+
+## M21 — Human-terminated cold-start repair
+
+- Cold-start rounds are independent of ladder length. The configured ladder is a warm-up schedule; its last model and temperature repeat for later rounds, with thinking enabled from that rung onward.
+- After a failing review, `c` or legacy alias `y` continues, `q` abandons without writes, and `s` persists the current parser plus that round's accepted goldens as `partial=True` (CLI exit 2). The configured maximum only guards against runaway interaction and offers save/quit when reached.
+- Repair prompts carry only the immediately preceding round's corrections and sandbox/gate failures. A bounded URL→field ledger records resolved issues, while regressions are removed from the resolved ledger and raised both in the next prompt and as `[REGRESSION]` console output.
+- One unusable LLM reply falls through while retaining any usable current parser; two consecutive unusable replies abort.
+
+**Verification**: `verify_m21.py` — 31 offline checks covering five-round convergence on a two-rung ladder, repeated final-rung client settings, current-round-only feedback, resolved/regression ledger behavior (including sandbox regressions), continue/quit/partial-save exits, the safety cap, and unusable-reply fall-through/termination.
 
 ## Observations from M12 Qwen Live Run (2026-07-19)
 

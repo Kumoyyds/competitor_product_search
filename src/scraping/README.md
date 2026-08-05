@@ -2,7 +2,7 @@
 
 Extracts structured product data from marketplace pages. Given a `(url, site)` pair, it returns a validated `ProductData` object with title, price, list_price, membership_price, stock, images, brand, etc. — or explains cleanly why it couldn't.
 
-> **Status**: Phase 0 complete. M1–M20 implemented. M20 defines the canonical price-field contract: standard = `price`; discounted = `price + list_price`; membership = `price + membership_price` (+ optional RRP). See [tests/](tests/).
+> **Status**: Phase 0 complete. M1–M21 implemented. M21 extends cold-start repair until human termination with a repeating final model rung, bounded feedback context, regression tracking, and partial save. See [tests/](tests/).
 
 ## What it does
 
@@ -139,7 +139,7 @@ The CLI validates coverage before paid calls, reuses matching non-stale golden H
 - `n` — reject it, optionally identify incorrect fields, enter correct values, and add a free-text hint
 - `q` — abort the whole run without writing the parser or any goldens
 
-After the full review round, rejected/crashed cases can be sent to the next cold-start ladder node. Every node reruns every URL so a repair cannot silently regress an accepted case; unchanged accepted outputs are reused without prompting. A parser and all accepted goldens are committed together only after there are no parser crashes or human rejections. Fetch failures do not block persistence because the parser had no opportunity to prove itself, but can leave a coverage shortfall. A declared/extracted type disagreement is shown as `MISMATCH`; accepting still stores the declared type. Exit codes are `0` for complete coverage, `1` for input/abort/failed gate/no seed, and `2` for a successful seed with incomplete mandatory coverage.
+After a failing review round, `c` (or legacy alias `y`) repairs again, `s` saves the current parser plus that round's accepted goldens as a partial result, and `q` abandons without writes. The model ladder is a warm-up schedule: its final model/temperature repeats with thinking enabled until review succeeds, the human stops, or the safety cap is reached. Every round reruns every URL so a repair cannot silently regress an accepted case; unchanged accepted outputs are reused without prompting. Repair prompts contain only the preceding round's failures plus a compact resolved/regression ledger. Fetch failures do not block persistence because the parser had no opportunity to prove itself, but can leave a coverage shortfall. A declared/extracted type disagreement is shown as `MISMATCH`; accepting still stores the declared type. Exit codes are `0` for complete coverage, `1` for input/abort/no seed, and `2` for incomplete coverage or a partial save.
 
 ## Module structure
 
@@ -277,8 +277,9 @@ All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (s
 |---------|---------|-------|
 | `repair_model_ladder` | `qwen3.7-plus` x2 | Runtime HTML repair models; JSON healing uses the first model |
 | `repair_temperature_ladder` | `0.1 → 0.4` | Parser-generation temperature per attempt (must match model ladder) |
-| `cold_start_model_ladder` | `deepseek-v4-flash → deepseek-v4-pro` | Node 0 generates; later nodes repair from accumulated review feedback |
-| `cold_start_temperature_ladder` | `0.1 → 0.4` | Must match the cold-start model ladder; final node enables thinking |
+| `cold_start_model_ladder` | `deepseek-v4-flash` x2 | Warm-up schedule; final model repeats for later repair rounds |
+| `cold_start_temperature_ladder` | `0.1 → 0.4` | Must match the cold-start model ladder; final rung repeats with thinking enabled |
+| `cold_start_max_repair_rounds` | 10 | Runaway guard for the otherwise human-terminated cold-start repair loop |
 | `bd_async_poll_max_seconds` | 300 | Wall-clock budget for Datasets/DCA snapshot polling (M13) |
 | `bd_async_poll_interval_seconds` | 4 | Sleep between Datasets/DCA poll GETs (M13) |
 | `json_heal_budget` | 1 | Single-shot for API route |

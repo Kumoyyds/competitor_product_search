@@ -51,6 +51,7 @@ def set_cfg(**overrides) -> ScrapingConfig:
         "golden_max_samples_per_page_type": 10,
         "cold_start_model_ladder": ["node-0", "node-1"],
         "cold_start_temperature_ladder": [0.1, 0.4],
+        "cold_start_max_repair_rounds": 10,
         "qwen_key": "offline-key",
         "_env_file": None,
         **overrides,
@@ -205,18 +206,20 @@ async def verify_driver() -> None:
     accept_prompts = [p for p in prompts if "Accept?" in p]
     check("unchanged prior acceptance is not re-prompted", len(accept_prompts) == 3, str(len(accept_prompts)))
 
-    result, _, prompts, _ = await run_driver(
-        two_rows[:1], [first_round[:1]], ["n", "", ""], ladder=["only-node"]
+    result, _, prompts, repairs = await run_driver(
+        two_rows[:1], [first_round[:1], first_round[:1]],
+        ["n", "", "", "c", "y"], ladder=["only-node"]
     )
-    check("single-node ladder degrades to one-shot failure", result["parser_id"] is None)
-    check("single-node exhaustion asks no continue question", not any("Continue" in p for p in prompts))
+    check("single-node ladder can repair until convergence", result["parser_id"] is not None)
+    check("single-node failure asks whether to continue", any("Continue" in p for p in prompts))
+    check("single-node final rung is reused for repair", len(repairs) == 1)
 
     result, _, _, repairs = await run_driver(
         two_rows[:1],
         [first_round[:1], first_round[:1]],
-        ["n", "", "", "y", "n", "", ""],
+        ["n", "", "", "y", "y"],
     )
-    check("exhausted repair ladder does not persist", result["parser_id"] is None)
+    check("repair can converge after reaching the final ladder rung", result["parser_id"] is not None)
     check("repair node was consumed exactly once", len(repairs) == 1)
 
     # A node returning nothing usable (e.g. an output-limit truncation) must not
@@ -229,16 +232,22 @@ async def verify_driver() -> None:
     )
     check("empty node-0 reply falls through instead of aborting", result["parser_id"] is not None)
     check("fall-through regenerates instead of repairing empty code", not repairs)
-    check("fall-through is reported", "falling through to the next ladder node" in output)
+    check("fall-through is reported", "falling through to the next repair round" in output)
 
-    result, _, _, _ = await run_driver(
+    result, output, _, _ = await run_driver(
         two_rows[:1],
         [[_ReviewCase(two_rows[0], "html", product(two_rows[0].url))]],
-        [],
+        ["y"],
         ladder=["only-node"],
         initial_results=[None],
     )
-    check("empty reply on the last node still aborts", result["parser_id"] is None)
+    check("one empty reply on the final rung can recover", result["parser_id"] is not None)
+    check("empty final-rung reply reports fall-through", "falling through" in output)
+
+    result, _, _, _ = await run_driver(
+        two_rows[:1], [[]], [], ladder=["only-node"], initial_results=[None, None]
+    )
+    check("two consecutive empty replies abort", result["parser_id"] is None)
 
 
 async def verify_prompt_config_panel() -> None:
@@ -283,8 +292,9 @@ async def verify_prompt_config_panel() -> None:
         await _gen_repaired_parser(
             site="tesco", html="<html><h1>P</h1><span>£2.50</span></html>",
             current_code="old-code", feedbacks=[feedback], failures=["boom"],
-            index=1, model="last-model", temperature=0.6, is_last=True,
-            role="last", confirmed_fields=["title"],
+            index=1, model="last-model", temperature=0.6, enable_thinking=True,
+            role="last", resolved_ledger={"https://example/member": ["title"]},
+            regressions={},
         )
     check("node zero uses cold-start ladder model", calls[0]["model"] == "first-model")
     check("last repair node enables thinking", calls[1]["model"] == "last-model" and calls[1]["enable_thinking"] is True)
@@ -292,7 +302,8 @@ async def verify_prompt_config_panel() -> None:
     ctx = build_price_aware_context("<html><h1>P</h1><span>£2.50</span></html>", "https://example/p")
     messages = coldstart_repair_prompt(
         ctx, "tesco", "old-code", [feedback], ["sandbox boom"],
-        role="last", attempt_index=1, model="last-model", confirmed_fields=["title"],
+        role="last", attempt_index=1, model="last-model",
+        resolved_ledger={"https://example/member": ["title"]}, regressions={},
     )
     prompt_text = json.dumps(messages, ensure_ascii=False)
     check("repair prompt contains prior parser source", "old-code" in prompt_text)

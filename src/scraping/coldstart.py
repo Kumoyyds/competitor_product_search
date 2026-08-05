@@ -6,7 +6,7 @@ New site with empty parsers table:
     3. LLM generates first-version parser from a representative HTML
     4. Sandbox-execute parser against every URL's HTML
     5. Human reviews every result and supplies structured corrections
-    6. Later cold-start ladder nodes repair and rerun all cases as needed
+    6. Later rounds repair and rerun all cases; the last ladder rung repeats
     7. All fetched/in-scope cases pass → seed parser + golden_samples together
 
 Run:
@@ -119,52 +119,65 @@ async def run_coldstart(
         return _empty_result(aborted=True)
 
     existing_coverage = _get_existing_coverage(site)
-    feedback_history: list[ReviewFeedback] = []
-    failure_history: list[str] = []
+    round_feedbacks: list[ReviewFeedback] = []
+    round_failures: list[str] = []
+    reported: dict[str, set[str]] = {}
+    resolved: dict[str, set[str]] = {}
+    regressions: dict[str, set[str]] = {}
     previously_accepted: dict[str, ProductData] = {}
     parser_code: Optional[str] = None
     accepted: list[tuple[ColdStartRow, str, ProductData]] = []
+    round_index = 0
+    consecutive_empty = 0
+    partial = False
+    aborted = False
 
-    for node_index, model in enumerate(ladder):
-        is_last = node_index == len(ladder) - 1
+    while True:
+        rung = min(round_index, len(ladder) - 1)
+        model, temperature = ladder[rung], temperatures[rung]
+        enable_thinking = round_index >= len(ladder) - 1
+        role = "last" if enable_thinking else "middle"
         # There is nothing to repair until a node returns usable code, so a node
         # that produced nothing (truncated reply, unparsable JSON) leaves the
-        # next one generating from scratch rather than aborting the run.
+        # next round generating from scratch rather than discarding useful state.
         if parser_code is None:
             print(f"\nGenerating first-version parser via {model}...")
             new_code = await _gen_initial_parser(
                 site,
                 representative_html,
                 model=model,
-                temperature=temperatures[node_index],
-                enable_thinking=is_last,
+                temperature=temperature,
+                enable_thinking=enable_thinking,
             )
         else:
-            role = "last" if is_last else "middle"
-            print(f"\nRepairing parser via {model} (round {node_index + 1})...")
+            print(f"\nRepairing parser via {model} (round {round_index + 1})...")
             new_code = await _gen_repaired_parser(
                 site=site,
                 html=representative_html,
                 current_code=parser_code,
-                feedbacks=feedback_history,
-                failures=failure_history,
-                index=node_index,
+                feedbacks=round_feedbacks,
+                failures=round_failures,
+                index=round_index,
                 model=model,
-                temperature=temperatures[node_index],
-                is_last=is_last,
+                temperature=temperature,
+                enable_thinking=enable_thinking,
                 role=role,
-                confirmed_fields=_display_fields() if previously_accepted else [],
+                resolved_ledger=_sorted_ledger(resolved),
+                regressions=_sorted_ledger(regressions),
             )
 
         if not new_code:
-            if is_last:
-                print("LLM did not return usable parser code — aborting.")
+            consecutive_empty += 1
+            if consecutive_empty >= 2:
+                print("LLM returned no usable parser code twice consecutively — aborting.")
                 return _failed_result(existing_coverage, aborted=True)
             print(
                 f"{model} returned no usable parser code — "
-                "falling through to the next ladder node."
+                "falling through to the next repair round."
             )
+            round_index += 1
             continue
+        consecutive_empty = 0
         parser_code = new_code
 
         print("\nRunning parser against all resolved HTMLs (sandbox)...")
@@ -176,7 +189,7 @@ async def run_coldstart(
         sandbox_failed: list[tuple[ColdStartRow, str]] = []
         human_rejected: list[tuple[ColdStartRow, ReviewFeedback]] = []
         extraction_failed: list[tuple[ColdStartRow, str]] = []
-        aborted = False
+        review_aborted = False
 
         for i, case in enumerate(cases, 1):
             row = case.row
@@ -223,7 +236,7 @@ async def run_coldstart(
             ans = input_fn("  Accept? [y/N/q] ").strip().lower()
             if ans == "q":
                 print("  Aborting review loop.")
-                aborted = True
+                review_aborted = True
                 break
             if ans == "y":
                 accepted.append((row, case.html, product))
@@ -235,8 +248,10 @@ async def run_coldstart(
             human_rejected.append((row, feedback))
             print("  → rejected")
 
-        if aborted:
-            _print_failure_summary(sandbox_failed, human_rejected, extraction_failed)
+        if review_aborted:
+            _print_failure_summary(
+                sandbox_failed, human_rejected, extraction_failed, regressions={}
+            )
             return _failed_result(
                 existing_coverage,
                 aborted=True,
@@ -245,34 +260,64 @@ async def run_coldstart(
 
         if not sandbox_failed and not human_rejected:
             if extraction_failed:
-                _print_failure_summary([], [], extraction_failed)
+                _print_failure_summary([], [], extraction_failed, regressions={})
             parser_id, seeded_count = _seed(site, parser_code, accepted)
             break
 
-        _print_failure_summary(sandbox_failed, human_rejected, extraction_failed)
-        feedback_history.extend(feedback for _, feedback in human_rejected)
-        failure_history.extend(
+        round_feedbacks = [feedback for _, feedback in human_rejected]
+        round_failures = [
             f"{row.url} ({row.page_type}): {detail}"
             for row, detail in sandbox_failed
+        ]
+        regressions = _update_review_ledger(
+            reported=reported,
+            resolved=resolved,
+            previously_accepted=set(previously_accepted),
+            accepted=accepted,
+            sandbox_failed=sandbox_failed,
+            human_rejected=human_rejected,
+        )
+        _print_failure_summary(
+            sandbox_failed,
+            human_rejected,
+            extraction_failed,
+            regressions=regressions,
         )
         previously_accepted = {row.url: product for row, _, product in accepted}
 
-        if is_last:
-            print("\nCold-start model ladder exhausted — parser was not saved.")
-            return _failed_result(
-                existing_coverage,
-                aborted=False,
-                accepted=len(accepted),
+        at_cap = round_index + 1 >= cfg.cold_start_max_repair_rounds
+        if at_cap:
+            print(
+                f"\nCold-start safety cap reached "
+                f"({cfg.cold_start_max_repair_rounds} rounds)."
             )
-        if input_fn("\nContinue 纠错? [y/N] ").strip().lower() != "y":
+            action = input_fn(
+                "Save current results or quit? "
+                "[s=保存当前结果并退出 / q=放弃退出] "
+            ).strip().lower()
+        else:
+            action = input_fn(
+                "\nContinue 纠错? "
+                "[c=继续修复 / s=保存当前结果并退出 / q=放弃退出] "
+            ).strip().lower()
+
+        if action == "s":
+            parser_id, seeded_count = _seed(site, parser_code, accepted)
+            partial = True
+            break
+        if not at_cap and action in {"c", "y"}:
+            round_index += 1
+            continue
+
+        if at_cap:
+            print("Current parser was not saved after reaching the safety cap.")
+        else:
             print("Parser was not saved.")
-            return _failed_result(
-                existing_coverage,
-                aborted=True,
-                accepted=len(accepted),
-            )
-    else:  # pragma: no cover - the non-empty ladder always returns or breaks
-        return _failed_result(existing_coverage, aborted=False)
+        return _failed_result(
+            existing_coverage,
+            aborted=True,
+            accepted=len(accepted),
+        )
 
     final_coverage = dict(existing_coverage)
     for page_type, count in Counter(row.page_type for row, _, _ in accepted).items():
@@ -285,7 +330,8 @@ async def run_coldstart(
                 f"  - {page_type}: needs >= {cfg.golden_min_for(page_type)}, "
                 f"has {final_coverage.get(page_type, 0)}"
             )
-    print(f"\n== Cold start complete ==")
+    heading = "Cold start partial result saved" if partial else "Cold start complete"
+    print(f"\n== {heading} ==")
     print(f"  parser_id     = {parser_id}")
     print(f"  goldens seeded = {seeded_count}")
     return {
@@ -293,6 +339,7 @@ async def run_coldstart(
         "seeded_goldens": seeded_count,
         "accepted": len(accepted),
         "aborted": aborted,
+        "partial": partial,
         "coverage_shortfall": coverage_shortfall,
     }
 
@@ -316,6 +363,7 @@ def _empty_result(aborted: bool) -> dict[str, Any]:
         "seeded_goldens": 0,
         "accepted": 0,
         "aborted": aborted,
+        "partial": False,
         "coverage_shortfall": [],
     }
 
@@ -479,14 +527,15 @@ async def _gen_repaired_parser(
     index: int,
     model: str,
     temperature: float,
-    is_last: bool,
+    enable_thinking: bool,
     role: str,
-    confirmed_fields: list[str],
+    resolved_ledger: dict[str, list[str]],
+    regressions: dict[str, list[str]],
 ) -> Optional[str]:
     llm = make_chat_client(
         model=model,
         temperature=temperature,
-        enable_thinking=is_last,
+        enable_thinking=enable_thinking,
         purpose="cold start repair",
     )
     if llm is None:
@@ -503,7 +552,8 @@ async def _gen_repaired_parser(
             role=role,
             attempt_index=index,
             model=model,
-            confirmed_fields=confirmed_fields,
+            resolved_ledger=resolved_ledger,
+            regressions=regressions,
         )
         resp = await llm.ainvoke(prompt)
     except Exception as exc:
@@ -704,19 +754,70 @@ def _products_match(current: ProductData, previous: ProductData) -> bool:
     ) is None
 
 
+def _sorted_ledger(ledger: dict[str, set[str]]) -> dict[str, list[str]]:
+    """Return stable, prompt-ready ledger entries and omit empty URL rows."""
+    return {
+        url: sorted(fields)
+        for url, fields in sorted(ledger.items())
+        if fields
+    }
+
+
+def _update_review_ledger(
+    *,
+    reported: dict[str, set[str]],
+    resolved: dict[str, set[str]],
+    previously_accepted: set[str],
+    accepted: list[tuple[ColdStartRow, str, ProductData]],
+    sandbox_failed: list[tuple[ColdStartRow, str]],
+    human_rejected: list[tuple[ColdStartRow, ReviewFeedback]],
+) -> dict[str, set[str]]:
+    """Apply one review round to the compact fixed/regressed field ledger."""
+    current_regressions: dict[str, set[str]] = {}
+    wrong_by_url: dict[str, set[str]] = {}
+    for row, feedback in human_rejected:
+        wrong_by_url.setdefault(row.url, set()).update(
+            correction.field for correction in feedback.corrections
+        )
+    for row, _ in sandbox_failed:
+        wrong_by_url.setdefault(row.url, set()).add("<sandbox>")
+
+    for url, wrong_fields in wrong_by_url.items():
+        regressed = resolved.get(url, set()).intersection(wrong_fields)
+        if url in previously_accepted:
+            regressed.update(wrong_fields)
+            if "<sandbox>" in wrong_fields:
+                regressed.update(resolved.get(url, set()))
+        if regressed:
+            current_regressions[url] = set(regressed)
+            resolved.setdefault(url, set()).difference_update(regressed)
+        reported.setdefault(url, set()).update(wrong_fields)
+
+    for row, _, _ in accepted:
+        prior_reports = reported.get(row.url)
+        if prior_reports:
+            resolved.setdefault(row.url, set()).update(prior_reports)
+
+    return current_regressions
+
+
 def _print_failure_summary(
     sandbox_failed: list[tuple[ColdStartRow, str]],
     human_rejected: list[tuple[ColdStartRow, ReviewFeedback]],
     extraction_failed: list[tuple[ColdStartRow, str]],
+    *,
+    regressions: dict[str, set[str]],
 ) -> None:
     failed_count = len(sandbox_failed) + len(human_rejected)
     if failed_count:
-        print(f"\nParser NOT saved — {failed_count} cold-start case(s) did not pass:")
+        print(f"\nParser has {failed_count} cold-start case(s) that did not pass:")
         for row, detail in sandbox_failed:
             print(f"  [PARSER CRASH] {row.url} ({row.page_type})  {detail}")
         for row, feedback in human_rejected:
             wrong = ", ".join(c.field for c in feedback.corrections) or "unspecified"
             print(f"  [REJECTED]     {row.url} ({row.page_type})  wrong: {wrong}")
+        for url, fields in sorted(regressions.items()):
+            print(f"  [REGRESSION]   {url}  regressed: {', '.join(sorted(fields))}")
     if extraction_failed:
         print("\nThese URLs could not be fetched (not the parser's fault):")
         for row, detail in extraction_failed:
@@ -867,6 +968,8 @@ def read_coldstart_input(path: Path) -> list[ColdStartRow]:
 
 
 def _result_exit_code(result: dict[str, Any]) -> int:
+    if result.get("partial"):
+        return 2
     if result.get("aborted") or result.get("parser_id") is None:
         return 1
     if result.get("coverage_shortfall"):
