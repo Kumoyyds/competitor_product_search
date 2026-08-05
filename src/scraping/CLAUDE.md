@@ -145,9 +145,6 @@ src/scraping/
 │   └── golden.py           # M9/M14 — classify_page_type (5 buckets incl. membership), promote_candidate, prune
 ├── storage/
 │   ├── database.py         # 6 SQLite tables (golden_samples CHECK incl. membership since M14)
-│   ├── migrations/
-│   │   ├── add_membership_bucket.py  # M14 — one-time migration for existing DBs
-│   │   └── add_golden_created_by.py  # M17 — golden provenance for safe pruning
 │   └── ...                 # store classes (golden, parser, run, result, escalation, phrase)
 └── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M18)
 ```
@@ -187,7 +184,6 @@ result = await scrape("https://www.argos.co.uk/product/3284476")
 ## Cold Start (new site)
 
 ```bash
-python -m src.scraping.storage.migrations.add_golden_created_by
 python -m src.scraping.coldstart --site tesco --input src/scraping/data/cold_start/tesco.xlsx
 ```
 

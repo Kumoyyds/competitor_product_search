@@ -319,13 +319,11 @@ async def verify_coldstart_and_runtime() -> None:
     check("repeat URL blocked before cap", first is not None and repeat is None)
 
 
-def verify_prune_and_migration() -> None:
+def verify_prune_and_schema_guard() -> None:
     from src.scraping.scripts.prune_goldens import apply_prune_plan, build_prune_plan
     from src.scraping.storage import GoldenStore, ScrapeDB
-    from src.scraping.storage.migrations.add_golden_created_by import migration_needed, run_migration
-    from src.scraping.storage.migrations.add_membership_bucket import run_migration as add_membership
 
-    section("M17.5 - prune ordering and migration")
+    section("M17.5 - prune ordering and schema guard")
     set_test_config(golden_max_samples_per_page_type=2)
     reset_site()
     db = ScrapeDB(DB_PATH); db.init_db(); gs = GoldenStore(db)
@@ -365,42 +363,44 @@ def verify_prune_and_migration() -> None:
         "INSERT INTO golden_samples VALUES (1, 'tesco', 'standard', 'html', '{}', '2026-01-01', 0)"
     )
     conn.commit(); conn.close()
-    check("legacy DB needs provenance migration", migration_needed(str(legacy)))
-    run_migration(str(legacy))
-    check("migration becomes idempotent", not migration_needed(str(legacy)))
-    conn = sqlite3.connect(legacy)
-    created_by = conn.execute("SELECT created_by FROM golden_samples WHERE id = 1").fetchone()[0]
-    conn.close()
+    legacy_db = ScrapeDB(legacy)
+    legacy_db.init_db()
+    columns = [
+        row["name"]
+        for row in legacy_db.conn.execute("PRAGMA table_info(golden_samples)")
+    ]
+    check("schema guard adds provenance column", "created_by" in columns)
+    created_by = legacy_db.conn.execute(
+        "SELECT created_by FROM golden_samples WHERE id = 1"
+    ).fetchone()[0]
     check("legacy rows backfilled as auto", created_by == "auto")
-
-    old_schema = TMP_DIR / "old_schema.db"
-    conn = sqlite3.connect(old_schema)
-    conn.execute(
-        "CREATE TABLE golden_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "site TEXT NOT NULL, page_type TEXT NOT NULL CHECK(page_type IN "
-        "('standard','out_of_stock','discounted','multipack')), "
-        "html_snapshot TEXT NOT NULL, expected_output TEXT NOT NULL, "
-        "captured_at TEXT NOT NULL DEFAULT '', is_stale INTEGER NOT NULL DEFAULT 0)"
+    legacy_db.init_db()
+    columns_after = [
+        row["name"]
+        for row in legacy_db.conn.execute("PRAGMA table_info(golden_samples)")
+    ]
+    created_by_after = legacy_db.conn.execute(
+        "SELECT created_by FROM golden_samples WHERE id = 1"
+    ).fetchone()[0]
+    check(
+        "schema guard is idempotent",
+        columns_after.count("created_by") == 1 and created_by_after == "auto",
     )
-    conn.execute(
-        "INSERT INTO golden_samples(site,page_type,html_snapshot,expected_output) "
-        "VALUES ('tesco','standard','html','{}')"
+    legacy_plans = build_prune_plan(legacy_db, "tesco")
+    standard_legacy_plan = next(
+        plan for plan in legacy_plans if plan.page_type == "standard"
     )
-    conn.commit(); conn.close()
-    run_migration(str(old_schema))
-    add_membership(str(old_schema))
-    conn = sqlite3.connect(old_schema)
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(golden_samples)")}
-    origin = conn.execute("SELECT created_by FROM golden_samples").fetchone()[0]
-    conn.close()
-    check("membership migration preserves provenance column", "created_by" in columns)
-    check("migration order preserves existing row provenance", origin == "auto")
+    check(
+        "prune works after automatic schema repair",
+        standard_legacy_plan.before == 1,
+    )
+    legacy_db.close()
 
 
 async def run() -> None:
     verify_config_and_input()
     await verify_coldstart_and_runtime()
-    verify_prune_and_migration()
+    verify_prune_and_schema_guard()
 
 
 def main() -> int:

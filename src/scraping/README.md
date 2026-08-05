@@ -125,13 +125,18 @@ If you want to add a site that isn't yet in the parser table:
 # 1. Add the site's hostnames to hosts.yaml
 # 2. Register an HTMLScraper subclass in scrapers/sites/
 # 3. Run cold start with a representative Excel input
-python -m src.scraping.storage.migrations.add_golden_created_by
 python -m src.scraping.coldstart --site newsite --input newsite.xlsx
 ```
 
 The first row must contain `page_type` and `url` (case-insensitive; extra columns are ignored). Legal page types are `standard`, `discounted`, `out_of_stock`, `membership`, and `multipack`. By default the first four are mandatory and `multipack` is optional. Multiple rows per type are useful as spares: once a bucket reaches its cap, remaining rows are skipped without another prompt.
 
-The CLI validates coverage before spending Bright Data/Qwen calls, then prompts interactively (`y` / `n` / `q`) for each usable extraction. A declared/extracted type disagreement is shown as `MISMATCH`; accepting still stores the declared type. Exit codes are `0` for complete coverage, `1` for input/abort/no seed, and `2` when accepted rows were seeded but mandatory coverage remains incomplete.
+The CLI validates coverage before spending Bright Data/Qwen calls, then prompts interactively (`y` / `n` / `q`) for each usable extraction:
+
+- `y` — accept the row: it is seeded as a golden sample for the declared `page_type` (`created_by=coldstart`) and counts toward mandatory coverage
+- `n` — skip the row (the default; plain Enter skips too): nothing is seeded, review continues with the next row
+- `q` — abort the review loop: unreviewed rows are abandoned, but already-accepted rows are still seeded; the run exits with code `1`
+
+A declared/extracted type disagreement is shown as `MISMATCH`; accepting still stores the declared type. Exit codes are `0` for complete coverage, `1` for input/abort/no seed, and `2` when accepted rows were seeded but mandatory coverage remains incomplete.
 
 ## Module structure
 
@@ -296,7 +301,6 @@ LLM models, endpoints, key names, JSON-mode support, and thinking toggles live o
 Lowering the cap never deletes automatically. Preview and apply an age/provenance-aware shrink explicitly:
 
 ```bash
-python -m src.scraping.storage.migrations.add_golden_created_by
 python -m src.scraping.scripts.prune_goldens --site tesco
 python -m src.scraping.scripts.prune_goldens --site tesco --apply
 ```

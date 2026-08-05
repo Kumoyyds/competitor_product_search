@@ -52,21 +52,17 @@ M17.4 - runtime cap and URL dedup
   [PASS] repeat URL blocked before cap
 
 ========================================================================
-M17.5 - prune ordering and migration
+M17.5 - prune ordering and schema guard
 ========================================================================
   [PASS] dry run chooses stale then oldest auto
   [PASS] dry run deletes nothing
   [PASS] apply deletes planned rows
   [PASS] human and newest auto survive  ({14, 15})
-  [PASS] legacy DB needs provenance migration
-Migration complete: added golden_samples.created_by; existing rows were classified as 'auto'. db=/var/folders/z9/zf5v62yj5_75v0dwqpq9c7nw0000gn/T/verify_m17_1znzhu6x/legacy.db
-  [PASS] migration becomes idempotent
+  [PASS] schema guard adds provenance column
   [PASS] legacy rows backfilled as auto
-Migration complete: added golden_samples.created_by; existing rows were classified as 'auto'. db=/var/folders/z9/zf5v62yj5_75v0dwqpq9c7nw0000gn/T/verify_m17_1znzhu6x/old_schema.db
-Migration complete: added 'membership' to golden_samples.page_type CHECK. db=/var/folders/z9/zf5v62yj5_75v0dwqpq9c7nw0000gn/T/verify_m17_1znzhu6x/old_schema.db
-  [PASS] membership migration preserves provenance column
-  [PASS] migration order preserves existing row provenance
+  [PASS] schema guard is idempotent
+  [PASS] prune works after automatic schema repair
 
 ========================================================================
-SUMMARY: 40 passed, 0 failed
+SUMMARY: 39 passed, 0 failed
 ========================================================================

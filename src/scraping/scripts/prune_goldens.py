@@ -27,20 +27,8 @@ class BucketPlan:
     under_coverage: bool
 
 
-def _created_by_column_exists(db: ScrapeDB) -> bool:
-    return "created_by" in {
-        row["name"] for row in db.conn.execute("PRAGMA table_info(golden_samples)")
-    }
-
-
 def build_prune_plan(db: ScrapeDB, site: str | None = None) -> list[BucketPlan]:
     cfg = get_config()
-    if not _created_by_column_exists(db):
-        raise RuntimeError(
-            "golden_samples.created_by is missing; run "
-            "`python -m src.scraping.storage.migrations.add_golden_created_by` first"
-        )
-
     if site:
         sites = [site]
     else:
@@ -157,9 +145,6 @@ def main(argv: list[str] | None = None) -> int:
         if args.apply:
             apply_prune_plan(db, plans)
         print_plan(plans, args.apply)
-    except RuntimeError as exc:
-        print(f"ERROR: {exc}")
-        return 1
     finally:
         db.close()
     return 0

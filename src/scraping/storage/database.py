@@ -78,6 +78,15 @@ CREATE INDEX IF NOT EXISTS idx_golden_site_page ON golden_samples(site, page_typ
 CREATE INDEX IF NOT EXISTS idx_phrases_site ON invalid_target_phrases(site);
 """
 
+# Incremental golden_samples columns. New databases get these from _DDL;
+# init_db() adds them to historical databases automatically.
+_GOLDEN_ADDED_COLUMNS = {
+    "created_by": (
+        "TEXT NOT NULL DEFAULT 'auto' "
+        "CHECK(created_by IN ('coldstart', 'auto'))"
+    ),
+}
+
 
 class ScrapeDB:
     """SQLite connection manager for the scraping module's 6 tables."""
@@ -97,6 +106,34 @@ class ScrapeDB:
 
     def init_db(self) -> None:
         self.conn.executescript(_DDL)
+        self._ensure_columns()
+
+    def _ensure_columns(self) -> None:
+        """Idempotently add incremental columns missing from historical DBs."""
+        existing = {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(golden_samples)")
+        }
+        if _GOLDEN_ADDED_COLUMNS.keys() <= existing:
+            return
+
+        try:
+            # Serialize the inspect-and-alter sequence so concurrent first starts
+            # cannot both observe the same missing column.
+            self.conn.execute("BEGIN IMMEDIATE")
+            locked_existing = {
+                row["name"]
+                for row in self.conn.execute("PRAGMA table_info(golden_samples)")
+            }
+            for column, ddl in _GOLDEN_ADDED_COLUMNS.items():
+                if column not in locked_existing:
+                    self.conn.execute(
+                        f"ALTER TABLE golden_samples ADD COLUMN {column} {ddl}"
+                    )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def close(self) -> None:
         if self._conn is not None:
