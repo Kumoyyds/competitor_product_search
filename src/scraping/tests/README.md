@@ -271,6 +271,7 @@ python -m src.scraping.tests.verify_m17  | tee src/scraping/tests/verify_m17_out
 python -m src.scraping.tests.verify_m18  | tee src/scraping/tests/verify_m18_output.log
 python -m src.scraping.tests.verify_m19  | tee src/scraping/tests/verify_m19_output.log
 python -m src.scraping.tests.verify_m20  | tee src/scraping/tests/verify_m20_output.log
+python -m src.scraping.tests.verify_m21  | tee src/scraping/tests/verify_m21_output.log
 python src/scraping/tests/verify_clear_db.py | tee src/scraping/tests/verify_clear_db_output.log
 ```
 

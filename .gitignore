@@ -7,3 +7,7 @@ __pycache__/
 .ipynb_checkpoints/
 output/
 input/
+
+# SQLite runtime journals (the .db itself stays tracked)
+*.db-shm
+*.db-wal
