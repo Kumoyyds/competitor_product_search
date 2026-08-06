@@ -21,20 +21,6 @@ def _to_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
-def _parse_unit_price(raw: Any) -> tuple[Optional[Decimal], Optional[str]]:
-    """Parse BrightData unit_price string like '668,26€ / kg' or '668.26€/kg'."""
-    if not raw or not isinstance(raw, str):
-        return None, None
-    import re
-
-    m = re.search(r"([\d.,]+)\s*[^\d/]*\s*/\s*(\w+)", raw)
-    if not m:
-        return None, None
-    price_str = m.group(1).replace(",", ".")
-    unit = m.group(2)
-    return _to_decimal(price_str), unit
-
-
 @register_scraper("amazon", order=1)
 class AmazonUKScraper(DirectAPIScraper):
     source_type = "api"
@@ -58,10 +44,6 @@ class AmazonUKScraper(DirectAPIScraper):
         return False
 
     def _map_fields(self, json_data: dict[str, Any], url: str) -> dict[str, Any]:
-        unit_price, unit = _parse_unit_price(
-            (json_data.get("buybox_prices") or {}).get("unit_price")
-        )
-
         variant = None
         variations = json_data.get("variations")
         variant_attrs = json_data.get("variant_attributes")
@@ -104,8 +86,6 @@ class AmazonUKScraper(DirectAPIScraper):
             "currency": json_data.get("currency"),
             "list_price": _to_decimal(json_data.get("initial_price")),
             "membership_price": membership_price,
-            "unit_price": unit_price,
-            "unit": unit,
             "in_stock": bool(json_data.get("is_available", False)),
             "availability_raw": json_data.get("availability"),
             "raw": json_data,

@@ -317,7 +317,7 @@ async def verify_prompt_config_panel() -> None:
             "membership",
         )
     text = panel.getvalue()
-    check("panel includes all newly reviewable fields", all(name in text for name in ("membership_price", "image_urls", "unit_price", "availability_raw")))
+    check("panel includes all newly reviewable fields", all(name in text for name in ("membership_price", "image_urls", "availability_raw")))
     check("panel summarizes lists and truncates long strings", "1 项" in text and "…" in text)
     check("panel flags missing bucket-critical field", "该桶关键字段为空" in text)
 

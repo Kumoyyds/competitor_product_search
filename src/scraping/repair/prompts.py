@@ -26,8 +26,6 @@ OPTIONAL (return None or omit if unavailable):
   currency (str) — ISO-4217 code like "GBP", "EUR", never a symbol like "£"
   list_price (Decimal-compatible string) — higher Was/RRP/original reference price for a normal non-member discount; only set it when it is strictly greater than price
   membership_price (Decimal-compatible string) — lower price gated behind a named loyalty/membership program (e.g. Tesco Clubcard, Amazon Prime, Nectar, member/loyalty card). Only set this when the PAGE VISIBLY SHOWS membership gating — a program badge, \"Clubcard Price\" / \"Prime member price\" label, or \"only available with <program>\" text. It must be strictly lower than price. A plain \"Was £X Now £Y\" markdown is NOT membership even if JSON-LD tags the offer with a member tier — that is a normal discount (→ list_price + price).
-  unit_price (Decimal-compatible string) — e.g. "£/kg" numeric value
-  unit (str) — e.g. "kg", "l"
   availability_raw (str) — a SHORT human-readable stock label ("In stock", "Out of stock", "Auf Lager", etc.).  NEVER return the raw JSON-LD script block or a long JSON string here — navigate to the `offers.availability` schema.org token (e.g. \"http://schema.org/InStock\") and map it to a short label, or derive from visible DOM text.
 
   PRICE FIELD CONTRACT:
@@ -239,8 +237,8 @@ def parser_gen_prompt(
         "RECALL FAILURE — the data is in your context, you must extract it.\n"
         "- Basket widgets showing \"Guide price £0.00\" (class guide-price / "
         "basket-guide-price / price-value) are NOT product prices — ignore them.\n"
-        "- Unit prices (e.g. £/kg, /litre, /100g) are NOT product prices; capture them "
-        "separately as `unit_price` + `unit` if available.\n"
+        "- Unit prices (e.g. £/kg, /litre, /100g) are NOT product prices — ignore them "
+        "entirely; never put them in `price`, `list_price`, or `membership_price`.\n"
         "- Coupon / promo-code discounts are normal discounts: put the payable "
         "non-member price in `price` and a separately displayed higher Was/RRP in "
         "`list_price`; never use `membership_price` unless membership gating is visible.\n\n"
@@ -466,6 +464,8 @@ def json_heal_precheck_prompt(
         "are missing from its output mapping. Decide whether the target data actually EXISTS "
         "in the JSON (just under a different key/path), or whether it is GENUINELY ABSENT "
         "(the API didn't return it). "
+        "A per-unit rate (£/kg, /litre) is not a product price — if the only price-like "
+        "data in the JSON is a unit price, answer `source_absent`. "
         "Return STRICT JSON: {decision: 'source_present'|'source_absent', reason: string}."
     )
     user = (
@@ -488,6 +488,9 @@ def json_heal_remap_prompt(
         "  - You MUST NOT fabricate values. Only reference dotted paths of keys that exist.\n"
         "  - If a target field's data is genuinely absent, OMIT it from your mapping.\n"
         "  - Dotted path syntax: 'buybox_prices.final_price', 'variations.0.price', etc.\n"
+        "  - Unit-price keys (`unit_price`, `price_per_unit`, `unit_cost`) and per-unit "
+        "values like '668,26€ / kg' are NOT product prices. NEVER map them to `price`, "
+        "`list_price`, or `membership_price` — omit them from the mapping.\n"
         f"\n{SCHEMA_HINT}\n"
         "Return STRICT JSON: {mapping: {target_field: dotted_path, ...}}"
     )

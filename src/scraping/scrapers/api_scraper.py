@@ -132,13 +132,15 @@ class DirectAPIScraper(BaseScraper):
         if not cache:
             return mapped
 
-        from ..repair.json_healer import _lookup_path
+        from ..repair.json_healer import _is_unit_price_source, _lookup_path
 
         out = dict(mapped)
         for target, source_path in cache.items():
             if out.get(target) is None:
                 value = _lookup_path(json_data, source_path)
-                if value is not None:
+                if value is not None and not _is_unit_price_source(
+                    target, source_path, value
+                ):
                     out[target] = value
         return out
 

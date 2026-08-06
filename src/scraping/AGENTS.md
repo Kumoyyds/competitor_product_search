@@ -1,6 +1,6 @@
 # Scraping Module
 
-**Status**: M1–M21 complete. Full Phase 0 lifecycle. M21 extends cold-start repair until human termination, with a repeating final model rung, bounded feedback context, regression ledger, and partial save. See `src/scraping/tests/`.
+**Status**: M1–M22 complete. Full Phase 0 lifecycle. M22 removes ambiguous unit-price fields and guards API healing against per-unit price contamination. See `src/scraping/tests/`.
 
 ## Responsibility
 
@@ -147,7 +147,7 @@ src/scraping/
 ├── storage/
 │   ├── database.py         # 6 SQLite tables (golden_samples CHECK incl. membership since M14)
 │   └── ...                 # store classes (golden, parser, run, result, escalation, phrase)
-└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M21)
+└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M22)
 ```
 
 ## Milestone Status
@@ -175,6 +175,7 @@ src/scraping/
 | M19 | Cold-start structured correction loop + all-pass persistence gate + full review panel + stale-golden control + HTML snapshot reuse | ✔ verify_m19.py |
 | M20 | Canonical price-field contract + Gate ordering rules + cold-start clear-value feedback | ✔ verify_m20.py |
 | M21 | Human-terminated cold-start repair + repeating final rung + sliding feedback/ledger + partial save | ✔ verify_m21.py |
+| M22 | Remove ProductData unit-price fields + guard API JSON healing/cache against unit-price contamination | ✔ verify_m22.py |
 
 ## Public API
 
@@ -240,7 +241,7 @@ For each new milestone:
 3. **Update [tests/README.md](tests/README.md)** — add the new files to the table.
 4. **Prefer offline** — mock BrightData / LLM where possible. Real API only when strictly needed (e.g., LLM-generated parser correctness).
 
-See [tests/README.md](tests/README.md) for the full inventory (410+ checks, including 41 offline M19 checks, 15 offline M20 checks, and 31 offline M21 checks).
+See [tests/README.md](tests/README.md) for the full inventory (430+ checks, including 31 offline M21 checks and 21 offline M22 checks).
 
 ## M19 — Cold-start correction and golden reuse
 
@@ -271,6 +272,14 @@ See [tests/README.md](tests/README.md) for the full inventory (410+ checks, incl
 - One unusable LLM reply falls through while retaining any usable current parser; two consecutive unusable replies abort.
 
 **Verification**: `verify_m21.py` — 31 offline checks covering five-round convergence on a two-rung ladder, repeated final-rung client settings, current-round-only feedback, resolved/regression ledger behavior (including sandbox regressions), continue/quit/partial-save exits, the safety cap, and unusable-reply fall-through/termination.
+
+## M22 — Unit-price field removal and API healing guard
+
+- `ProductData` no longer exposes `unit_price` or `unit`; Amazon mapping and all downstream field lists/reporting follow the same contract.
+- The HTML pre-pass continues to retain unit-price evidence as a negative signal, but parser prompts no longer offer those fields as targets.
+- JSON healing rejects unit-price source keys and per-unit value shapes for `price`, `list_price`, and `membership_price`, both for fresh LLM mappings and cached mappings.
+
+**Verification**: `verify_m22.py` — 21 offline checks for model/mapping removal, source-key and value-shape detection, poisoned and legitimate healing, cache replay, and prompt wording.
 
 ## Observations from M12 Qwen Live Run (2026-07-19)
 

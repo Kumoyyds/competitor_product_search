@@ -62,8 +62,6 @@ class ProductData(BaseModel):
     currency: Optional[str] = None
     list_price: Optional[Decimal] = None
     membership_price: Optional[Decimal] = None
-    unit_price: Optional[Decimal] = None
-    unit: Optional[str] = None
 
     # --- stock ---
     in_stock: bool

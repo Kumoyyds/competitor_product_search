@@ -173,8 +173,6 @@ class PerURLReport:
     # Additional ProductData fields (all Optional in the schema; only displayed when populated)
     list_price: str = ""        # e.g. "80.99 GBP"
     membership_price: str = ""  # e.g. "99.99 GBP" (Tesco Clubcard)
-    unit_price: str = ""        # e.g. "3.50"
-    unit: str = ""              # e.g. "kg"
     availability_raw: str = ""  # e.g. "In stock"
     variant: str = ""           # JSON-encoded dict, e.g. '{"size":"12x330ml"}'
 
@@ -352,9 +350,6 @@ async def scrape_one_url(
                 report.list_price = f"{result.list_price} {result.currency or ''}".strip()
             if result.membership_price is not None:
                 report.membership_price = f"{result.membership_price} {result.currency or ''}".strip()
-            if result.unit_price is not None:
-                report.unit_price = str(result.unit_price)
-            report.unit = result.unit or ""
             report.availability_raw = result.availability_raw or ""
             if result.variant:
                 import json as _json
@@ -457,11 +452,6 @@ def print_url_report(report: PerURLReport) -> None:
             _print(f"    gtin:          {report.gtin}")
         if report.variant:
             _print(f"    variant:       {report.variant}")
-        if report.unit_price:
-            if report.unit:
-                _print(f"    unit_price:    {report.unit_price} per {report.unit}")
-            else:
-                _print(f"    unit_price:    {report.unit_price}")
         if report.parser_version:
             _print(f"    parser_version: {report.parser_version}")
         if report.source_type:

@@ -222,7 +222,7 @@
 
 ### 5.1 ProductData 契约
 
-字段清单(与 v1.1 一致,未因 invalid_target 变动——这是 D27 的直接体现:invalid_target 不进此 schema):
+字段清单(未因 invalid_target 变动——这是 D27 的直接体现:invalid_target 不进此 schema):
 
 | 分组 | 字段 | 类型 | 必填性 | 说明 |
 |---|---|---|---|---|
@@ -240,8 +240,6 @@
 | | `currency` | str | optional | ISO-4217,非符号 |
 | | `list_price` | Decimal | optional | |
 | | `membership_price` | Decimal | optional | 会员/忠诚度计划优惠价,如 Tesco Clubcard 价、Amazon Prime 会员价 |
-| | `unit_price` | Decimal | optional | |
-| | `unit` | str | optional | |
 | 库存 | `in_stock` | bool | 必填 | **仅描述真实商品当前能否购买,与 invalid_target 无关** |
 | | `availability_raw` | str | optional | |
 | 调试 | `raw` | dict | optional | |

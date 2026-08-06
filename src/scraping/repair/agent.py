@@ -107,7 +107,7 @@ def summarize_capture(output: dict[str, Any]) -> dict[str, Any]:
             required.append("price")
     optional = [
         "brand", "gtin", "image_urls", "currency", "list_price",
-        "membership_price", "unit_price", "unit", "availability_raw", "variant",
+        "membership_price", "availability_raw", "variant",
     ]
     present = lambda f: output.get(f) not in (None, [], "", {})
 

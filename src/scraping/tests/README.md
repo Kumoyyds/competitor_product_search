@@ -4,7 +4,7 @@ Each milestone's verification is persisted here so you can audit and re-run at a
 
 ## Milestone Overview
 
-The scraping module was built incrementally across 21 milestones (M1–M21). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
+The scraping module was built incrementally across 22 milestones (M1–M22). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
 
 ### M1 — ProductData Schema + Two Gates
 Defines the canonical `ProductData` Pydantic model (url, website, title, price, currency, in_stock, image_urls, …) and the two-gate validation pipeline:
@@ -33,7 +33,7 @@ Persistent storage layer with 6 tables and corresponding store classes:
 
 ### M4 — DirectAPIScraper (Amazon + Tesco DCA)
 API-based scraping route for sites with structured-data endpoints:
-- **Amazon UK** via BrightData Datasets API — JSON response → `_map_fields()` extracts title, brand, GTIN (UPC), price, list_price, unit_price, variant, images.
+- **Amazon UK** via BrightData Datasets API — JSON response → `_map_fields()` extracts title, brand, GTIN (UPC), price, list_price, variant, images.
 - **Tesco DCA** (backup) via BrightData DCA API — JSON payload → `_map_fields()` extracts product_name, current_price, original_price, stock status.
 - **`_is_not_found()`** — per-scraper detection of missing/empty product data on the API side, routing to `InvalidTargetResult`.
 
@@ -122,6 +122,12 @@ Bootstrap a new site with zero manual parser writing. Uses **real Qwen API**:
 - Keeps repair prompts bounded to the immediately preceding round plus a compact resolved/regression ledger.
 - Adds explicit continue, abandon, and partial-save outcomes, a configurable safety cap, and a two-consecutive-unusable-reply guard.
 
+### M22 — Remove unit-price fields and guard API healing
+
+- Removes `unit_price` / `unit` from `ProductData`, Amazon API mapping, parser/golden field lists, live-run reporting, and the v1.2 schema.
+- Keeps the HTML pre-pass unit-price evidence filter, while changing parser guidance to ignore per-unit rates as product prices.
+- Adds deterministic and prompt-level protection so JSON healing and cached mappings cannot feed unit-price keys or values into `price`, `list_price`, or `membership_price`.
+
 ### M12 — End-to-End Live Scraping
 
 Runs the full scraping pipeline against a per-site URL batch (`src/scraping/data/tesco_test.xlsx.xlsx` or `argos_test.xlsx.xlsx`, both 3-column `label / url / host`) using real BrightData and real Qwen. No mocking — this exercises the complete live pipeline end-to-end.
@@ -198,7 +204,7 @@ Key aspects:
 - **Upstream error retry**: BD responses < 1000 chars OR containing `"502 Bad Gateway"` / `"500 Internal Server Error"` etc. (1000-5000 byte gap) trigger extraction retry with 2s pause.
 - **Temp DB** — uses a temporary SQLite database (`%TEMP%\verify_m12.db`) to avoid polluting production `scraping.db`. Cleaned up on process exit.
 - **`.env` key aliasing** — `ScrapingConfig.bright_data_key` accepts `BRIGHT_UNLOCKER_KEY` as well as `BRIGHT_DATA_KEY` / `SCRAPING_BRIGHT_DATA_KEY` (see `config.py`), so no script-local shim is needed.
-- **Per-URL detailed report** — each URL gets a formatted block showing: input label, resolved site, scraper chain, outcome, all extracted ProductData fields (title / price / list_price / brand / gtin / variant / unit_price / unit / availability_raw / image_urls / parser_version / source_type), latency, and mechanisms triggered.
+- **Per-URL detailed report** — each URL gets a formatted block showing: input label, resolved site, scraper chain, outcome, all extracted ProductData fields (title / price / list_price / brand / gtin / variant / availability_raw / image_urls / parser_version / source_type), latency, and mechanisms triggered.
 - **Mechanism inference** — analyzes the `scrape_runs` DB path (`fast`, `agent_repaired`, `invalid_target`, `escalated`) to report exactly what happened.
 - **TeeWriter with per-write flush** — output goes to stdout + log file simultaneously, flushed on every write for live progress.
 - **Summary report** — breakdowns by label, site, DB path; mechanism tally; escalation listing; timing stats (avg, median, p95, min, max).
@@ -245,10 +251,12 @@ Key aspects:
 | `verify_m20_output.log` | Latest run — 15 checks, 0 failed | — |
 | `verify_m21.py` | M21 — repeating cold-start final rung, sliding feedback/ledger, regression warnings, continue/quit/partial-save, and termination guards | offline |
 | `verify_m21_output.log` | Latest run — 31 checks, 0 failed | — |
+| `verify_m22.py` | M22 — ProductData/Amazon unit-price removal, JSON-heal contamination guard, cache guard, and prompt rules | offline |
+| `verify_m22_output.log` | Latest run — 21 checks, 0 failed | — |
 | `verify_clear_db.py` | `ScrapeDB.clear_site()` — FK-safe delete ordering, atomicity, idempotency, cross-site isolation, schema preservation, foreign_keys=OFF compat | offline |
 | `verify_clear_db_output.log` | Latest run — 42 checks, 0 failed | — |
 
-**Total: 410+ checks passed across all milestones. M19 covers the cold-start repair/review lifecycle and golden snapshot reuse; M20 adds 15 offline price-contract checks; M21 adds 31 offline checks for extended repair rounds, bounded feedback, regression tracking, partial save, and termination guards.**
+**Total: 430+ checks passed across all milestones. M22 adds 21 offline checks for unit-price removal and API contamination guards.**
 
 ## How to re-run
 
@@ -272,6 +280,7 @@ python -m src.scraping.tests.verify_m18  | tee src/scraping/tests/verify_m18_out
 python -m src.scraping.tests.verify_m19  | tee src/scraping/tests/verify_m19_output.log
 python -m src.scraping.tests.verify_m20  | tee src/scraping/tests/verify_m20_output.log
 python -m src.scraping.tests.verify_m21  | tee src/scraping/tests/verify_m21_output.log
+python -m src.scraping.tests.verify_m22  | tee src/scraping/tests/verify_m22_output.log
 python src/scraping/tests/verify_clear_db.py | tee src/scraping/tests/verify_clear_db_output.log
 ```
 
@@ -300,8 +309,9 @@ On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTH
 | M19 | Cold-start repair loop, all-pass gate, review panel/reuse, stale-golden control, HTML cache | offline | offline |
 | M20 | Canonical price-field contract, strict ordering Gate 2, prompt and cold-start feedback normalization | offline | offline |
 | M21 | Human-terminated cold-start repair, repeating final rung, bounded feedback ledger, partial save | offline | offline |
+| M22 | ProductData unit-price removal, API JSON-heal and cache contamination guards | offline | offline |
 
-**Total: 410+ checks passed across all milestones.**
+**Total: 430+ checks passed across all milestones.**
 
 ## LLM-dependent tests
 

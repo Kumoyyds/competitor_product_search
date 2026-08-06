@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Optional
 
 from ..config import get_config
@@ -18,6 +19,33 @@ from ..providers import make_chat_client
 from .prompts import json_heal_precheck_prompt, json_heal_remap_prompt
 
 logger = logging.getLogger(__name__)
+
+_PRICE_TARGETS = {"price", "list_price", "membership_price"}
+
+# Source-key names that denote a per-unit rate, not a product price.
+_UNIT_PRICE_KEY_RE = re.compile(
+    r"(?i)(unit[_\-\s]?price|price[_\-\s]?per[_\-\s]?unit|"
+    r"per[_\-\s]?unit|unit[_\-\s]?cost|\bppu\b)"
+)
+
+# Value shapes like '668,26€ / kg', '£1.50/100g', '2.99 GBP per litre'.
+# Deliberately not imported from repair/prepass.py: that regex targets DOM text
+# with a leading currency symbol, whereas API payloads may put it after the number.
+_UNIT_PRICE_VALUE_RE = re.compile(
+    r"""(?ix)
+    \d[\d.,]*\s*[£€$]?\s*(?:GBP|EUR|USD)?\s*(?:/|\bper\b)\s*
+    (?:kg|g|l|ltr|litre|ml|cl|100\s*g|100\s*ml|oz|lb|each|unit|item|sheet)
+    """
+)
+
+
+def _is_unit_price_source(target: str, source_path: str, value: Any) -> bool:
+    """Return whether a price target would be fed from a per-unit-rate source."""
+    if target not in _PRICE_TARGETS:
+        return False
+    if isinstance(source_path, str) and _UNIT_PRICE_KEY_RE.search(source_path):
+        return True
+    return bool(isinstance(value, str) and _UNIT_PRICE_VALUE_RE.search(value))
 
 
 async def heal_json(
@@ -84,6 +112,14 @@ async def heal_json(
                 source_path,
             )
             return None
+        if _is_unit_price_source(target, source_path, value):
+            logger.warning(
+                "json_heal: refusing unit-price source %r for price field %s (value=%r)",
+                source_path,
+                target,
+                value,
+            )
+            continue
         healed[target] = value
 
     logger.info(
@@ -103,7 +139,7 @@ def _make_llm():
 
 def _lookup_path(data: Any, path: str) -> Any:
     """Walk a dotted path (with numeric indices for lists) through a JSON structure."""
-    if not path:
+    if not isinstance(path, str) or not path:
         return None
     parts = path.split(".")
     cursor = data
@@ -128,7 +164,7 @@ def _extract_missing_fields(errors: list[str]) -> list[str]:
     missing = set()
     key_fields = {
         "title", "brand", "gtin", "price", "currency", "list_price",
-        "membership_price", "unit_price", "unit", "in_stock", "image_urls", "variant",
+        "membership_price", "in_stock", "image_urls", "variant",
     }
     for err in errors:
         for field in key_fields:

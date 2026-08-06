@@ -1,0 +1,41 @@
+
+==========================================================================
+M22.1 - ProductData schema and Amazon mapping
+==========================================================================
+  [PASS] ProductData omits unit_price and unit  ([])
+  [PASS] legacy constructor extras do not surface  ({'url': 'https://example.test/product', 'website': 'amazon', 'scraped_at': datetime.datetime(2026, 8, 5, 23, 39, 11, 928090, tzinfo=datetime.timezone.utc), 'source_type': 'api', 'parser_version': None, 'title': 'Example', 'brand': None, 'gtin': None, 'image_urls': [], 'variant': None, 'price': Decimal('2.99'), 'currency': None, 'list_price': None, 'membership_price': None, 'in_stock': True, 'availability_raw': 'In stock', 'raw': None})
+  [PASS] Amazon mapping omits unit_price and unit
+  [PASS] Amazon canonical prices remain unchanged  (23.79 / 27.99 / EUR)
+  [PASS] Amazon raw payload remains available
+
+==========================================================================
+M22.2 - deterministic unit-price source predicate
+==========================================================================
+  [PASS] blocks price <- buybox_prices.unit_price (668,26€ / kg)
+  [PASS] blocks list_price <- x.price_per_unit (1.50)
+  [PASS] blocks price <- x.offer (668,26€ / kg)
+  [PASS] blocks price <- x.offer (£1.50/100g)
+  [PASS] blocks membership_price <- x.offer (2.99 GBP per litre)
+  [PASS] allows price <- buybox_prices.final_price (23.79)
+  [PASS] allows membership_price <- prime_price (19.99)
+  [PASS] allows availability_raw <- buybox_prices.unit_price (668,26€ / kg)
+
+==========================================================================
+M22.3 - healer and cached-remap enforcement
+==========================================================================
+  [PASS] healer skips poisoned unit-price remap  ({'price': Decimal('23.79')})
+  [PASS] healer logs poisoned remap
+  [PASS] healer still applies legitimate remap  ({'price': '23.79'})
+  [PASS] cached poisoned remap leaves price untouched  ({'price': None})
+
+==========================================================================
+M22.4 - schema and prompt guardrails
+==========================================================================
+  [PASS] SCHEMA_HINT omits unit-price targets
+  [PASS] parser prompt keeps negative unit-price instruction
+  [PASS] precheck prompt rejects unit-price-only payloads
+  [PASS] remap prompt forbids unit-price mappings
+
+==========================================================================
+SUMMARY: 21 passed, 0 failed
+==========================================================================

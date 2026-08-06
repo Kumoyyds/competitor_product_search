@@ -263,7 +263,7 @@ def _matches_expected(candidate_dict: dict[str, Any], expected: dict[str, Any]) 
     """
     compare_fields = (
         "title", "brand", "gtin", "image_urls", "variant",
-        "price", "currency", "list_price", "membership_price", "unit_price", "unit",
+        "price", "currency", "list_price", "membership_price",
         "in_stock", "availability_raw",
     )
     for field in compare_fields:

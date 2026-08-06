@@ -18,7 +18,7 @@ from pathlib import Path
 PASSED: list[str] = []
 FAILED: list[tuple[str, str]] = []
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR = Path(__file__).parent.parent / "data" / "html_sample"
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
@@ -42,7 +42,7 @@ def section(title: str) -> None:
 # ---------------------------------------------------------------------------
 
 def verify_amazon_mapping() -> None:
-    section("M4.1 - AmazonUKScraper._map_fields on data/amazon_response.json")
+    section("M4.1 - AmazonUKScraper._map_fields on data/html_sample/amazon_response.json")
 
     from src.scraping.scrapers.sites.amazon_uk import AmazonUKScraper
     from src.scraping.validation import validate
@@ -60,7 +60,6 @@ def verify_amazon_mapping() -> None:
     print(f"    gtin (upc)  = {mapped['gtin']}")
     print(f"    price       = {mapped['price']} {mapped['currency']}  ({type(mapped['price']).__name__})")
     print(f"    list_price  = {mapped['list_price']} {mapped['currency']}")
-    print(f"    unit_price  = {mapped['unit_price']} per {mapped['unit']}")
     print(f"    in_stock    = {mapped['in_stock']}")
     print(f"    avail_raw   = {mapped['availability_raw']}")
     print(f"    image_urls  = {len(mapped['image_urls'])} URLs")
@@ -74,8 +73,7 @@ def verify_amazon_mapping() -> None:
     check("list_price is Decimal", isinstance(mapped["list_price"], Decimal))
     check("list_price value correct", mapped["list_price"] == Decimal("27.99"), str(mapped["list_price"]))
     check("currency EUR", mapped["currency"] == "EUR", mapped["currency"])
-    check("unit_price parsed", mapped["unit_price"] == Decimal("668.26"), str(mapped["unit_price"]))
-    check("unit parsed (kg)", mapped["unit"] == "kg", mapped["unit"])
+    check("unit_price not mapped", "unit_price" not in mapped and "unit" not in mapped)
     check("in_stock True", mapped["in_stock"] is True)
     check("6 image URLs", len(mapped["image_urls"]) == 6, str(len(mapped["image_urls"])))
     check("variant size captured", mapped["variant"] == {"size": "60 Count"}, str(mapped["variant"]))
@@ -207,9 +205,9 @@ def verify_detection_on_real_html() -> None:
     from src.scraping.detection import _has_jsonld_product, detect_invalid_page
 
     samples = [
-        ("argos_response_1.html", "argos", "Argos product 3284476 (shed base)"),
-        ("argos_response_2.html", "argos", "Argos product 8747437 (GTA VI)"),
-        ("tesco_response.html", "tesco", "Tesco product 297568023 (blouse)"),
+        ("argos_frame_discount.html", "argos", "Argos product 3284476 (shed base)"),
+        ("argos_game_normal.html", "argos", "Argos product (game)"),
+        ("tesco_cloth_normal.html", "tesco", "Tesco product (cloth)"),
     ]
 
     for filename, site, description in samples:
@@ -304,7 +302,7 @@ def verify_html_scraper_integration() -> None:
     # Case 1: valid Argos HTML should get past detection.
     # Post-M6/M8: empty parser list falls through to repair ladder. To test detection
     # in isolation, we patch the repair ladder + parser list to short-circuit.
-    argos_html = (DATA_DIR / "argos_response_1.html").read_text(encoding="utf-8")
+    argos_html = (DATA_DIR / "argos_frame_discount.html").read_text(encoding="utf-8")
 
     from unittest.mock import AsyncMock
 
