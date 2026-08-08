@@ -1,6 +1,6 @@
 # Scraping Module
 
-**Status**: M1–M23 complete. Full Phase 0 lifecycle. M23 fixes Argos runtime promotion detection, adds site profiles, and separates DeepSeek thinking output budgets. See `src/scraping/tests/`.
+**Status**: M1–M24 complete. Full Phase 0 lifecycle. M24 normalizes API price qualifiers and makes every terminal scraper attempt queryable. See `src/scraping/tests/`.
 
 ## Responsibility
 
@@ -149,7 +149,7 @@ src/scraping/
 ├── storage/
 │   ├── database.py         # 6 SQLite tables (golden_samples CHECK incl. membership since M14)
 │   └── ...                 # store classes (golden, parser, run, result, escalation, phrase)
-└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M22)
+└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M24)
 ```
 
 ## Milestone Status
@@ -179,6 +179,7 @@ src/scraping/
 | M21 | Human-terminated cold-start repair + repeating final rung + sliding feedback/ledger + partial save | ✔ verify_m21.py |
 | M22 | Remove ProductData unit-price fields + guard API JSON healing/cache against unit-price contamination | ✔ verify_m22.py |
 | M23 | Argos promotion/runtime repair + site profiles + anchored prices + thinking output cap | ✔ verify_m23.py |
+| M24 | API price-contract normalization + failed-run observability + schema migration | ✔ verify_m24.py |
 
 ## Public API
 
@@ -244,7 +245,7 @@ For each new milestone:
 3. **Update [tests/README.md](tests/README.md)** — add the new files to the table.
 4. **Prefer offline** — mock BrightData / LLM where possible. Real API only when strictly needed (e.g., LLM-generated parser correctness).
 
-See [tests/README.md](tests/README.md) for the full inventory (520+ checks, including 31 offline M21 checks, 21 offline M22 checks, and 90 offline M23 checks).
+See [tests/README.md](tests/README.md) for the full inventory (540+ checks, including 90 offline M23 checks and 20 offline M24 checks).
 
 ## M19 — Cold-start correction and golden reuse
 
@@ -293,6 +294,15 @@ See [tests/README.md](tests/README.md) for the full inventory (520+ checks, incl
 - Cold-start input and coverage checks use the site profile, and accepted results classified into a declared-unavailable bucket produce a conspicuous reverse-validation warning.
 
 **Verification**: `verify_m23.py` — 90 offline checks across all 16 reviewed Argos/Tesco golden snapshots, active-parser fast-path reuse, unanchored fallback safety, site profiles, alphanumeric Argos IDs, cold-start rejection, and DeepSeek token routing.
+
+## M24 — API price normalization and execution observability
+
+- Every hand-written API mapping passes through `scrapers/price_fields.py` before validation. The normalizer drops qualifiers that violate the M20 ordering contract while retaining positive qualifier-only signals when ordinary `price` is absent. HTML output is deliberately not normalized so gate failures continue to drive parser repair.
+- `_record_run` and `_store_result` live on `BaseScraper`. Each API/HTML terminal raise site writes an `outcome='escalated'` run with a canonical signature and truncated error; failures bypass the success dedup window.
+- `scrape_runs` is the per-execution log. `escalations` remains the `UNIQUE(signature)` aggregate/alarm defined by D24. API gate failures attach a raw-payload preview to the aggregate for diagnosis.
+- Existing databases gain `scrape_runs.signature` and `scrape_runs.error` automatically through the serialized incremental migration in `ScrapeDB.init_db()`.
+
+**Verification**: `verify_m24.py` — 20 offline checks covering price normalization, the Amazon equal-price regression, all six terminal raise sites, failure/success/recovery dedup behavior, historical schema migration, payload preview persistence, exception detail, and the mass-invalid denominator change.
 
 ## Observations from M12 Qwen Live Run (2026-07-19)
 

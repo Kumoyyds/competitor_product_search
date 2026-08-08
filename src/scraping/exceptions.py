@@ -17,10 +17,31 @@ class ScrapeFailed(Exception):
     errors: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
+        detail = ""
+        rule = self.signature[1] if len(self.signature) > 1 else ""
+        if rule:
+            detail += f", rule={rule}"
+        if self.errors:
+            detail += f", error={self.errors[0][:200]}"
         return (
             f"ScrapeFailed(site={self.site}, scraper={self.scraper_name}, "
-            f"stage={self.failed_stage}, url={self.url})"
+            f"stage={self.failed_stage}, url={self.url}{detail})"
         )
+
+
+def format_scrape_signature(
+    site: str,
+    signature: tuple[str, str, str] | None = None,
+    fallback_rule: str = "unknown",
+) -> str:
+    """Compose ``{site}|{field_or_rule}|{parser_version}`` consistently."""
+    field_or_rule = (
+        signature[1]
+        if signature and len(signature) > 1 and signature[1]
+        else fallback_rule
+    )
+    parser_version = signature[2] if signature and len(signature) > 2 else ""
+    return f"{site}|{field_or_rule}|{parser_version}"
 
 
 class BrightDataInfraError(Exception):

@@ -40,7 +40,9 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
     attempts INTEGER NOT NULL DEFAULT 1,
     model_used TEXT,
     latency_ms INTEGER,
-    cost REAL
+    cost REAL,
+    signature TEXT,
+    error TEXT
 );
 
 CREATE TABLE IF NOT EXISTS results (
@@ -71,6 +73,7 @@ CREATE TABLE IF NOT EXISTS invalid_target_phrases (
 
 CREATE INDEX IF NOT EXISTS idx_scrape_runs_url_scraped ON scrape_runs(url, scraped_at);
 CREATE INDEX IF NOT EXISTS idx_scrape_runs_site ON scrape_runs(site);
+CREATE INDEX IF NOT EXISTS idx_scrape_runs_site_outcome ON scrape_runs(site, outcome, scraped_at);
 CREATE INDEX IF NOT EXISTS idx_results_url ON results(url);
 CREATE INDEX IF NOT EXISTS idx_results_site_scraped ON results(site, scraped_at);
 CREATE INDEX IF NOT EXISTS idx_parsers_site_status ON parsers(site, status);
@@ -78,13 +81,19 @@ CREATE INDEX IF NOT EXISTS idx_golden_site_page ON golden_samples(site, page_typ
 CREATE INDEX IF NOT EXISTS idx_phrases_site ON invalid_target_phrases(site);
 """
 
-# Incremental golden_samples columns. New databases get these from _DDL;
-# init_db() adds them to historical databases automatically.
-_GOLDEN_ADDED_COLUMNS = {
-    "created_by": (
-        "TEXT NOT NULL DEFAULT 'auto' "
-        "CHECK(created_by IN ('coldstart', 'auto'))"
-    ),
+# Incremental columns. New databases get these from _DDL; init_db() adds them
+# to historical databases automatically.
+_ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "golden_samples": {
+        "created_by": (
+            "TEXT NOT NULL DEFAULT 'auto' "
+            "CHECK(created_by IN ('coldstart', 'auto'))"
+        ),
+    },
+    "scrape_runs": {
+        "signature": "TEXT",
+        "error": "TEXT",
+    },
 }
 
 
@@ -110,26 +119,33 @@ class ScrapeDB:
 
     def _ensure_columns(self) -> None:
         """Idempotently add incremental columns missing from historical DBs."""
-        existing = {
-            row["name"]
-            for row in self.conn.execute("PRAGMA table_info(golden_samples)")
+        existing_by_table = {
+            table: {
+                row["name"]
+                for row in self.conn.execute(f"PRAGMA table_info({table})")
+            }
+            for table in _ADDED_COLUMNS
         }
-        if _GOLDEN_ADDED_COLUMNS.keys() <= existing:
+        if all(
+            columns.keys() <= existing_by_table[table]
+            for table, columns in _ADDED_COLUMNS.items()
+        ):
             return
 
         try:
             # Serialize the inspect-and-alter sequence so concurrent first starts
             # cannot both observe the same missing column.
             self.conn.execute("BEGIN IMMEDIATE")
-            locked_existing = {
-                row["name"]
-                for row in self.conn.execute("PRAGMA table_info(golden_samples)")
-            }
-            for column, ddl in _GOLDEN_ADDED_COLUMNS.items():
-                if column not in locked_existing:
-                    self.conn.execute(
-                        f"ALTER TABLE golden_samples ADD COLUMN {column} {ddl}"
-                    )
+            for table, columns in _ADDED_COLUMNS.items():
+                locked_existing = {
+                    row["name"]
+                    for row in self.conn.execute(f"PRAGMA table_info({table})")
+                }
+                for column, ddl in columns.items():
+                    if column not in locked_existing:
+                        self.conn.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"
+                        )
             self.conn.commit()
         except Exception:
             self.conn.rollback()

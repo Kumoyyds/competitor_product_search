@@ -16,7 +16,8 @@ class RunStore:
             datetime.now(timezone.utc) - timedelta(seconds=self._dedup_window)
         ).isoformat()
         row = self._db.conn.execute(
-            "SELECT 1 FROM scrape_runs WHERE url = ? AND scraped_at > ? LIMIT 1",
+            "SELECT 1 FROM scrape_runs "
+            "WHERE url = ? AND outcome = 'success' AND scraped_at > ? LIMIT 1",
             (url, cutoff),
         ).fetchone()
         return row is not None
@@ -34,12 +35,18 @@ class RunStore:
         model_used: Optional[str] = None,
         latency_ms: Optional[int] = None,
         cost: Optional[float] = None,
+        signature: Optional[str] = None,
+        error: Optional[str] = None,
     ) -> int:
         cur = self._db.conn.execute(
             "INSERT INTO scrape_runs "
-            "(url, host, site, scraper, outcome, path, winning_parser_id, attempts, model_used, latency_ms, cost) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (url, host, site, scraper, outcome, path, winning_parser_id, attempts, model_used, latency_ms, cost),
+            "(url, host, site, scraper, outcome, path, winning_parser_id, attempts, "
+            "model_used, latency_ms, cost, signature, error) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                url, host, site, scraper, outcome, path, winning_parser_id,
+                attempts, model_used, latency_ms, cost, signature, error,
+            ),
         )
         self._db.conn.commit()
         return cur.lastrowid  # type: ignore[return-value]

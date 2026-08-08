@@ -4,7 +4,7 @@ Each milestone's verification is persisted here so you can audit and re-run at a
 
 ## Milestone Overview
 
-The scraping module was built incrementally across 23 milestones (M1–M23). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
+The scraping module was built incrementally across 24 milestones (M1–M24). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
 
 ### M1 — ProductData Schema + Two Gates
 Defines the canonical `ProductData` Pydantic model (url, website, title, price, currency, in_stock, image_urls, …) and the two-gate validation pipeline:
@@ -136,6 +136,13 @@ Bootstrap a new site with zero manual parser writing. Uses **real Qwen API**:
 - Reuses validated Argos parsers on the fast path, supports `tuc...` URL IDs, and gives DeepSeek thinking nodes a 65536-token output budget.
 - `verify_m23.py` is fully offline and opens the project database read-only.
 
+### M24 — API price normalization and failed-run observability
+
+- Normalizes hand-written API price qualifiers before validation, including the Amazon `initial_price == final_price` regression.
+- Records all six API/HTML terminal paths in `scrape_runs` with `outcome='escalated'`, signature, and error while retaining success-only dedup behavior.
+- Migrates historical databases automatically, persists malformed API payload previews in escalations, and makes `ScrapeFailed` text diagnostic.
+- `verify_m24.py` is fully offline, uses only temporary databases, and proves a prior failure cannot suppress a recovered success.
+
 ### M12 — End-to-End Live Scraping
 
 Runs the full scraping pipeline against a per-site URL batch (`src/scraping/data/tesco_test.xlsx.xlsx` or `argos_test.xlsx.xlsx`, both 3-column `label / url / host`) using real BrightData and real Qwen. No mocking — this exercises the complete live pipeline end-to-end.
@@ -263,10 +270,12 @@ Key aspects:
 | `verify_m23.py` | M23 — 16-golden promotion alignment, active-parser fast path, site profiles, Argos IDs, cold-start input, and DeepSeek thinking cap | offline |
 | `verify_m23_output.log` | Latest run — 90 checks, 0 failed | — |
 | `verify_m23_live_output.log` | Argos + Tesco live smoke — both reused active parsers through the HTML fast path | **real BrightData** |
+| `verify_m24.py` | M24 — API price normalization, Amazon regression, six failed-run paths, migration, dedup, payload preview, and exception detail | offline |
+| `verify_m24_output.log` | Latest run — 20 checks, 0 failed | — |
 | `verify_clear_db.py` | `ScrapeDB.clear_site()` — FK-safe delete ordering, atomicity, idempotency, cross-site isolation, schema preservation, foreign_keys=OFF compat | offline |
 | `verify_clear_db_output.log` | Latest run — 42 checks, 0 failed | — |
 
-**Total: 520+ checks passed across all milestones. M23 adds 90 offline checks for Argos/Tesco promotion and fast-path correctness.**
+**Total: 540+ checks passed across all milestones. M24 adds 20 offline checks for API price normalization and failed-run observability.**
 
 ## How to re-run
 
@@ -291,6 +300,7 @@ python -m src.scraping.tests.verify_m20  | tee src/scraping/tests/verify_m20_out
 python -m src.scraping.tests.verify_m21  | tee src/scraping/tests/verify_m21_output.log
 python -m src.scraping.tests.verify_m22  | tee src/scraping/tests/verify_m22_output.log
 python -m src.scraping.tests.verify_m23  | tee src/scraping/tests/verify_m23_output.log
+python -m src.scraping.tests.verify_m24  | tee src/scraping/tests/verify_m24_output.log
 python src/scraping/tests/verify_clear_db.py | tee src/scraping/tests/verify_clear_db_output.log
 ```
 
@@ -321,8 +331,9 @@ On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTH
 | M21 | Human-terminated cold-start repair, repeating final rung, bounded feedback ledger, partial save | offline | offline |
 | M22 | ProductData unit-price removal, API JSON-heal and cache contamination guards | offline | offline |
 | M23 | Argos runtime promotion repair, site profiles, anchored prices, thinking output cap | offline | offline |
+| M24 | API price normalization, failed-run execution log, schema migration, payload diagnostics | offline | offline |
 
-**Total: 520+ checks passed across all milestones.**
+**Total: 540+ checks passed across all milestones.**
 
 ## LLM-dependent tests
 

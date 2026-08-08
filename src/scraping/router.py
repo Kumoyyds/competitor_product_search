@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import yaml
 
 from .config import get_config
-from .exceptions import BrightDataInfraError, ScrapeFailed
+from .exceptions import BrightDataInfraError, ScrapeFailed, format_scrape_signature
 from .models.results import ScrapeOutcome
 from .registry import get_scrapers
 from .storage import EscalationStore, ScrapeDB
@@ -142,11 +142,9 @@ def _derive_reason(failures: list[ScrapeFailed]) -> str:
 def _derive_signature(site: str, failures: list[ScrapeFailed]) -> str:
     """Compose the signature `{site}|{field_or_rule}|{parser_version}`."""
     if not failures:
-        return f"{site}|unknown|"
+        return format_scrape_signature(site)
     last = failures[-1]
-    field_or_rule = last.signature[1] if last.signature and last.signature[1] else last.failed_stage
-    parser_version = last.signature[2] if last.signature and len(last.signature) > 2 else ""
-    return f"{site}|{field_or_rule}|{parser_version}"
+    return format_scrape_signature(site, last.signature, last.failed_stage)
 
 
 def _write_escalation(signature: str, reason: str, snapshot: dict) -> None:

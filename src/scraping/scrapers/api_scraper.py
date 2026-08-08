@@ -1,18 +1,18 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from abc import abstractmethod
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 from ..config import get_config
 from ..exceptions import BrightDataInfraError, ScrapeFailed
-from ..models.product_data import ProductData
 from ..models.results import InvalidTargetResult, ScrapeOutcome
-from ..storage import ResultStore, RunStore, ScrapeDB
 from ..validation import validate
 from .base import BaseScraper
+from .price_fields import normalize_price_fields
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class DirectAPIScraper(BaseScraper):
             # use independent channels. Convert to scraper-scoped ScrapeFailed
             # so router can try the next scraper. If all scrapers' channels
             # are down, router's _derive_reason promotes back to infra_failure.
-            raise ScrapeFailed(
+            failure = ScrapeFailed(
                 site=self.site,
                 url=url,
                 scraper_name=self.__class__.__name__,
@@ -66,8 +66,12 @@ class DirectAPIScraper(BaseScraper):
                 signature=(self.site, "api_infra", ""),
                 errors=[f"BrightDataInfraError: {e}"],
             )
+            self._record_failure(
+                url, host, failure, int((time.monotonic() - start) * 1000)
+            )
+            raise failure
         except Exception as e:
-            raise ScrapeFailed(
+            failure = ScrapeFailed(
                 site=self.site,
                 url=url,
                 scraper_name=self.__class__.__name__,
@@ -75,6 +79,10 @@ class DirectAPIScraper(BaseScraper):
                 signature=(self.site, "api_fetch", ""),
                 errors=[str(e)],
             )
+            self._record_failure(
+                url, host, failure, int((time.monotonic() - start) * 1000)
+            )
+            raise failure
 
         if self._is_not_found(json_data):
             latency = int((time.monotonic() - start) * 1000)
@@ -85,6 +93,9 @@ class DirectAPIScraper(BaseScraper):
 
         mapped = self._map_fields(json_data, url)
         mapped = self._apply_heal_cache(json_data, mapped)
+        mapped, dropped = normalize_price_fields(mapped)
+        if dropped:
+            logger.info("price contract dropped %s (url=%s)", dropped, url)
         product, errors = validate(mapped)
 
         if product is not None:
@@ -115,14 +126,19 @@ class DirectAPIScraper(BaseScraper):
                 return product
             errors.extend(errors2)
 
-        raise ScrapeFailed(
+        failure = ScrapeFailed(
             site=self.site,
             url=url,
             scraper_name=self.__class__.__name__,
             failed_stage="api_malformed",
             signature=(self.site, "gate_validation", ""),
             errors=errors,
+            snapshot=json.dumps(json_data, default=str)[:8000],
         )
+        self._record_failure(
+            url, host, failure, int((time.monotonic() - start) * 1000)
+        )
+        raise failure
 
     def _apply_heal_cache(
         self, json_data: dict[str, Any], mapped: dict[str, Any]
@@ -156,42 +172,3 @@ class DirectAPIScraper(BaseScraper):
         # Simpler: skip caching for Phase 0 and let each heal recompute.
         # (Kept as a hook — actual caching implementation deferred to Phase 1.)
         pass
-
-    def _record_run(
-        self,
-        url: str,
-        host: str,
-        outcome: str,
-        path: str,
-        model_used: Optional[str] = None,
-        latency: Optional[int] = None,
-    ) -> None:
-        try:
-            cfg = get_config()
-            db = ScrapeDB(cfg.db_path)
-            db.init_db()
-            store = RunStore(db, cfg.scrape_runs_dedup_window_seconds)
-            if not store.is_duplicate(url):
-                store.record(
-                    url=url,
-                    host=host,
-                    site=self.site,
-                    scraper=self.__class__.__name__,
-                    outcome=outcome,
-                    path=path,
-                    model_used=model_used,
-                    latency_ms=latency,
-                )
-            db.close()
-        except Exception:
-            logger.exception("Failed to record scrape run")
-
-    def _store_result(self, product: ProductData) -> None:
-        try:
-            cfg = get_config()
-            db = ScrapeDB(cfg.db_path)
-            db.init_db()
-            ResultStore(db).append(product)
-            db.close()
-        except Exception:
-            logger.exception("Failed to store result")

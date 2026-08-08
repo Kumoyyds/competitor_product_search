@@ -25,14 +25,7 @@ from ..repair import (
     SandboxViolation,
     run_in_sandbox,
 )
-from ..storage import (
-    EscalationStore,
-    ParserStore,
-    PhraseStore,
-    ResultStore,
-    RunStore,
-    ScrapeDB,
-)
+from ..storage import EscalationStore, ParserStore, PhraseStore, RunStore, ScrapeDB
 from ..validation import validate
 from .base import BaseScraper
 
@@ -69,7 +62,7 @@ class HTMLScraper(BaseScraper):
             # instead of escalating immediately. If every scraper's channel is
             # also down, _derive_reason() at the router promotes this back to
             # `infra_failure` on the final escalation.
-            raise ScrapeFailed(
+            failure = ScrapeFailed(
                 site=self.site,
                 url=url,
                 scraper_name=self.__class__.__name__,
@@ -77,8 +70,12 @@ class HTMLScraper(BaseScraper):
                 signature=(self.site, "extraction_infra", ""),
                 errors=[f"BrightDataInfraError: {e}"],
             )
+            self._record_failure(
+                url, host, failure, int((time.monotonic() - start) * 1000)
+            )
+            raise failure
         except Exception as e:
-            raise ScrapeFailed(
+            failure = ScrapeFailed(
                 site=self.site,
                 url=url,
                 scraper_name=self.__class__.__name__,
@@ -86,6 +83,10 @@ class HTMLScraper(BaseScraper):
                 signature=(self.site, "extraction", ""),
                 errors=[str(e)],
             )
+            self._record_failure(
+                url, host, failure, int((time.monotonic() - start) * 1000)
+            )
+            raise failure
 
         # Step 2: Invalid target pre-detection (§5.15)
         phrases = self._load_phrases()
@@ -149,6 +150,9 @@ class HTMLScraper(BaseScraper):
             return outcome
 
         # outcome is ScrapeFailed
+        self._record_failure(
+            url, host, outcome, int((time.monotonic() - start) * 1000)
+        )
         raise outcome
 
     # ------------------------------------------------------------------
@@ -313,48 +317,6 @@ class HTMLScraper(BaseScraper):
             return phrases
         except Exception:
             return []
-
-    def _record_run(
-        self,
-        url: str,
-        host: str,
-        outcome: str,
-        path: str,
-        winning_parser_id: Optional[int] = None,
-        model_used: Optional[str] = None,
-        latency: Optional[int] = None,
-    ) -> None:
-        try:
-            cfg = get_config()
-            db = ScrapeDB(cfg.db_path)
-            db.init_db()
-            store = RunStore(db, cfg.scrape_runs_dedup_window_seconds)
-            if not store.is_duplicate(url):
-                store.record(
-                    url=url,
-                    host=host,
-                    site=self.site,
-                    scraper=self.__class__.__name__,
-                    outcome=outcome,
-                    path=path,
-                    winning_parser_id=winning_parser_id,
-                    model_used=model_used,
-                    latency_ms=latency,
-                )
-            db.close()
-        except Exception:
-            logger.exception("Failed to record scrape run")
-
-    def _store_result(self, product: ProductData) -> None:
-        try:
-            cfg = get_config()
-            db = ScrapeDB(cfg.db_path)
-            db.init_db()
-            ResultStore(db).append(product)
-            db.close()
-        except Exception:
-            logger.exception("Failed to store result")
-
 
 # ---------------------------------------------------------------------------
 # Fast-path distrust guard (M15)
