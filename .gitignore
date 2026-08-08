@@ -11,3 +11,6 @@ input/
 # SQLite runtime journals (the .db itself stays tracked)
 *.db-shm
 *.db-wal
+scraping.db
+scraping.db-shm
+scraping.db-wal
