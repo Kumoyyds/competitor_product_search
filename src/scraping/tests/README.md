@@ -4,7 +4,7 @@ Each milestone's verification is persisted here so you can audit and re-run at a
 
 ## Milestone Overview
 
-The scraping module was built incrementally across 22 milestones (M1–M22). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
+The scraping module was built incrementally across 23 milestones (M1–M23). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
 
 ### M1 — ProductData Schema + Two Gates
 Defines the canonical `ProductData` Pydantic model (url, website, title, price, currency, in_stock, image_urls, …) and the two-gate validation pipeline:
@@ -128,6 +128,14 @@ Bootstrap a new site with zero manual parser writing. Uses **real Qwen API**:
 - Keeps the HTML pre-pass unit-price evidence filter, while changing parser guidance to ignore per-unit rates as product prices.
 - Adds deterministic and prompt-level protection so JSON healing and cached mappings cannot feed unit-price keys or values into `price`, `list_price`, or `membership_price`.
 
+### M23 — Argos runtime repair and site profiles
+
+- Adds `sites.yaml` and fail-open site-aware page-type/cold-start policy.
+- Prevents Argos Nectar point accrual from masquerading as membership pricing.
+- Anchors promotion prices to the canonical offer and filters reference/member candidates structurally across all 16 reviewed Argos/Tesco golden snapshots.
+- Reuses validated Argos parsers on the fast path, supports `tuc...` URL IDs, and gives DeepSeek thinking nodes a 65536-token output budget.
+- `verify_m23.py` is fully offline and opens the project database read-only.
+
 ### M12 — End-to-End Live Scraping
 
 Runs the full scraping pipeline against a per-site URL batch (`src/scraping/data/tesco_test.xlsx.xlsx` or `argos_test.xlsx.xlsx`, both 3-column `label / url / host`) using real BrightData and real Qwen. No mocking — this exercises the complete live pipeline end-to-end.
@@ -238,8 +246,7 @@ Key aspects:
 | `verify_m13_output.log` | Latest run — 9 checks, 0 failed | — |
 | `verify_m14.py` | M14 — Price-aware pre-pass + anchoring (8 fixtures), prompt rewrite (evidence-driven, de-Tesco-ified), membership golden bucket (5 types), API-route membership mapping | offline (Tier 1+2); real Qwen (Tier 3, best-effort) |
 | `verify_m14_output.log` | Latest run — 41 checks, 0 failed (Tier 1+2) | — |
-| `verify_m15.py` | M15 — Promotion signal detection (structural, site-agnostic), availability_raw normalization (schema.org token recovery), gate2 structural price rules, fast-path distrust guard, prompt rewrite (visual-value-bar-first) | offline |
-| `verify_m15_output.log` | Latest run — 44 checks, 0 failed | — |
+| `verify_m15_output.log` | Historical M15 run — 44 checks, 0 failed. The original script is absent; M23 re-covers promotion and fast-path behavior against current goldens. | — |
 | `verify_m17.py` | M17 — Excel input contract, config policy, declared buckets, caps/URL dedup, provenance migration, dry-run/apply pruning | offline |
 | `verify_m17_output.log` | Latest run — 39 checks, 0 failed | — |
 | `verify_m17_live_output.log` | Bounded live smoke: round 1 exposed invalid BD token + hard-coded Qwen model; after fixes, round 2 used exactly 4 BD + 1 Qwen calls with zero retries — BD 4/4 HTTP 200, Qwen parser generated, 3/4 rows passed gates | **real BrightData + Qwen** |
@@ -253,10 +260,13 @@ Key aspects:
 | `verify_m21_output.log` | Latest run — 31 checks, 0 failed | — |
 | `verify_m22.py` | M22 — ProductData/Amazon unit-price removal, JSON-heal contamination guard, cache guard, and prompt rules | offline |
 | `verify_m22_output.log` | Latest run — 21 checks, 0 failed | — |
+| `verify_m23.py` | M23 — 16-golden promotion alignment, active-parser fast path, site profiles, Argos IDs, cold-start input, and DeepSeek thinking cap | offline |
+| `verify_m23_output.log` | Latest run — 90 checks, 0 failed | — |
+| `verify_m23_live_output.log` | Argos + Tesco live smoke — both reused active parsers through the HTML fast path | **real BrightData** |
 | `verify_clear_db.py` | `ScrapeDB.clear_site()` — FK-safe delete ordering, atomicity, idempotency, cross-site isolation, schema preservation, foreign_keys=OFF compat | offline |
 | `verify_clear_db_output.log` | Latest run — 42 checks, 0 failed | — |
 
-**Total: 430+ checks passed across all milestones. M22 adds 21 offline checks for unit-price removal and API contamination guards.**
+**Total: 520+ checks passed across all milestones. M23 adds 90 offline checks for Argos/Tesco promotion and fast-path correctness.**
 
 ## How to re-run
 
@@ -274,13 +284,13 @@ python -m src.scraping.tests.verify_m11  | tee src/scraping.tests/verify_m11_out
 python -m src.scraping.tests.verify_m12  | tee src/scraping/tests/verify_m12_output.log
 python -m src.scraping.tests.verify_m13  | tee src/scraping/tests/verify_m13_output.log
 python -m src.scraping.tests.verify_m14  | tee src/scraping/tests/verify_m14_output.log
-python -m src.scraping.tests.verify_m15  | tee src/scraping/tests/verify_m15_output.log
 python -m src.scraping.tests.verify_m17  | tee src/scraping/tests/verify_m17_output.log
 python -m src.scraping.tests.verify_m18  | tee src/scraping/tests/verify_m18_output.log
 python -m src.scraping.tests.verify_m19  | tee src/scraping/tests/verify_m19_output.log
 python -m src.scraping.tests.verify_m20  | tee src/scraping/tests/verify_m20_output.log
 python -m src.scraping.tests.verify_m21  | tee src/scraping/tests/verify_m21_output.log
 python -m src.scraping.tests.verify_m22  | tee src/scraping/tests/verify_m22_output.log
+python -m src.scraping.tests.verify_m23  | tee src/scraping/tests/verify_m23_output.log
 python src/scraping/tests/verify_clear_db.py | tee src/scraping/tests/verify_clear_db_output.log
 ```
 
@@ -310,8 +320,9 @@ On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTH
 | M20 | Canonical price-field contract, strict ordering Gate 2, prompt and cold-start feedback normalization | offline | offline |
 | M21 | Human-terminated cold-start repair, repeating final rung, bounded feedback ledger, partial save | offline | offline |
 | M22 | ProductData unit-price removal, API JSON-heal and cache contamination guards | offline | offline |
+| M23 | Argos runtime promotion repair, site profiles, anchored prices, thinking output cap | offline | offline |
 
-**Total: 430+ checks passed across all milestones.**
+**Total: 520+ checks passed across all milestones.**
 
 ## LLM-dependent tests
 

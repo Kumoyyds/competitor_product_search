@@ -8,7 +8,7 @@ M21.1 - final rung repeats and feedback stays round-scoped
   [PASS] repeated final rung keeps its temperature
   [PASS] thinking stays enabled on the final rung
   [PASS] last prompt contains only immediately prior correction
-  [PASS] repair prompt length does not grow monotonically  ([10089, 10089, 10089, 10089])
+  [PASS] repair prompt length does not grow monotonically  ([10006, 10006, 10006, 10006])
   [PASS] prompt attempt header uses the true round index
 
 ============================================================================

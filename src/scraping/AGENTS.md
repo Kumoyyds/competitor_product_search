@@ -1,6 +1,6 @@
 # Scraping Module
 
-**Status**: M1–M22 complete. Full Phase 0 lifecycle. M22 removes ambiguous unit-price fields and guards API healing against per-unit price contamination. See `src/scraping/tests/`.
+**Status**: M1–M23 complete. Full Phase 0 lifecycle. M23 fixes Argos runtime promotion detection, adds site profiles, and separates DeepSeek thinking output budgets. See `src/scraping/tests/`.
 
 ## Responsibility
 
@@ -44,7 +44,7 @@ BaseScraper (ABC)
 
 ### Repair Ladder (§5.5)
 
-Config-driven: attempt count = `len(cfg.repair_model_ladder)`. Each attempt registers a full `AttemptRecord` (code, capture summary, errors) fed back to the next attempt — no index misalignment, works for any node count. Default: `["qwen-3.7-plus", "qwen-3.7-plus"]` (2 attempts; previously 4, reduced in `fb68f14`).
+Config-driven: attempt count = `len(cfg.repair_model_ladder)`. Each attempt registers a full `AttemptRecord` (code, capture summary, errors) fed back to the next attempt — no index misalignment, works for any node count. Default: `["deepseek-v4-flash", "deepseek-v4-flash"]` (2 attempts; previously 4, reduced in `fb68f14`).
 
 When the ladder has 2 nodes, Turn B (source_absence) is skipped (attempt 1 is the last, and source_absence only runs on non-last attempts). The logic is:
 
@@ -126,6 +126,8 @@ src/scraping/
 ├── router.py               # Two-hop dispatch + fallback loop + escalation writer (M10)
 ├── registry.py             # @register_scraper decorator
 ├── hosts.yaml              # host → site mapping (edit here to add sites)
+├── sites.yaml              # site → page-type availability / cold-start profile
+├── site_profile.py         # fail-open site-profile loader and policy accessors
 ├── coldstart.py            # CLI cold start (M11/M17/M19: validated Excel + review/repair loop + golden HTML reuse)
 ├── models/                 # ProductData (M15: availability_raw normalizer), enums, InvalidTargetResult
 ├── validation/             # gate1 (Pydantic), gate2 (feasible_check + M15 structural price rules)
@@ -176,6 +178,7 @@ src/scraping/
 | M20 | Canonical price-field contract + Gate ordering rules + cold-start clear-value feedback | ✔ verify_m20.py |
 | M21 | Human-terminated cold-start repair + repeating final rung + sliding feedback/ledger + partial save | ✔ verify_m21.py |
 | M22 | Remove ProductData unit-price fields + guard API JSON healing/cache against unit-price contamination | ✔ verify_m22.py |
+| M23 | Argos promotion/runtime repair + site profiles + anchored prices + thinking output cap | ✔ verify_m23.py |
 
 ## Public API
 
@@ -227,7 +230,7 @@ The workbook requires `page_type` + `url`. Mandatory coverage is validated befor
 
 Parser generation emits the whole `parse()` source as a JSON-escaped string, so replies run long. Providers apply a small default when no cap is requested — DeepSeek uses 8192, which truncates the reply mid-JSON; because `providers.py` sets `response_format={"type": "json_object"}`, langchain takes the OpenAI SDK's `.parse()` path, which raises `LengthFinishReasonError` and **discards the partial content**. Cold start then had nothing to salvage and aborted the whole run.
 
-Each `ProviderSpec` therefore registers `max_output_tokens` (DeepSeek: 32768, well under its 384K ceiling); `None` keeps the provider default. `make_chat_client(..., max_tokens=N)` overrides per call.
+Each `ProviderSpec` therefore registers `max_output_tokens` (DeepSeek: 32768, well under its 384K ceiling); `None` keeps the provider default. Providers may also register `thinking_max_output_tokens` when reasoning and visible content share the same budget (DeepSeek: 65536). `make_chat_client(..., max_tokens=N)` overrides both per call.
 
 The cap is injected into `extra_body` as a body-level `max_tokens`, **not** passed as `ChatOpenAI(max_tokens=...)`: langchain rewrites that field to `max_completion_tokens`, which DeepSeek accepts and silently ignores (verified live — a 12-token cap truncated the reply as `max_tokens` and had no effect as `max_completion_tokens`). Anything raising a cap must keep using the body-level name.
 
@@ -280,6 +283,16 @@ See [tests/README.md](tests/README.md) for the full inventory (430+ checks, incl
 - JSON healing rejects unit-price source keys and per-unit value shapes for `price`, `list_price`, and `membership_price`, both for fresh LLM mappings and cached mappings.
 
 **Verification**: `verify_m22.py` — 21 offline checks for model/mapping removal, source-key and value-shape detection, poisoned and legitimate healing, cache replay, and prompt wording.
+
+## M23 — Argos runtime repair and site profiles
+
+- `sites.yaml` declares per-site page-type availability and cold-start requirements. Undeclared sites and types fail open to the global config; unavailable types can never become mandatory. Add or review a profile when onboarding a site whose commercial page types differ from the global defaults.
+- Promotion detection accepts a site veto, no longer treats loyalty-point accrual such as Argos Nectar points as gated pricing, and anchors canonical `price` to trusted parser/JSON-LD values. Only visibly struck or Was/RRP-labelled higher values become `list_price`; visibly gated lower values become `membership_price`.
+- The fast-path guard passes validated product prices and the site into the shared detector, so Argos standard pages reuse their active parser instead of entering repair and DCA fallback. Argos URL-product IDs now accept alphanumeric `tuc...` values.
+- DeepSeek thinking nodes receive a separate 65536-token output cap because reasoning and visible parser content share the output budget; non-thinking nodes remain at 32768.
+- Cold-start input and coverage checks use the site profile, and accepted results classified into a declared-unavailable bucket produce a conspicuous reverse-validation warning.
+
+**Verification**: `verify_m23.py` — 90 offline checks across all 16 reviewed Argos/Tesco golden snapshots, active-parser fast-path reuse, unanchored fallback safety, site profiles, alphanumeric Argos IDs, cold-start rejection, and DeepSeek token routing.
 
 ## Observations from M12 Qwen Live Run (2026-07-19)
 

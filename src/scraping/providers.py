@@ -28,6 +28,9 @@ class ProviderSpec:
     # replies mid-JSON; the SDK then raises LengthFinishReasonError and drops
     # the partial content. ``None`` keeps the provider default.
     max_output_tokens: Optional[int] = None
+    # Thinking providers count reasoning and visible content against one output
+    # budget, so their final ladder rung may require a larger dedicated cap.
+    thinking_max_output_tokens: Optional[int] = None
 
 
 PROVIDERS: dict[str, ProviderSpec] = {
@@ -53,6 +56,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
         # V4 allows up to 384K output; 32K is far above any parser we generate
         # while staying well clear of the cap.
         max_output_tokens=32768,
+        thinking_max_output_tokens=65536,
     ),
 }
 
@@ -145,16 +149,24 @@ def make_chat_client(
     # that field to `max_completion_tokens`, which DeepSeek accepts and then
     # silently ignores (verified — the reply runs past the requested cap).
     # `max_tokens` is the parameter these OpenAI-compatible endpoints honor.
-    output_cap = max_tokens if max_tokens is not None else spec.max_output_tokens
+    output_cap = (
+        max_tokens
+        if max_tokens is not None
+        else spec.thinking_max_output_tokens
+        if enable_thinking and spec.thinking_max_output_tokens is not None
+        else spec.max_output_tokens
+    )
     if output_cap is not None:
         extra_body = {**(extra_body or {}), "max_tokens": output_cap}
 
     logger.info(
-        "Creating LLM client purpose=%s provider=%s model=%s base_url=%s max_tokens=%s",
+        "Creating LLM client purpose=%s provider=%s model=%s base_url=%s "
+        "thinking=%s max_tokens=%s",
         purpose or "unspecified",
         provider_name,
         bare_model,
         base_url,
+        enable_thinking,
         output_cap if output_cap is not None else "provider-default",
     )
     return ChatOpenAI(

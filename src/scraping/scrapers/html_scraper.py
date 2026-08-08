@@ -202,7 +202,7 @@ class HTMLScraper(BaseScraper):
                 if product is not None:
                     # --- fast-path distrust guard (M15) ---
                     distrust_reason = _fast_path_sane(
-                        result, product, _ensure_soup()
+                        result, product, _ensure_soup(), self.site
                     )
                     if distrust_reason is not None:
                         errors.append(
@@ -361,7 +361,12 @@ class HTMLScraper(BaseScraper):
 # ---------------------------------------------------------------------------
 
 
-def _fast_path_sane(raw_result: dict[str, Any], product: Any, soup: Any) -> Optional[str]:
+def _fast_path_sane(
+    raw_result: dict[str, Any],
+    product: Any,
+    soup: Any,
+    site: str | None = None,
+) -> Optional[str]:
     """Check whether a fast-path (reused-parser) output is structurally credible.
 
     Returns None if the output appears sane, or a reason string if it should
@@ -389,7 +394,16 @@ def _fast_path_sane(raw_result: dict[str, Any], product: Any, soup: Any) -> Opti
     try:
         from src.scraping.repair.prepass import detect_promotion  # type: ignore[import]
 
-        signal = detect_promotion(soup)
+        trusted = {
+            str(value)
+            for value in (
+                product.price,
+                product.list_price,
+                product.membership_price,
+            )
+            if value is not None
+        }
+        signal = detect_promotion(soup, trusted, site=site)
         if signal and signal.get("kind") in ("discount", "membership"):
             has_list = (
                 product.list_price is not None
@@ -406,6 +420,8 @@ def _fast_path_sane(raw_result: dict[str, Any], product: Any, soup: Any) -> Opti
                     f"but parser returned neither list_price nor membership_price"
                 )
     except Exception:
-        pass  # non-fatal — if promotion detection fails, trust the parser
+        # Non-fatal — if promotion detection fails, trust the parser, but leave
+        # enough evidence for production diagnosis.
+        logger.debug("fast-path promotion detection failed", exc_info=True)
 
     return None  # sane

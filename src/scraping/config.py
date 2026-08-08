@@ -49,7 +49,7 @@ class ScrapingConfig(BaseSettings):
     # model name here plus that provider's key in .env. Edit both ladder lists
     # together to change attempt count (their lengths are checked at runtime).
     repair_model_ladder: list[str] = Field(
-        default=["qwen3.7-plus", "qwen3.7-plus"]
+        default=["deepseek-v4-flash", "deepseek-v4-flash"]
     )
     repair_temperature_ladder: list[float] = Field(
         default=[0.1, 0.4]

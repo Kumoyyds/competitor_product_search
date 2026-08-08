@@ -1,0 +1,19 @@
+# Declarative site facts. These are constraints, not detectors: detection logic
+# stays in repair/prepass.py, while profiles can veto impossible page types and
+# define cold-start coverage requirements.
+argos:
+  page_types:
+    standard:     {available: true,  cold_start_required: true}
+    discounted:   {available: true,  cold_start_required: true}
+    out_of_stock: {available: true,  cold_start_required: false}
+    multipack:    {available: true,  cold_start_required: false}
+    # "Collect N Nectar points" accrues rewards; it is not a gated member price.
+    membership:   {available: false}
+
+tesco:
+  page_types:
+    standard:     {available: true,  cold_start_required: true}
+    discounted:   {available: true,  cold_start_required: true}
+    out_of_stock: {available: true,  cold_start_required: true}
+    multipack:    {available: true,  cold_start_required: false}
+    membership:   {available: true,  cold_start_required: true, hints: ["clubcard"]}

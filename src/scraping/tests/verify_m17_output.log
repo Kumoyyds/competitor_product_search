@@ -33,13 +33,13 @@ Legal page_type values: standard, out_of_stock, discounted, multipack, membershi
 M17.3 - cold-start caps, declared buckets, and shortfalls
 ========================================================================
   [PASS] cold start uses configured first cold-start model  (configured-coldstart-model)
-  [PASS] cap seeds only three goldens  ({'parser_id': 1, 'seeded_goldens': 3, 'accepted': 3, 'aborted': False, 'coverage_shortfall': ['out_of_stock', 'discounted', 'membership']})
+  [PASS] cap seeds only three goldens  ({'parser_id': 1, 'seeded_goldens': 3, 'accepted': 3, 'aborted': False, 'partial': False, 'coverage_shortfall': ['out_of_stock', 'discounted', 'membership']})
   [PASS] spares skipped without prompting  (3)
   [PASS] spare message emitted
   [PASS] declared bucket wins
   [PASS] mismatch warning shown
   [PASS] cold-start provenance stored
-  [PASS] blocked persistence leaves all mandatory buckets short  ({'parser_id': None, 'seeded_goldens': 0, 'accepted': 3, 'aborted': True, 'coverage_shortfall': ['standard', 'out_of_stock', 'discounted', 'membership']})
+  [PASS] blocked persistence leaves all mandatory buckets short  ({'parser_id': None, 'seeded_goldens': 0, 'accepted': 3, 'aborted': True, 'partial': False, 'coverage_shortfall': ['standard', 'out_of_stock', 'discounted', 'membership']})
   [PASS] rejection blocks all seeding
   [PASS] rejection returns exit code 1
   [PASS] failure block emitted

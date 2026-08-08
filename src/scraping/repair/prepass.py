@@ -15,7 +15,10 @@ from __future__ import annotations
 import json as _json
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Optional
+
+from ..site_profile import page_type_available
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -77,7 +80,7 @@ _SKIP_JSONLD_PATHS: set[str] = {"shippingrate", "shipping_rate", "shippingdetail
 
 # URL product-id extraction — per site; new sites add a line here
 _URL_PID_PATTERNS: dict[str, str] = {
-    "argos": r"/product/(\d+)",
+    "argos": r"/product/([A-Za-z0-9]+)",
     "amazon": r"/dp/([A-Z0-9]{10})",
     "tesco": r"/(?:shop|groceries)/[^/]+/products/(\d+)",
 }
@@ -110,13 +113,16 @@ _PROMOTION_CONTAINER_HINTS: set[str] = {
     "pdp-buybox",
 }
 
+# Loyalty points accrued by buying a product are not gated-price evidence, so
+# programs used only for point collection (for example Nectar on Argos) do not
+# belong in this generic gating lexicon.
 # Token hints for membership / loyalty-program gating anywhere in the price
 # container's class/id/data-* attributes or visible text.  A price gated by a
 # named program is a `membership_price`, not a `list_price` discount.
 # NOTE: these are *examples* — the structural check also inspects visible text
 # for generic gating phrases ("only available with", "member price", etc.).
 _MEMBERSHIP_GATING_HINTS: set[str] = {
-    "clubcard", "member", "loyalty", "prime", "nectar",
+    "clubcard", "member", "loyalty", "prime",
     "member-price", "membership-price", "loyalty-price",
     "clubcard-price", "clubcard-promotion", "member-only",
     "members-only", "sign-in-to-save", "logged-in-price",
@@ -257,7 +263,7 @@ def build_price_aware_context(
     trusted_vals: set[str] = {
         ev.value for ev in price_evidence if ev.anchor_relation == "inside_main"
     }
-    ctx.promotion_signal = _collect_promotion_signal(soup, trusted_vals)
+    ctx.promotion_signal = _collect_promotion_signal(soup, trusted_vals, site)
 
     # --- budget allocation ---
     ctx.head_excerpt, ctx.main_excerpt = _build_excerpts(
@@ -997,7 +1003,11 @@ def _normalize_text(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def detect_promotion(soup, trusted_values: set[str] | None = None) -> Optional[dict]:
+def detect_promotion(
+    soup,
+    trusted_values: set[str] | None = None,
+    site: str | None = None,
+) -> Optional[dict]:
     """Classify the main price container as discount, membership, or neither.
 
     Structural detection — no site-hard-coded strings.  The lexicons above
@@ -1009,6 +1019,7 @@ def detect_promotion(soup, trusted_values: set[str] | None = None) -> Optional[d
         page.
       - Check for membership gating: program-badge class, gating text phrases,
         or schema.org validForMemberTier corroborated by visible gating marker.
+        An optional site profile can veto a page type known to be unavailable.
       - Check for reference-price signal: a struck/old/RRP price with a
         non-struck current price nearby.
       - Resolve: gating → membership; reference-only → discount; neither → None.
@@ -1027,52 +1038,137 @@ def detect_promotion(soup, trusted_values: set[str] | None = None) -> Optional[d
     has_gating, gating_program = _check_membership_gating(
         container, container_text, container_classes
     )
+    if has_gating and site and not page_type_available(site, "membership"):
+        # Veto only the impossible membership interpretation. A real Was/RRP
+        # discount in the same container must still be detected below.
+        has_gating, gating_program = False, None
 
     # 3. Find all price amounts in the container
     prices_in_container = _find_prices_in_element(container)
     if not prices_in_container:
         return None
 
-    # 4. Classify
-    # Find the lowest and highest price in the container
-    numeric_prices = [(float(p["value"]), p) for p in prices_in_container]
+    # 4. Classify. A trusted main-offer value always maps to canonical `price`;
+    # auxiliary amounts (instalments, gift cards, bundles) cannot displace it.
+    numeric_prices = [(_price_decimal(p["value"]), p) for p in prices_in_container]
+    numeric_prices = [(value, p) for value, p in numeric_prices if value is not None]
     numeric_prices.sort(key=lambda x: x[0])
+    if not numeric_prices:
+        return None
 
-    current_price = numeric_prices[0][1]  # lowest = current
-    ref_candidates = [p for v, p in numeric_prices if v > float(current_price["value"])]
+    trusted_decimals = {
+        value
+        for raw in (trusted_values or set())
+        if (value := _price_decimal(raw)) is not None
+    }
+    detached_member_price: dict | None = None
+    if trusted_decimals and (not site or page_type_available(site, "membership")):
+        # Some retailers render the regular price and loyalty value-bar as
+        # siblings. The trusted container then holds only `price`; consult the
+        # detector's unanchored best container for the visibly gated lower
+        # value and keep the trusted value as the regular-price anchor.
+        gated_container = _find_price_container(soup)
+        if gated_container is not None:
+            gated_text = gated_container.get_text()
+            gated_classes = _element_class_tokens(gated_container)
+            detached_gating, detached_program = _check_membership_gating(
+                gated_container, gated_text, gated_classes
+            )
+            if detached_gating:
+                lower_gated = [
+                    p
+                    for p in _find_prices_in_element(gated_container)
+                    if (value := _price_decimal(p["value"])) is not None
+                    and value < max(trusted_decimals)
+                ]
+                if lower_gated:
+                    detached_member_price = max(
+                        lower_gated, key=lambda p: _price_decimal(p["value"])
+                    )
+                    has_gating = True
+                    gating_program = detached_program
+                    container_text = gated_text
+    trusted_candidates = [
+        (value, p) for value, p in numeric_prices if value in trusted_decimals
+    ]
+    non_reference_trusted = [
+        (value, p)
+        for value, p in trusted_candidates
+        if not p.get("struck_through")
+        and not _has_reference_label(p.get("label_text", ""))
+    ]
 
-    has_reference = any(
-        p.get("struck_through") or _has_reference_label(p.get("label_text", ""))
-        for p in ref_candidates
-    )
+    if non_reference_trusted:
+        current_value, current_price = (
+            max(non_reference_trusted, key=lambda item: item[0])
+            if has_gating
+            else min(non_reference_trusted, key=lambda item: item[0])
+        )
+        anchored = True
+    elif trusted_candidates:
+        current_value, current_price = trusted_candidates[0]
+        anchored = True
+    else:
+        current_value, current_price = numeric_prices[0]
+        anchored = False
+
+    higher_candidates = [p for value, p in numeric_prices if value > current_value]
+    ref_candidates = [
+        p
+        for p in higher_candidates
+        if p.get("struck_through") or _has_reference_label(p.get("label_text", ""))
+    ]
 
     # Resolve
     if has_gating:
-        # Membership: the gated price → membership_price; regular → price
-        reference_price = None
-        member_price = current_price
-        regular_price = None
-        if ref_candidates:
-            # The higher, non-gated price is the regular price
-            regular_candidate = ref_candidates[-1]  # highest reference
-            regular_price = regular_candidate
-            # If gating text surrounds the current (lowest) price, it's the member price
-            member_price = current_price
+        if anchored:
+            lower_candidates = [
+                p for value, p in numeric_prices if value < current_value
+            ]
+            gated_candidates = [
+                p
+                for p in lower_candidates
+                if _has_membership_price_marker(p, gating_program)
+            ]
+            member_price = detached_member_price or (
+                max(gated_candidates, key=lambda p: _price_decimal(p["value"]))
+                if gated_candidates
+                else None
+            )
+            return {
+                "kind": "membership",
+                "member_price": member_price["value"] if member_price else None,
+                "regular_price": current_price["value"],
+                "reference_price": None,
+                "current_price": current_price["value"],
+                "gated_by": gating_program,
+                "evidence_text": container_text[:400].strip(),
+            }
+
+        # No trusted anchor: preserve the pre-M23 min/max fallback.
+        fallback_current = numeric_prices[0][1]
+        fallback_refs = [
+            p for value, p in numeric_prices if value > numeric_prices[0][0]
+        ]
+        regular_price = fallback_refs[-1] if fallback_refs else None
         return {
             "kind": "membership",
-            "member_price": member_price["value"],
+            "member_price": fallback_current["value"],
             "regular_price": regular_price["value"] if regular_price else None,
             "reference_price": None,
-            "current_price": current_price["value"],
+            "current_price": fallback_current["value"],
             "gated_by": gating_program,
             "evidence_text": container_text[:400].strip(),
         }
 
-    if has_reference and ref_candidates:
-        # Discount: struck/reference → list_price; current → price
+    if ref_candidates:
+        # Only an explicitly struck/Was/RRP higher price may become list_price.
+        reference_price = max(
+            ref_candidates, key=lambda p: _price_decimal(p["value"])
+        )
         return {
             "kind": "discount",
-            "reference_price": ref_candidates[-1]["value"],
+            "reference_price": reference_price["value"],
             "current_price": current_price["value"],
             "member_price": None,
             "regular_price": None,
@@ -1092,6 +1188,23 @@ def detect_promotion(soup, trusted_values: set[str] | None = None) -> Optional[d
     }
 
 
+def _has_membership_price_marker(price: dict, gating_program: str | None) -> bool:
+    """Whether one price candidate itself carries visible gating evidence."""
+    evidence = f"{price.get('label_text', '')} {price.get('css_hint', '')}".lower()
+    if gating_program and gating_program in evidence:
+        return True
+    return any(hint in evidence for hint in _MEMBERSHIP_GATING_HINTS) or any(
+        marker in evidence for marker in _GATING_TEXT_MARKERS
+    )
+
+
+def _price_decimal(value: object) -> Decimal | None:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
 def _find_price_container(soup, trusted_values: set[str] | None = None):
     """Find the primary price container in the DOM.
 
@@ -1102,7 +1215,8 @@ def _find_price_container(soup, trusted_values: set[str] | None = None):
             comparison, not substring — "2" won't match "2.25")
          b. Has buy-box-like data-auto attribute (pdp-buy-box etc.)
          c. Mid-sized text (20-2000 chars — the buy-box, not the whole page)
-         d. DOM proximity to the h1
+         d. Contains both a trusted current price and a labelled higher price
+         e. Membership markers and DOM proximity to the h1
       3. Return the highest-scoring container.
     """
     from bs4 import Tag
@@ -1111,7 +1225,6 @@ def _find_price_container(soup, trusted_values: set[str] | None = None):
         trusted_values = set()
 
     # Normalize trusted values to Decimal for numeric comparison
-    from decimal import Decimal, InvalidOperation
     _trusted_dec: set[Decimal] = set()
     for tv in trusted_values:
         try:
@@ -1179,7 +1292,31 @@ def _find_price_container(soup, trusted_values: set[str] | None = None):
         if tag_prices:
             score += 25
 
-        # e. Contains membership/loyalty gating keywords — a slight bonus so
+        # e. A trusted current price plus an explicitly struck/Was/RRP higher
+        # price identifies the complete promotion wrapper, not a narrow child
+        # containing only the offer price.
+        if _trusted_dec and tag_prices:
+            tag_values = [
+                (value, p)
+                for p in tag_prices
+                if (value := _price_decimal(p["value"])) is not None
+            ]
+            present_values = {value for value, _ in tag_values}
+            if any(
+                trusted in present_values
+                and any(
+                    value > trusted
+                    and (
+                        p.get("struck_through")
+                        or _has_reference_label(p.get("label_text", ""))
+                    )
+                    for value, p in tag_values
+                )
+                for trusted in _trusted_dec
+            ):
+                score += 40
+
+        # f. Contains membership/loyalty gating keywords — a slight bonus so
         #    that a Clubcard/Prime value-bar wins over a regular buy-box when
         #    both contain prices but only one carries the membership signal.
         tag_text_lower = tag.get_text().lower()
@@ -1188,7 +1325,7 @@ def _find_price_container(soup, trusted_values: set[str] | None = None):
                 score += 10
                 break
 
-        # f. Proximity to h1 (closer = higher score)
+        # g. Proximity to h1 (closer = higher score)
         if h1_tag is not None:
             try:
                 # Prefer containers that are siblings of or near the h1
@@ -1355,9 +1492,13 @@ def _element_class_tokens(element) -> list[str]:
     return tokens
 
 
-def _collect_promotion_signal(soup, trusted_values: set[str] | None = None) -> Optional[dict]:
+def _collect_promotion_signal(
+    soup,
+    trusted_values: set[str] | None = None,
+    site: str | None = None,
+) -> Optional[dict]:
     """Bridge — calls detect_promotion; exists so the public API is clean."""
-    return detect_promotion(soup, trusted_values)
+    return detect_promotion(soup, trusted_values, site)
 
 
 # ---------------------------------------------------------------------------

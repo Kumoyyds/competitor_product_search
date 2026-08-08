@@ -3,7 +3,7 @@
 M22.1 - ProductData schema and Amazon mapping
 ==========================================================================
   [PASS] ProductData omits unit_price and unit  ([])
-  [PASS] legacy constructor extras do not surface  ({'url': 'https://example.test/product', 'website': 'amazon', 'scraped_at': datetime.datetime(2026, 8, 5, 23, 39, 11, 928090, tzinfo=datetime.timezone.utc), 'source_type': 'api', 'parser_version': None, 'title': 'Example', 'brand': None, 'gtin': None, 'image_urls': [], 'variant': None, 'price': Decimal('2.99'), 'currency': None, 'list_price': None, 'membership_price': None, 'in_stock': True, 'availability_raw': 'In stock', 'raw': None})
+  [PASS] legacy constructor extras do not surface  ({'url': 'https://example.test/product', 'website': 'amazon', 'scraped_at': datetime.datetime(2026, 8, 7, 20, 40, 44, 346999, tzinfo=datetime.timezone.utc), 'source_type': 'api', 'parser_version': None, 'title': 'Example', 'brand': None, 'gtin': None, 'image_urls': [], 'variant': None, 'price': Decimal('2.99'), 'currency': None, 'list_price': None, 'membership_price': None, 'in_stock': True, 'availability_raw': 'In stock', 'raw': None})
   [PASS] Amazon mapping omits unit_price and unit
   [PASS] Amazon canonical prices remain unchanged  (23.79 / 27.99 / EUR)
   [PASS] Amazon raw payload remains available

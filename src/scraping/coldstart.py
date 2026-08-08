@@ -40,6 +40,11 @@ from .repair.golden import _matches_expected, classify_page_type
 from .repair.prepass import build_price_aware_context
 from .repair.prompts import coldstart_repair_prompt, initial_parser_gen_prompt
 from .repair.sandbox import run_in_sandbox
+from .site_profile import (
+    golden_min_for as site_golden_min_for,
+    is_mandatory_page_type as site_page_type_mandatory,
+    page_type_available,
+)
 from .storage import GoldenStore, ParserStore, ScrapeDB
 from .validation import validate
 
@@ -170,7 +175,7 @@ async def run_coldstart(
             consecutive_empty += 1
             if consecutive_empty >= 2:
                 print("LLM returned no usable parser code twice consecutively — aborting.")
-                return _failed_result(existing_coverage, aborted=True)
+                return _failed_result(existing_coverage, site=site, aborted=True)
             print(
                 f"{model} returned no usable parser code — "
                 "falling through to the next repair round."
@@ -189,6 +194,7 @@ async def run_coldstart(
         sandbox_failed: list[tuple[ColdStartRow, str]] = []
         human_rejected: list[tuple[ColdStartRow, ReviewFeedback]] = []
         extraction_failed: list[tuple[ColdStartRow, str]] = []
+        unavailable_accepted: list[tuple[str, str]] = []
         review_aborted = False
 
         for i, case in enumerate(cases, 1):
@@ -231,6 +237,8 @@ async def run_coldstart(
                 accepted.append((row, case.html, product))
                 accepted_by_type[row.page_type] += 1
                 print("  → unchanged since prior acceptance; accepted automatically")
+                if not page_type_available(site, classified):
+                    unavailable_accepted.append((row.url, classified))
                 continue
 
             ans = input_fn("  Accept? [y/N/q] ").strip().lower()
@@ -242,18 +250,28 @@ async def run_coldstart(
                 accepted.append((row, case.html, product))
                 accepted_by_type[row.page_type] += 1
                 print("  → accepted")
+                if not page_type_available(site, classified):
+                    unavailable_accepted.append((row.url, classified))
                 continue
 
             feedback = _collect_feedback(row, input_fn)
             human_rejected.append((row, feedback))
             print("  → rejected")
 
+        if unavailable_accepted:
+            print(
+                "\n!! SITE PROFILE WARNING: accepted result(s) classified into "
+                "a page type declared unavailable:"
+            )
+            for url, classified in unavailable_accepted:
+                print(f"  - {url}: classified as '{classified}'")
+
         if review_aborted:
             _print_failure_summary(
                 sandbox_failed, human_rejected, extraction_failed, regressions={}
             )
             return _failed_result(
-                existing_coverage,
+                existing_coverage, site=site,
                 aborted=True,
                 accepted=len(accepted),
             )
@@ -314,7 +332,7 @@ async def run_coldstart(
         else:
             print("Parser was not saved.")
         return _failed_result(
-            existing_coverage,
+            existing_coverage, site=site,
             aborted=True,
             accepted=len(accepted),
         )
@@ -322,12 +340,12 @@ async def run_coldstart(
     final_coverage = dict(existing_coverage)
     for page_type, count in Counter(row.page_type for row, _, _ in accepted).items():
         final_coverage[page_type] = final_coverage.get(page_type, 0) + count
-    coverage_shortfall = _coverage_shortfall(final_coverage)
+    coverage_shortfall = _coverage_shortfall(final_coverage, site)
     if coverage_shortfall:
         print("\nWARNING: mandatory golden coverage is still incomplete:")
         for page_type in coverage_shortfall:
             print(
-                f"  - {page_type}: needs >= {cfg.golden_min_for(page_type)}, "
+                f"  - {page_type}: needs >= {site_golden_min_for(site, page_type)}, "
                 f"has {final_coverage.get(page_type, 0)}"
             )
     heading = "Cold start partial result saved" if partial else "Cold start complete"
@@ -371,13 +389,14 @@ def _empty_result(aborted: bool) -> dict[str, Any]:
 def _failed_result(
     existing_coverage: dict[str, int],
     *,
+    site: str = "",
     aborted: bool,
     accepted: int = 0,
 ) -> dict[str, Any]:
     return {
         **_empty_result(aborted=aborted),
         "accepted": accepted,
-        "coverage_shortfall": _coverage_shortfall(existing_coverage),
+        "coverage_shortfall": _coverage_shortfall(existing_coverage, site),
     }
 
 
@@ -391,12 +410,14 @@ def _get_existing_coverage(site: str) -> dict[str, int]:
         db.close()
 
 
-def _coverage_shortfall(coverage: dict[str, int]) -> list[str]:
-    cfg = get_config()
+def _coverage_shortfall(
+    coverage: dict[str, int], site: str = ""
+) -> list[str]:
     return [
         page_type
-        for page_type in cfg.mandatory_page_types()
-        if coverage.get(page_type, 0) < cfg.golden_min_for(page_type)
+        for page_type in PAGE_TYPES
+        if site_page_type_mandatory(site, page_type)
+        and coverage.get(page_type, 0) < site_golden_min_for(site, page_type)
     ]
 
 
@@ -869,8 +890,12 @@ def _seed(
 # CLI entrypoint
 # ---------------------------------------------------------------------------
 
-def read_coldstart_input(path: Path) -> list[ColdStartRow]:
-    """Read and validate a cold-start Excel workbook."""
+def read_coldstart_input(path: Path, site: str = "") -> list[ColdStartRow]:
+    """Read and validate a cold-start workbook against site-aware policy.
+
+    The empty-site default preserves the pre-M23 global-policy behavior for
+    callers that do not yet have a site identifier.
+    """
     if path.suffix.lower() not in {".xlsx", ".xlsm"}:
         raise ColdStartInputError(
             f"expected an Excel file (.xlsx/.xlsm), got '{path.name}'\n"
@@ -922,6 +947,10 @@ def read_coldstart_input(path: Path) -> list[ColdStartRow]:
             row_problems = []
             if page_type not in PAGE_TYPES:
                 row_problems.append(f"page_type={raw_page_type!r}")
+            elif not page_type_available(site, page_type):
+                row_problems.append(
+                    f"page_type={page_type!r} is unavailable for site {site!r}"
+                )
             if not url:
                 row_problems.append("url='' (empty)")
             if row_problems:
@@ -940,9 +969,12 @@ def read_coldstart_input(path: Path) -> list[ColdStartRow]:
 
     cfg = get_config()
     counts = Counter(row.page_type for row in parsed)
-    missing_types = [pt for pt in cfg.mandatory_page_types() if counts[pt] == 0]
+    mandatory = tuple(
+        pt for pt in PAGE_TYPES if site_page_type_mandatory(site, pt)
+    )
+    missing_types = [pt for pt in mandatory if counts[pt] == 0]
     if missing_types:
-        optional = [pt for pt in PAGE_TYPES if not cfg.is_mandatory_page_type(pt)]
+        optional = [pt for pt in PAGE_TYPES if not site_page_type_mandatory(site, pt)]
         found = (
             ", ".join(f"{pt} x{counts[pt]}" for pt in PAGE_TYPES if counts[pt])
             or "none"
@@ -950,10 +982,11 @@ def read_coldstart_input(path: Path) -> list[ColdStartRow]:
         raise ColdStartInputError(
             f"{path.name} is missing required page_type(s): {', '.join(missing_types)}\n"
             "  cold start needs >=1 URL for each of: "
-            f"{', '.join(cfg.mandatory_page_types())}\n"
+            f"{', '.join(mandatory)}\n"
             f"  optional (may be omitted): {', '.join(optional) if optional else 'none'}\n"
             f"  found: {found}\n"
-            "  (edit cold_start_page_require_mandatory in config.py to change what is required)"
+            "  (edit sites.yaml for a declared site, or the global fallback "
+            "in config.py)"
         )
 
     for page_type in PAGE_TYPES:
@@ -1005,7 +1038,7 @@ def main() -> int:
         logging.basicConfig(level=logging.INFO)
 
     try:
-        rows = read_coldstart_input(args.input_path)
+        rows = read_coldstart_input(args.input_path, args.site)
     except ColdStartInputError as exc:
         print(f"ColdStartInputError: {exc}")
         return 1

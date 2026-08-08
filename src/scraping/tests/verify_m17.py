@@ -216,7 +216,7 @@ async def run_coldstart_with_answers(rows, answers):
     async def fake_fetch(self, url):
         return 200, sample_html
 
-    async def fake_gen(site, html):
+    async def fake_gen(site, html, **_kwargs):
         return FIXED_PARSER
 
     prompts: list[str] = []
@@ -311,7 +311,7 @@ async def verify_coldstart_and_runtime() -> None:
     )
     check("rejection blocks all seeding", result["seeded_goldens"] == 0)
     check("rejection returns exit code 1", _result_exit_code(result) == 1)
-    check("failure block emitted", "Parser NOT saved" in output and "membership" in output)
+    check("failure block emitted", "not saved" in output.lower() and "membership" in output)
 
     section("M17.4 - runtime cap and URL dedup")
     reset_site()
