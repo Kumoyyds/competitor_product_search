@@ -80,6 +80,15 @@ See `docs/architecture.md` for detailed diagrams.
 - Cross-module imports use absolute paths (e.g., `from src.search.searcher import ...`)
 - Dependencies managed via `requirements.txt` (pip freeze format)
 
+## Documentation Discipline (mandatory)
+
+Any change that alters how a human operates or maintains this project MUST update the README in the same commit. README = how a human runs and maintains it; CLAUDE.md = the architecture and design an agent needs.
+
+- **Triggers**: CLI command/flag/entry point added, renamed, or removed; config key changed in `config.yaml`, `ScrapingConfig`, or `.env.sample`; a manually maintained data file changed in location, schema, or maintenance rules (`src/search/brand.xlsx`, `src/scraping/hosts.yaml`, `sites.yaml`, cold-start workbooks); input/output paths, formats, or required columns changed; interactive keys or exit codes changed; a new manual step required (hook install, DB migration, re-run procedure).
+- **Not triggers**: internal refactors, prompt tuning, operator-invisible bug fixes, test-only changes.
+- **Which README**: the nearest module README (e.g. `src/scraping/README.md`); also the root `README.md` when project-level usage or entry points change.
+- **What to write**: the operational delta (old → new command/config), whether existing setups need migration, and who maintains any new manual file — not a code changelog. Correct stale instructions instead of appending to them.
+
 ## File Encoding Rules
 
 All text files (markdown, Python, YAML, …) are **UTF-8 without BOM**.

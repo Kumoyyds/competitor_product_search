@@ -201,7 +201,7 @@ The workbook requires `page_type` + `url`. Mandatory coverage is validated befor
 
 - `BRIGHT_DATA_KEY` / provider keys such as `QWEN_KEY` and `DEEPSEEK_KEY` — loaded from `.env`
 - `SCRAPING_DB_PATH` — SQLite path (default: `scraping.db`)
-- `repair_model_ladder` / `repair_temperature_ladder` — runtime HTML-repair model + temperature per attempt (default: `["qwen3.7-plus", "qwen3.7-plus"]` / `[0.1, 0.4]`; lengths must match); JSON healing uses the first repair model
+- `repair_model_ladder` / `repair_temperature_ladder` — runtime HTML-repair model + temperature per attempt (default: `["deepseek-v4-flash", "deepseek-v4-flash"]` / `[0.1, 0.4]`; lengths must match); JSON healing uses the first repair model
 - `cold_start_model_ladder` / `cold_start_temperature_ladder` — independent cold-start warm-up schedule (default: `["deepseek-v4-flash", "deepseek-v4-flash"]` / `[0.1, 0.4]`; lengths must match); the last rung repeats with thinking enabled
 - `cold_start_max_repair_rounds = 10` — runaway guard for the otherwise human-terminated cold-start repair loop
 - `bd_async_poll_max_seconds` / `bd_async_poll_interval_seconds` — Datasets/DCA poll budget (default: 300s / 4s; from M13 Amazon fix)
@@ -244,7 +244,7 @@ For each new milestone:
 3. **Update [tests/README.md](tests/README.md)** — add the new files to the table.
 4. **Prefer offline** — mock BrightData / LLM where possible. Real API only when strictly needed (e.g., LLM-generated parser correctness).
 
-See [tests/README.md](tests/README.md) for the full inventory (430+ checks, including 31 offline M21 checks and 21 offline M22 checks).
+See [tests/README.md](tests/README.md) for the full inventory (520+ checks, including 31 offline M21 checks, 21 offline M22 checks, and 90 offline M23 checks).
 
 ## M19 — Cold-start correction and golden reuse
 
