@@ -1,0 +1,50 @@
+
+======================================================================
+M8.1 - Config and LLM setup
+======================================================================
+  [PASS] DEEPSEEK_KEY loaded  (key present)
+  [PASS] _make_llm returns client with deepseek-chat
+
+======================================================================
+M8.2 - JSON healer: _lookup_path
+======================================================================
+  [PASS] dotted path resolves nested value  (42)
+  [PASS] missing path returns None
+  [PASS] bad index returns None
+
+======================================================================
+M8.3 - JSON healer: _extract_missing_fields
+======================================================================
+  [PASS] price extracted from errors
+  [PASS] title extracted from errors
+
+======================================================================
+M8.4 - JSON healer: valid remap of existing key succeeds
+======================================================================
+  [PASS] healer applied remap for existing field  (healed price=19.99)
+
+======================================================================
+M8.5 - JSON healer: D25 red line rejects fabrication
+======================================================================
+  [PASS] healer refuses to fabricate missing data (D25)  (healed=None)
+
+======================================================================
+M8.6 - Repair agent: no_product judgment on error page
+======================================================================
+  [PASS] agent identifies error page as no_product  (got NoProductVerdict)
+  [PASS] no_product verdict includes a phrase  (Oops, that didn't go to plan. The page you're looking for co)
+
+======================================================================
+M8.7 - Repair agent: generates parser for real Argos HTML
+======================================================================
+    ladder outcome type: ProductData
+    extracted title:  Forest Pressure Treated Wooden Shed Base - 6 x 3ft
+    extracted price:  52.20 GBP
+    extracted brand:  Forest Garden
+  [PASS] ladder produced ProductData
+  [PASS] title extracted
+  [PASS] price extracted
+
+======================================================================
+SUMMARY: 14 passed, 0 failed, 0 skipped
+======================================================================

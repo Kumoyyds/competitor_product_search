@@ -1,0 +1,106 @@
+
+==========================================================================
+M23.1 - 16 reviewed golden snapshots
+==========================================================================
+  [PASS] golden corpus has 16 samples  (16)
+  [PASS] active parsers exist for Argos and Tesco  (['argos', 'tesco'])
+  [PASS] g24 promotion kind  (expected='discount' actual='discount')
+  [PASS] g24 anchored discount prices  ({'kind': 'discount', 'current_price': '24.00', 'reference_price': '30.00', 'regular_price': None, 'member_price': None})
+  [PASS] g24 active parser still passes both gates
+  [PASS] g24 fast path remains trusted
+  [PASS] g24 unanchored fallback remains safe  (expected='discount' actual='discount')
+  [PASS] g25 promotion kind  (expected=None actual=None)
+  [PASS] g25 standard price is not contaminated  ({'kind': None, 'current_price': '519.99', 'reference_price': None, 'regular_price': None, 'member_price': None})
+  [PASS] g25 active parser still passes both gates
+  [PASS] g25 fast path remains trusted
+  [PASS] g25 unanchored fallback remains safe  (expected=None actual=None)
+  [PASS] g26 promotion kind  (expected=None actual=None)
+  [PASS] g26 standard price is not contaminated  ({'kind': None, 'current_price': '20.00', 'reference_price': None, 'regular_price': None, 'member_price': None})
+  [PASS] g26 active parser still passes both gates
+  [PASS] g26 fast path remains trusted
+  [PASS] g26 unanchored fallback remains safe  (expected=None actual=None)
+  [PASS] g27 promotion kind  (expected='discount' actual='discount')
+  [PASS] g27 anchored discount prices  ({'kind': 'discount', 'current_price': '349.00', 'reference_price': '369.00', 'regular_price': None, 'member_price': None})
+  [PASS] g27 active parser still passes both gates
+  [PASS] g27 fast path remains trusted
+  [PASS] g27 unanchored fallback remains safe  (expected='discount' actual=None)
+  [PASS] g28 promotion kind  (expected='discount' actual='discount')
+  [PASS] g28 anchored discount prices  ({'kind': 'discount', 'current_price': '429.99', 'reference_price': '479.99', 'regular_price': None, 'member_price': None})
+  [PASS] g28 active parser still passes both gates
+  [PASS] g28 fast path remains trusted
+  [PASS] g28 unanchored fallback remains safe  (expected='discount' actual=None)
+  [PASS] g29 promotion kind  (expected=None actual=None)
+  [PASS] g29 standard price is not contaminated  ({'kind': None, 'current_price': '24.00', 'reference_price': None, 'regular_price': None, 'member_price': None})
+  [PASS] g29 active parser still passes both gates
+  [PASS] g29 fast path remains trusted
+  [PASS] g29 unanchored fallback remains safe  (expected=None actual=None)
+  [PASS] g8 promotion kind  (expected='membership' actual='membership')
+  [PASS] g8 anchored membership prices  ({'kind': 'membership', 'current_price': '3.75', 'reference_price': None, 'regular_price': '3.75', 'member_price': '2.50'})
+  [PASS] g8 active parser still passes both gates
+  [PASS] g8 fast path remains trusted
+  [PASS] g8 unanchored fallback remains safe  (expected='membership' actual='membership')
+  [PASS] g9 promotion kind  (expected=None actual=None)
+  [PASS] g9 standard price is not contaminated  ({'kind': None, 'current_price': '18.99', 'reference_price': None, 'regular_price': None, 'member_price': None})
+  [PASS] g9 active parser still passes both gates
+  [PASS] g9 fast path remains trusted
+  [PASS] g9 unanchored fallback remains safe  (expected=None actual=None)
+  [PASS] g10 promotion kind  (expected=None actual=None)
+  [PASS] g10 standard price is not contaminated  ({'kind': None, 'current_price': '5.75', 'reference_price': None, 'regular_price': None, 'member_price': None})
+  [PASS] g10 active parser still passes both gates
+  [PASS] g10 fast path remains trusted
+  [PASS] g10 unanchored fallback remains safe  (expected=None actual=None)
+  [PASS] g11 promotion kind  (expected=None actual=None)
+  [PASS] g11 standard price is not contaminated  ({'kind': None, 'current_price': '3.25', 'reference_price': None, 'regular_price': None, 'member_price': None})
+  [PASS] g11 active parser still passes both gates
+  [PASS] g11 fast path remains trusted
+  [PASS] g11 unanchored fallback remains safe  (expected=None actual=None)
+  [PASS] g12 promotion kind  (expected='discount' actual='discount')
+  [PASS] g12 anchored discount prices  ({'kind': 'discount', 'current_price': '29.99', 'reference_price': '39.99', 'regular_price': None, 'member_price': None})
+  [PASS] g12 active parser still passes both gates
+  [PASS] g12 fast path remains trusted
+  [PASS] g12 unanchored fallback remains safe  (expected='discount' actual='discount')
+  [PASS] g13 promotion kind  (expected='discount' actual='discount')
+  [PASS] g13 anchored discount prices  ({'kind': 'discount', 'current_price': '119.99', 'reference_price': '169.99', 'regular_price': None, 'member_price': None})
+  [PASS] g13 active parser still passes both gates
+  [PASS] g13 fast path remains trusted
+  [PASS] g13 unanchored fallback remains safe  (expected='discount' actual='discount')
+  [PASS] g14 promotion kind  (expected='membership' actual='membership')
+  [PASS] g14 anchored membership prices  ({'kind': 'membership', 'current_price': '6.75', 'reference_price': None, 'regular_price': '6.75', 'member_price': '4.50'})
+  [PASS] g14 active parser still passes both gates
+  [PASS] g14 fast path remains trusted
+  [PASS] g14 unanchored fallback remains safe  (expected='membership' actual='membership')
+  [PASS] g21 promotion kind  (expected='discount' actual='discount')
+  [PASS] g21 anchored discount prices  ({'kind': 'discount', 'current_price': '4.29', 'reference_price': '7.29', 'regular_price': None, 'member_price': None})
+  [PASS] g21 active parser still passes both gates
+  [PASS] g21 fast path remains trusted
+  [PASS] g21 unanchored fallback remains safe  (expected='discount' actual='discount')
+  [PASS] g22 promotion kind  (expected='membership' actual='membership')
+  [PASS] g22 anchored membership prices  ({'kind': 'membership', 'current_price': '174.95', 'reference_price': None, 'regular_price': '174.95', 'member_price': '148.71'})
+  [PASS] g22 active parser still passes both gates
+  [PASS] g22 fast path remains trusted
+  [PASS] g22 unanchored fallback remains safe  (expected='membership' actual='membership')
+  [PASS] g23 promotion kind  (expected=None actual=None)
+  [PASS] g23 standard price is not contaminated  ({'kind': None, 'current_price': '100.75', 'reference_price': None, 'regular_price': None, 'member_price': None})
+  [PASS] g23 active parser still passes both gates
+  [PASS] g23 fast path remains trusted
+  [PASS] g23 unanchored fallback remains safe  (expected=None actual=None)
+
+==========================================================================
+M23.2 - site profiles and Argos URL IDs
+==========================================================================
+  [PASS] Argos membership is unavailable
+  [PASS] undeclared site fails open
+  [PASS] Tesco out_of_stock remains mandatory
+  [PASS] Argos out_of_stock is optional
+  [PASS] Argos alphanumeric product ID is extracted
+  [PASS] Argos membership input fails before extraction
+
+==========================================================================
+M23.3 - DeepSeek thinking output budget
+==========================================================================
+  [PASS] non-thinking DeepSeek cap remains 32768  ({'thinking': {'type': 'disabled'}, 'max_tokens': 32768})
+  [PASS] thinking DeepSeek cap is 65536  ({'thinking': {'type': 'enabled'}, 'max_tokens': 65536})
+
+==========================================================================
+SUMMARY: 90 passed, 0 failed
+==========================================================================

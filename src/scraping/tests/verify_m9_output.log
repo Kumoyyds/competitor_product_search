@@ -1,0 +1,48 @@
+
+======================================================================
+M9.1 - classify_page_type: 5 buckets
+======================================================================
+  [PASS] in_stock=False -> out_of_stock
+  [PASS] membership_price > 0 -> membership
+  [PASS] membership trumps discounted
+  [PASS] list_price > price -> discounted
+  [PASS] variant.pack_qty > 1 -> multipack
+  [PASS] standard -> standard
+  [PASS] list_price == price is NOT discount
+  [PASS] out_of_stock takes priority over discount
+  [PASS] out_of_stock takes priority over membership
+
+======================================================================
+M9.2 - maybe_seed_golden: first product seeded, duplicate URL skipped
+======================================================================
+  [PASS] first product of 'standard' bucket seeded  (seed_id=1)
+  [PASS] same URL in same bucket NOT re-seeded  (seed_id=None)
+  [PASS] different page_type (out_of_stock) seeded  (seed_id=2)
+  [PASS] coverage: standard=1, out_of_stock=1  ({'out_of_stock': 1, 'standard': 1})
+
+======================================================================
+M9.3 - promote_candidate: correct candidate promoted
+======================================================================
+  [PASS] good candidate promoted  (parser_id=1)
+
+======================================================================
+M9.4 - promote_candidate: wrong candidate rejected
+======================================================================
+  [PASS] bad candidate rejected  (got GoldenRejection=GoldenRejection(golden_id=3, page_type='standard', failure='field_mismatch', field='title', expected='Product A', actual='WRONG'))
+
+======================================================================
+M9.5 - _prune_hard_cap: >4 active parsers retires lowest-hit oldest
+======================================================================
+  [PASS] 5th candidate promoted after hard cap prune  (new_id=6)
+  [PASS] still 4 active parsers after hard-cap prune  (4)
+  [PASS] oldest 0-hit (ids[0]) retired  (ids[0]=2, actives={3, 4, 5, 6})
+
+======================================================================
+M9.6 - prune_stale: parser with 0 hits in last N runs retired
+======================================================================
+  [PASS] stale parser retired  (retired=[8])
+  [PASS] active parser NOT retired  (retired=[8])
+
+======================================================================
+SUMMARY: 20 passed, 0 failed
+======================================================================

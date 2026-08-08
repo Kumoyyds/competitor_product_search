@@ -1,0 +1,63 @@
+
+============================================================================
+M19.1 - all-cases-pass persistence gate
+============================================================================
+  [PASS] one rejection prevents parser and golden writes  ((0, 0))
+  [PASS] rejection returns non-zero outcome
+  [PASS] rejection summary identifies URL
+  [PASS] all accepted cases seed one parser
+  [PASS] all accepted cases seed four goldens
+  [PASS] sandbox crash prevents persistence
+  [PASS] sandbox crash summary is explicit
+  [PASS] fetch failure does not block parser
+  [PASS] fetch failure is reported separately
+
+============================================================================
+M19.2 - correction rounds and review reuse
+============================================================================
+  [PASS] bad initial parser can converge and seed
+  [PASS] repair receives structured correct value
+  [PASS] repair receives original human hint
+  [PASS] unchanged prior acceptance is not re-prompted  (3)
+  [PASS] single-node ladder can repair until convergence
+  [PASS] single-node failure asks whether to continue
+  [PASS] single-node final rung is reused for repair
+  [PASS] repair can converge after reaching the final ladder rung
+  [PASS] repair node was consumed exactly once
+  [PASS] empty node-0 reply falls through instead of aborting
+  [PASS] fall-through regenerates instead of repairing empty code
+  [PASS] fall-through is reported
+  [PASS] one empty reply on the final rung can recover
+  [PASS] empty final-rung reply reports fall-through
+  [PASS] two consecutive empty replies abort
+
+============================================================================
+M19.3 - ladder config, prompt feedback, and review panel
+============================================================================
+  [PASS] node zero uses cold-start ladder model
+  [PASS] last repair node enables thinking
+  [PASS] repair prompt contains prior parser source
+  [PASS] repair prompt contains correction and hint
+  [PASS] panel includes all newly reviewable fields
+  [PASS] panel summarizes lists and truncates long strings
+  [PASS] panel flags missing bucket-critical field
+  [PASS] mismatched cold-start ladders fail fast
+
+============================================================================
+M19.4 - stale-golden control and HTML snapshot reuse
+============================================================================
+  [PASS] orphan golden is stale
+  [PASS] matching active parser keeps golden live
+  [PASS] all active parsers failing marks golden stale
+  [PASS] promotion marks rotten golden stale instead of rejecting
+  [PASS] non-stale golden snapshot avoids BrightData
+  [PASS] golden source is printed
+  [brightdata] https://example/cached
+  [PASS] stale golden falls back to BrightData
+  [brightdata] https://example/cached
+  [PASS] force-fetch bypasses reusable snapshot
+  [PASS] HTML resolution is read-only  (before=1, after=1)
+
+============================================================================
+SUMMARY: 41 passed, 0 failed
+============================================================================

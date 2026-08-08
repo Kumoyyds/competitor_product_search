@@ -1,0 +1,51 @@
+
+============================================================================
+M21.1 - final rung repeats and feedback stays round-scoped
+============================================================================
+  [PASS] five rounds converge on a two-rung ladder
+  [PASS] successful extended run seeds its golden
+  [PASS] rounds three-plus repeat the final model  (['warmup', 'final', 'final', 'final', 'final'])
+  [PASS] repeated final rung keeps its temperature
+  [PASS] thinking stays enabled on the final rung
+  [PASS] last prompt contains only immediately prior correction
+  [PASS] repair prompt length does not grow monotonically  ([10006, 10006, 10006, 10006])
+  [PASS] prompt attempt header uses the true round index
+
+============================================================================
+M21.2 - continue, quit, and partial-save actions
+============================================================================
+  [PASS] per-case q writes nothing
+  [PASS] per-case q exits 1
+  [PASS] round-prompt q writes nothing
+  [PASS] round-prompt q exits 1
+  [PASS] s persists current parser and accepted goldens  ((1, 1))
+  [PASS] s marks the result partial
+  [PASS] partial save exits 2
+
+============================================================================
+M21.3 - resolved ledger and regression warning
+============================================================================
+  [PASS] ledger scenario converges
+  [PASS] resolved ledger carries accepted url-field pair
+  [PASS] stale correction text is absent from later prompt
+  [PASS] regression block names regressed url and field
+  [PASS] console surfaces regression explicitly
+  [PASS] newly resolved field remains in compact ledger
+  [PASS] sandbox crash marks a previously passing URL as regressed
+  [PASS] sandbox regression removes unverified fields from resolved ledger
+
+============================================================================
+M21.4 - safety cap and unusable-reply guard
+============================================================================
+  [PASS] max-round cap is reported
+  [PASS] cap prompt offers only save or quit
+  [PASS] quitting at cap does not persist
+  [PASS] two consecutive unusable replies abort
+  [PASS] unusable-reply guard stops after two calls
+  [PASS] unusable-reply abort is explicit
+  [PASS] one unusable repair reply can recover on the next round
+  [PASS] unusable repair reply retains current parser code
+
+============================================================================
+SUMMARY: 31 passed, 0 failed
+============================================================================

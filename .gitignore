@@ -1,3 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
 .env
-*.ipynb
-.venv
+.DS_Store
+.ipynb_checkpoints/
+output/
+input/
+
+# SQLite runtime journals (the .db itself stays tracked)
+*.db-shm
+*.db-wal

@@ -1,0 +1,45 @@
+Scraper ArgosScraper failed for https://www.argos.co.uk/product/3284476 at stage=parser_broken, trying next
+Scraper ArgosScraper failed for https://www.argos.co.uk/product/9999 at stage=parser_broken, trying next
+mass_invalid_target: site=argos count=25 total=30
+
+======================================================================
+M10.1 - parser_broken escalation after HTML route exhausted
+======================================================================
+  [PASS] Router raises ScrapeFailed on exhaustion  (scraper_fallback_exhausted)
+  [PASS] escalation row written  (1)
+  [PASS] reason=parser_broken  (parser_broken)
+  [PASS] signature contains site + rule  (argos|title|v1)
+
+======================================================================
+M10.2 - Signature dedup: repeated failures increment affected_count
+======================================================================
+  [PASS] still 1 escalation row (dedup)  (1)
+  [PASS] affected_count = 2  (2)
+
+======================================================================
+M10.3 - infra_failure bypasses fallback + INFRA ALERT logged
+======================================================================
+  [PASS] TescoScraper (order=1) called  (1)
+  [PASS] TescoDCAScraper NOT called (D21 bypass)  (0)
+  [PASS] INFRA ALERT log emitted  (logs: ['INFRA ALERT (site=tesco url=https://www.tesco.com/shop/en-GB/products/123): quota exhausted', 'escalation written: signature=tesco|infra_failure| reason=infra_failure'])
+  [PASS] infra_failure escalation written  (['infra_failure'])
+
+======================================================================
+M10.4 - api_malformed escalation on API route exhaustion
+======================================================================
+  [PASS] api_malformed escalation written  (['api_malformed'])
+
+======================================================================
+M10.5 - mass_invalid_target triggers when count exceeds threshold
+======================================================================
+  [PASS] mass_invalid_target escalation triggered  (1)
+  [PASS] mass signature uses invalid_target_surge  (argos|invalid_target_surge|)
+
+======================================================================
+M10.6 - mass_invalid_target does NOT trigger below threshold
+======================================================================
+  [PASS] no mass_invalid_target below threshold  (0)
+
+======================================================================
+SUMMARY: 14 passed, 0 failed
+======================================================================

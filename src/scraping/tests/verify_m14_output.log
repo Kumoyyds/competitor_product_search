@@ -1,0 +1,94 @@
+M14 — Price-aware pre-pass + prompt rewrite + membership golden bucket
+DATA_DIR=/Users/kumo/programming/competitor_product_search/src/scraping/data/html_sample
+
+======================================================================
+M14.1 - argos_frame_discount: DOM list_price + cross-sell deletion
+======================================================================
+  [PASS] url_product_id extracted  (got=3284476)
+  [PASS] canonical_title is non-empty  (Buy Forest Pressure Treated Wooden Shed Base - 6 x 3ft | She)
+  [PASS] json_ld evidence has price=52.20  (found=True)
+  [PASS] dom evidence has list_price 58.00
+  [PASS] dom 58.00 struck_through  (struck=True)
+  [PASS] dom 58.00 anchor is inside_main or ambiguous  (anchor=ambiguous)
+  [PASS] dom 58.00 css_hint includes price-was  (price-was Pricestyles__PriceWas-sc-1oev7i-3 gUiXO PriceConta)
+  [PASS] cross-sell bundle prices are deleted  (found=0 values=[])
+  [PASS] no unit_price_evidence for frame discount  (count=0)
+
+======================================================================
+M14.2 - tesco_net_discount: JSON-LD priceSpecification + validForMemberTier
+======================================================================
+  [PASS] json_ld offers.price=129.99 (regular)
+  [PASS] json_ld priceSpecification.price=99.99
+  [PASS] 99.99 valid_for_member_tier=True  (member_tier=True)
+  [PASS] 99.99 source_path includes priceSpecification  (@graph[2].offers.priceSpecification.price)
+  [PASS] no basket guide-price £0.00 in evidence  (found=False)
+  [PASS] url_product_id extracted  (got=325098267)
+
+======================================================================
+M14.3 - tesco_pc_membership: meta description regular price + Clubcard in JSON-LD
+======================================================================
+  [PASS] json_ld offers.price=2
+  [PASS] json_ld price=2 NOT valid_for_member_tier (no priceSpecification in this fixture)  (member_tier=False)
+  [PASS] regular price 2.25 found in evidence  (found=True)
+  [PASS] 2.25 source is dom or meta  (source=dom)
+
+======================================================================
+M14.4 - tesco_pc_membership_bd: identical structure (clean-£ copy)
+======================================================================
+  [PASS] bd: json_ld offers.price=2
+  [PASS] bd: regular price 2.25 found
+
+======================================================================
+M14.5 - tesco_cloth_normal: single price, no basket decoy
+======================================================================
+  [PASS] json_ld price=19.5
+  [PASS] no basket guide-price £0.00
+
+======================================================================
+M14.6 - tesco_snack_unavailable: OOS + unit price routing
+======================================================================
+  [PASS] json_ld price=1.25 (OOS)
+  [PASS] unit price 12.50/kg routed to unit_price_evidence  (unit_evidence_count=1)
+
+======================================================================
+M14.7 - argos_game_normal: single price, no spurious from empty <li>
+======================================================================
+  [PASS] json_ld price=69.99
+  [PASS] empty <li></li> produces no spurious evidence
+
+======================================================================
+M14.2 - parser_gen_prompt renders PriceContext correctly
+======================================================================
+  [PASS] renders [JSON-LD BLOCKS]
+  [PASS] renders [PRICE EVIDENCE
+  [PASS] renders [HEAD EXCERPT]
+  [PASS] renders [MAIN EXCERPT
+  [PASS] renders CANONICAL TITLE
+  [PASS] renders 129.99 in evidence
+  [PASS] renders 99.99 in evidence
+  [PASS] renders valid_for_member_tier
+  [PASS] renders anchor=inside_main
+  [PASS] system msg does NOT contain old PREFER JSON-LD over DOM
+  [PASS] system msg contains validForMemberTier guidance
+  [PASS] system msg contains recall failure warning
+
+======================================================================
+M14.2b - parser_gen_prompt with old _excerpt fallback unaffected
+======================================================================
+  [PASS] no_product_prompt still accepts raw html
+  [PASS] no_product_prompt uses _excerpt
+
+======================================================================
+M14.3 - end-to-end parser-gen per fixture (best-effort)
+======================================================================
+  [INFO] argos_frame_discount: repair did not produce a product (attempt may have failed)
+  [INFO] argos_game_normal: repair did not produce a product (attempt may have failed)
+  [INFO] tesco_net_discount: repair did not produce a product (attempt may have failed)
+  [INFO] tesco_pc_membership: repair did not produce a product (attempt may have failed)
+  [INFO] tesco_pc_membership_bd: repair did not produce a product (attempt may have failed)
+  [INFO] tesco_cloth_normal: repair did not produce a product (attempt may have failed)
+  [INFO] tesco_snack_unavailable: repair did not produce a product (attempt may have failed)
+
+======================================================================
+SUMMARY: 41 passed, 0 failed, 0 skipped (41 checks)
+======================================================================

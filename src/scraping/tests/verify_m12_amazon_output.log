@@ -1,0 +1,115 @@
+verify_m12: End-to-End Live Scraping Verification
+Started:    2026-07-18T10:12:53.681072+00:00
+Log file:   E:\programming\competitor_product_search\src\scraping\tests\verify_m12_amazon_output.log
+Temp DB:    C:\Users\12161\AppData\Local\Temp\verify_m12.db
+  Labels: {'discount': 2, 'normal': 1}
+  Hosts:  {'amazon.co.uk': 3}
+
+------------------------------------------------------------------------------
+  [02/3] [normal]
+  URL:   https://www.amazon.co.uk/DWVO-Storage-Sandbags-Waterproof-Weddings/dp/B0GT4SPPSY
+  Host:  amazon.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  amazon
+  Scraper chain:  AmazonUKScraper(API,o1)
+  Started:        2026-07-18T10:12:55+00:00
+  Latency:        12,172 ms  (12.2s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         DWVO Pop Up Gazebo 3x3M,Canopy with UV protect 50+ for camping,Black | Waterproof with carry bag,hei
+    price:         59.99 GPB
+    list_price:    59.99 GPB
+    brand:         DWVO
+    in_stock:      True
+    availability:  In stock
+    image_urls:    7 images
+    gtin:          197839336773
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [03/3] [discount]
+  URL:   https://www.amazon.co.uk/BEEWAY-Parasol-Waterproof-Cantilever-Umbrella/dp/B0DQTSQ42Z
+  Host:  amazon.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  amazon
+  Scraper chain:  AmazonUKScraper(API,o1)
+  Started:        2026-07-18T10:12:56+00:00
+  Latency:        11,233 ms  (11.2s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         BEEWAY Garden Parasol Cover Waterproof, Outdoor Cantilever Parasol Cover with Zipper and Rod Fit for
+    price:         10.98 GPB
+    list_price:    12.99 GPB
+    brand:         BEEWAY
+    in_stock:      True
+    availability:  In stock
+    image_urls:    7 images
+    variant:       {"color": "Black", "size": "205x45/75/32cm"}
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [01/3] [discount]
+  URL:   https://www.amazon.co.uk/Samsung-Features-Speakers-Extended-Warranty/dp/B0FQDX2XGZ
+  Host:  amazon.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  amazon
+  Scraper chain:  AmazonUKScraper(API,o1)
+  Started:        2026-07-18T10:12:56+00:00
+  Latency:        19,047 ms  (19.0s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Samsung Galaxy Tab A11+, Android Tablet, AI Features, Sleek and Modern Design, 11 Inch 90Hz Display,
+    price:         309 GPB
+    list_price:    309 GPB
+    brand:         Samsung
+    in_stock:      True
+    availability:  In stock
+    image_urls:    10 images
+    variant:       {"color": "Silver", "size": "256GB"}
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+  Total URLs:          3
+  Success:             3  (100%)
+  Invalid Target:      0  (0%)
+  Scrape Failed:       0  (0%)
+  Infra Error:         0  (0%)
+  Label            Total     OK   Invalid   Failed   Infra   Other
+  ----------------------------------------------------------------
+  discount             2      2         0        0       0       0
+  normal               1      1         0        0       0       0
+  ----------------------------------------------------------------
+  TOTAL                3      3         0        0       0       0
+  Site             Total     OK   Invalid   Failed   Infra   Other
+  ----------------------------------------------------------------
+  amazon               3      3         0        0       0       0
+  fast                                   3
+  fast path (API)                                                3
+  Total wall time:    20,405 ms  (20.4 s)
+  Per-URL average:    14,150 ms
+  Per-URL median:     12,172 ms
+  Per-URL p95:        19,047 ms
+  Per-URL min:        11,233 ms
+  Per-URL max:        19,047 ms
+  Per-URL sum:        42,452 ms
+    #  label          outcome            site      latency  db_path               
+  --------------------------------------------------------------------------------
+    1  discount       success            amazon      19.0s  fast                  
+    2  normal         success            amazon      12.2s  fast                  
+    3  discount       success            amazon      11.2s  fast                  
+
+======================================================================
+FINAL: 6 checks passed, 0 failed, 0 skipped
+Finished: 2026-07-18T10:13:15.998858+00:00
+Output log: E:\programming\competitor_product_search\src\scraping\tests\verify_m12_amazon_output.log
+======================================================================
