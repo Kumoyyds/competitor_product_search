@@ -1,0 +1,20 @@
+#!/bin/sh
+# 1) Auto-sync CLAUDE.md <-> AGENTS.md (bidirectional).
+# 2) Reject staged files with a UTF-8 BOM, invalid UTF-8, or GBK mojibake.
+# Enabled once per clone with: git config core.hooksPath .githooks
+# Cross-platform: Git for Windows runs hooks with its bundled sh.
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 1
+
+PY=""
+command -v python3 >/dev/null 2>&1 && PY="python3"
+[ -z "$PY" ] && command -v python >/dev/null 2>&1 && PY="python"
+[ -z "$PY" ] && command -v py >/dev/null 2>&1 && PY="py"
+
+if [ -z "$PY" ]; then
+    echo "[pre-commit] python not found - skipping sync + encoding check" >&2
+    exit 0
+fi
+
+"$PY" "$ROOT/scripts/sync_agent_docs.py" --pre-commit --root "$ROOT" || exit 1
+"$PY" "$ROOT/scripts/check_encoding.py" --pre-commit --root "$ROOT" || exit 1
