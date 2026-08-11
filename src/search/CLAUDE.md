@@ -31,6 +31,7 @@ search  →  domain_filter  →  base_match  →  distinguishing  →  aggregate
 | Config | Location | What it controls |
 |--------|----------|-----------------|
 | **Pipeline config** | [maintain/search_config.yaml](maintain/search_config.yaml) | Thresholds, domain map, unit conversions, LLM model, cache path. **Edit for tuning, not per-run.** |
+| **LLM router config** | [maintain/llm_router_config.yaml](maintain/llm_router_config.yaml) | Keyword → `(base_url, key_name)` table. Switching LLM vendor/model is a single-line edit to `llm.model` above; add a vendor entry here only when introducing a brand-new vendor. |
 | **Job config** | [`config_search.yaml`](../../config_search.yaml) (repo root) | Per-run: which input file, sku column, country, target marketplace, output filename, Serper budget. **Edit before each batch run.** |
 
 `main.py` reads `config_search.yaml` from the repo root (not the old `config.yaml`). Pipeline internals read `maintain/search_config.yaml` via `config.py`.
@@ -42,7 +43,7 @@ search  →  domain_filter  →  base_match  →  distinguishing  →  aggregate
 | [pipeline.py](pipeline.py) | compiles the graph once at import; `match_product()` public entrypoint |
 | [graph.py](graph.py) | LangGraph StateGraph wiring + conditional short-circuit edges |
 | [models.py](models.py) | `Verdict`, `FinalVerdict`, `LayerTrace`, `BaseAttributes`, `RawCandidate`, `CandidateEval`, `MatchResult` |
-| [config.py](config.py) | yaml loader (reads `maintain/search_config.yaml`) + `domain_for()` / `retailer_keyword_for()` helpers |
+| [config.py](config.py) | yaml loader (reads `maintain/search_config.yaml`) + `domain_for()` / `retailer_keyword_for()` helpers + `resolve_llm_route()` (keyword-routes `llm.model` via `maintain/llm_router_config.yaml`) |
 | [utils.py](utils.py) | brand-set loader (reads ONLY `brandname_en` from `maintain/brand.xlsx`), `find_literal_brands()`, accent stripping |
 | [main.py](main.py) | Excel batch driver — `python run.py` reads `config_search.yaml`, runs pipeline async over rows (asyncio Semaphore, default 16), writes `output/{output_file}` with `url_search_1`, `match_verdict`, `match_layer_trace`, `match_reason` columns |
 | [maintain/](maintain/) | **Human-edited files**: `brand.xlsx` + `search_config.yaml`. See README §5 for the how-to. |
@@ -75,7 +76,7 @@ search  →  domain_filter  →  base_match  →  distinguishing  →  aggregate
 | `domain_map` | website name → host. Add new marketplaces here. |
 | `brand` | `fuzzy_same_threshold` (default 88), `fuzzy_differ_threshold` (default 40) |
 | `numeric` | `continuous_tolerance` (default 0.10), `entity_to_attr`, `unit_conversions`, `discrete_attrs`, `ambiguity_rules` |
-| `llm` | `model` (`qwen-flash`), `base_url`, `temperature`, `timeout_s` |
+| `llm` | `model` (`qwen-flash` — the one line to edit to switch LLM vendor/model, routed via `maintain/llm_router_config.yaml`), `temperature`, `timeout_s` |
 | `cache` | `sqlite_path` (default `.cache/base_extraction.sqlite`) |
 
 ## Config knobs in config_search.yaml (repo root)
@@ -104,8 +105,9 @@ Writes `output/validation_report.xlsx`. Prints numeric pre-pass, then runs pipel
 ## Environment
 
 Required env vars in `.env` at repo root:
-- `QWEN_KEY` — DashScope API key for the Qwen LLM (distinguishing layer), required
+- `QWEN_KEY` — DashScope API key for the Qwen LLM (distinguishing layer), required while `llm.model` routes to `qwen` in [maintain/llm_router_config.yaml](maintain/llm_router_config.yaml)
 - `SERPER_KEY` — google.serper.dev key, only needed if Serper is in the provider chain
+- `DEEPSEEK_KEY` — only needed if `llm.model` is switched to route to `deepseek`
 
 Python 3.12. Deps beyond the old code: `quantulum3`, `rapidfuzz`, `langgraph`, `aiohttp` — all in `requirements.txt`.
 

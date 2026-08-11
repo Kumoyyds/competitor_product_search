@@ -35,7 +35,7 @@ search:
 domain_map:
   tesco:  tesco.com
   argos:  argos.co.uk
-  amazon: amazon.co.uk
+  amazon: amazon.
 
 brand:
   # RapidFuzz score >= this → brands considered the same (pass)
@@ -118,12 +118,9 @@ numeric:
       hdd: storage_gb
 
 llm:
-  # LLM provider name (currently only "qwen" is wired up)
-  provider: qwen
-  # Model identifier passed to the OpenAI-compatible endpoint
-  model: qwen-flash
-  # OpenAI-compatible API base URL (DashScope for Qwen)
-  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  # Model identifier — routed to a base_url/API key via maintain/llm_router_config.yaml.
+  # Change this line alone to switch vendor/model.
+  model: deepseek-v4-flash
   # Sampling temperature — lower = more deterministic
   temperature: 0.1
   # HTTP timeout in seconds for LLM calls

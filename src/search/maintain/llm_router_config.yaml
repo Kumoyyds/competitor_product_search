@@ -1,0 +1,10 @@
+# Human-maintained. Add an entry when you introduce a new LLM vendor.
+# Key = recognition keyword matched (case-insensitive substring) against the
+# model name in llm.model (search_config.yaml). Longest matching keyword wins.
+providers:
+  qwen:
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    key_name: QWEN_KEY        # name of the variable in .env
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    key_name: DEEPSEEK_KEY

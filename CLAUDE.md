@@ -74,7 +74,8 @@ Short-circuits when every candidate dies at a layer — LLM is never called when
 |------|---------|
 | `config_search.yaml` (repo root) | Per-run: input file, SKU column, country (uk/fr/de/nl/...), target web, output file, optional `serper_max_calls`, optional `concurrency` |
 | `src/search/maintain/search_config.yaml` | Pipeline tuning: `search.provider` (string or ordered list for chain), thresholds, domain map, LLM model, cache path |
-| `.env` (repo root) | API keys: `QWEN_KEY` (required), `SERPER_KEY` (only if Serper is in chain) |
+| `src/search/maintain/llm_router_config.yaml` | Keyword → `(base_url, key_name)` routing table so switching LLM vendor/model is a single-line edit to `llm.model` |
+| `.env` (repo root) | API keys: `QWEN_KEY` (required), `SERPER_KEY` (only if Serper is in chain), `DEEPSEEK_KEY` (only if `llm.model` routes to deepseek) |
 
 ### Data Files
 

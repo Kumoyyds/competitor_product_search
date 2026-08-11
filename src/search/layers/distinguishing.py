@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any
-
-from dotenv import load_dotenv
 
 from .. import config
 from ..models import CandidateEval, Verdict
@@ -84,15 +81,13 @@ def _parse_response(text: str) -> tuple[int | None, str]:
 def _get_llm():
     from langchain_openai import ChatOpenAI
 
-    load_dotenv()
-    api_key = os.getenv("QWEN_KEY")
-    if not api_key:
-        raise RuntimeError("QWEN_KEY not set in environment")
+    model = config.get("llm", "model")
+    base_url, api_key = config.resolve_llm_route(model)
     return ChatOpenAI(
         api_key=api_key,
         temperature=float(config.get("llm", "temperature", default=0.1)),
-        base_url=config.get("llm", "base_url"),
-        model=config.get("llm", "model"),
+        base_url=base_url,
+        model=model,
         timeout=float(config.get("llm", "timeout_s", default=60)),
     )
 

@@ -130,6 +130,7 @@ Reads `src/0_Data/tesco_algo.xlsx` by default; override with `--input`.
 |---|---|
 | **[maintain/brand.xlsx](maintain/brand.xlsx)** | Add a row whenever a brand isn't being recognised; remove a row to drop a false-positive brand. Only the `brandname_en` column is read — other columns are ignored. After saving, **restart the Python process** (the brand list is `lru_cache`-d for the lifetime of the process; batch runs `python run.py` start fresh, so this is automatic). What's safe to add: normal brands ("Kopparberg"), short brands ("AEG", "7Up"), digit-bearing brands ("19 Crimes"), and even common English words ("Tropical", "Green") — the multi-brand any-pair-match comparison handles collisions correctly. Pure-numeric brands ("555") work but use sparingly — they may collide with codes/prices in titles. |
 | **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. Key sections: `domain_map` (add new marketplaces here), `search.retailer_keywords`, `brand.fuzzy_same_threshold` / `fuzzy_differ_threshold` (88 / 40 default), `numeric.continuous_tolerance` (±10%), `numeric.entity_to_attr` + `unit_conversions` + `discrete_attrs` (to support new attributes/units), `llm.model` (currently `qwen-flash`), `cache.sqlite_path`. Restart after editing. |
+| **[maintain/llm_router_config.yaml](maintain/llm_router_config.yaml)** | Keyword → `(base_url, key_name)` routing table for the `distinguishing` layer's LLM. Add an entry here when introducing a new LLM vendor — no code change needed. |
 | **[config_search.yaml](../../config_search.yaml)** (repo root) | Per-run job config: which input file, which marketplace, country code, output filename, optional Serper budget. |
 
 ### Common maintenance tasks
@@ -143,7 +144,7 @@ Reads `src/0_Data/tesco_algo.xlsx` by default; override with `--input`.
 | Allow more slop in weights/volumes | Raise `numeric.continuous_tolerance` |
 | Support a new unit (e.g. `floz`) | Add it under the relevant attribute in `numeric.unit_conversions` |
 | Support a brand-new numeric attribute | Add entry to `numeric.entity_to_attr` + `unit_conversions` + decide discrete-vs-continuous in `numeric.discrete_attrs` |
-| Switch LLM model | Set `llm.model` to a DashScope chat-compatible model id |
+| Switch LLM model/vendor | Edit `llm.model` in `maintain/search_config.yaml` (single line). It's routed to a `base_url`/API key via keyword match against `maintain/llm_router_config.yaml` — add a new vendor entry there first if it's not `qwen`/`deepseek` yet. |
 
 ### Things that drift over time
 
@@ -207,10 +208,10 @@ Key: `──→` = imports/calls. `graph.py` wires the 5 layers via LangGraph co
 | [layers/](layers/) | One file per layer (`search`, `domain_filter`, `brand`, `numeric`, `base_match`, `distinguishing`, `aggregate`) + `query_builder` |
 | [providers/](providers/) | `DuckDuckGoProvider` (active, free) + `SerperProvider` (active, paid) — chainable; add new search providers here |
 | [models.py](models.py) | Data classes (`MatchResult`, `LayerTrace`, `CandidateEval`, …) |
-| [config.py](config.py) | Loader for `maintain/search_config.yaml` |
+| [config.py](config.py) | Loader for `maintain/search_config.yaml`; `resolve_llm_route()` keyword-routes `llm.model` via `maintain/llm_router_config.yaml` |
 | [cache.py](cache.py) | SQLite cache for base extraction |
 | [utils.py](utils.py) | Brand-set loader + word-boundary literal matcher (reads `maintain/brand.xlsx`) |
-| [maintain/](maintain/) | **Maintained files** — `brand.xlsx` + `search_config.yaml`. See §5 above for the how-to. |
+| [maintain/](maintain/) | **Maintained files** — `brand.xlsx` + `search_config.yaml` + `llm_router_config.yaml`. See §5 above for the how-to. |
 | [main.py](main.py) | Excel batch driver invoked by `python run.py` |
 | [search_link_algorithm_spec.md](search_link_algorithm_spec.md) | Full design rationale |
 | [CLAUDE.md](CLAUDE.md) | Code-internals reference for AI assistants / developers |
