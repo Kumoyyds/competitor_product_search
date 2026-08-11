@@ -149,12 +149,15 @@ def _derive_signature(site: str, failures: list[ScrapeFailed]) -> str:
 
 def _write_escalation(signature: str, reason: str, snapshot: dict) -> None:
     """Best-effort escalation write."""
+    db: ScrapeDB | None = None
     try:
         cfg = get_config()
         db = ScrapeDB(cfg.db_path)
         db.init_db()
         EscalationStore(db).upsert(signature=signature, reason=reason, snapshot=snapshot)
-        db.close()
         logger.info("escalation written: signature=%s reason=%s", signature, reason)
     except Exception:
         logger.exception("failed to write escalation (non-fatal)")
+    finally:
+        if db is not None:
+            db.close()

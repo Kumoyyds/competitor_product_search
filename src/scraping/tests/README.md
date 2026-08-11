@@ -4,7 +4,7 @@ Each milestone's verification is persisted here so you can audit and re-run at a
 
 ## Milestone Overview
 
-The scraping module was built incrementally across 24 milestones (M1–M24). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
+The scraping module was built incrementally across 26 milestones (M1–M26). Each milestone adds a self-contained capability, verified by a corresponding `verify_mN.py` script.
 
 ### M1 — ProductData Schema + Two Gates
 Defines the canonical `ProductData` Pydantic model (url, website, title, price, currency, in_stock, image_urls, …) and the two-gate validation pipeline:
@@ -67,9 +67,9 @@ Safe execution environment for LLM-generated parser code:
 
 ### M8 — Repair Agent + JSON Healer
 LLM-driven self-repair when parsers fail or API data is malformed. Uses **real Qwen API**:
-- **Repair ladder** (up to 4 attempts, shared budget):
+- **Repair ladder** (config-driven attempt count, shared budget):
   - **Turn A — no_product judgment**: LLM decides if HTML is a real product page. If not → backfill phrase to `invalid_target_phrases`, return `InvalidTargetResult`. Does NOT consume budget.
-  - **Turn B — source_absence** (attempt 2 only): distinguishes "hard-to-parse product page" from "no data on page" (source_absent → terminal, skip attempt 3).
+  - **Turn B — source_absence** (attempt 2 only, evidence-gated since M25): distinguishes "hard-to-parse product page" from "no data on page" (source_absent → terminal, skip that attempt's parser generation).
   - **Turn C — parser generation**: LLM produces `def parse(html, url) -> dict` → sandbox execute → gates → `promote_candidate()` → active parser inserted.
 - **JSON healer** (DirectAPIScraper route): restricted JSON field remapping with **D25 red line** — may only remap to paths that already exist in the JSON payload. Never fabricates data. In-memory cache per scraper class.
 
@@ -142,6 +142,27 @@ Bootstrap a new site with zero manual parser writing. Uses **real Qwen API**:
 - Records all six API/HTML terminal paths in `scrape_runs` with `outcome='escalated'`, signature, and error while retaining success-only dedup behavior.
 - Migrates historical databases automatically, persists malformed API payload previews in escalations, and makes `ScrapeFailed` text diagnostic.
 - `verify_m24.py` is fully offline, uses only temporary databases, and proves a prior failure cannot suppress a recovered success.
+
+### M25 — Repair source-absence pre-screen
+
+- Runs Turn B before attempt 2 even when that attempt is the final configured ladder node.
+- Requires a runnable previous parser that failed validation with missing required fields; sandbox, golden, and optional-only failures do not trigger the judgment.
+- Preserves fail-open parser generation, per-run `source_absent` signatures, and router fallback to the next scraper.
+- `verify_m25.py` is fully offline and uses only a temporary database.
+
+### M26 — Process and resource lifecycle hardening
+
+- Reaps sandbox children on success, timeout, and task cancellation; retries typed process-table exhaustion with diagnostics and limits live children per event loop.
+- Converts sandbox spawn failures into observable scraper failures so router fallback remains available.
+- Closes exceptional DB paths, reuses and closes equivalent LLM clients, and bounds cold-start network fan-out.
+- `verify_m26.py` is fully offline and uses only temporary state.
+
+### M27 — Shape-tolerant Datasets/DCA polling
+
+- Parses Bright Data poll results as JSON or JSON Lines, including the single-object `application/jsonl` response returned by `/dca/dataset`.
+- Shares pending/failed/ready status-envelope handling across Datasets and DCA clients while preserving M13's one-trigger invariant.
+- Fails fast on 401/403 and includes poll count, last status, and a body preview in genuine timeout errors.
+- `verify_m27.py` is fully offline and uses mocked `httpx.AsyncClient` responses plus a deterministic clock.
 
 ### M12 — End-to-End Live Scraping
 
@@ -250,7 +271,7 @@ Key aspects:
 | `verify_m12_output.log` | Latest tesco run — 6 checks, 0 failed | — |
 | `verify_m12_argo_output.log` | Latest argos run — 6/8 SUCCESS, 0 escalated | — |
 | `verify_m13.py` | M13 — Amazon/Tesco DCA polling fix: no duplicate triggers, immediate-first-poll, configurable budget (offline, mocked) | offline |
-| `verify_m13_output.log` | Latest run — 9 checks, 0 failed | — |
+| `verify_m13_output.log` | Latest run — 22 checks, 0 failed | — |
 | `verify_m14.py` | M14 — Price-aware pre-pass + anchoring (8 fixtures), prompt rewrite (evidence-driven, de-Tesco-ified), membership golden bucket (5 types), API-route membership mapping | offline (Tier 1+2); real Qwen (Tier 3, best-effort) |
 | `verify_m14_output.log` | Latest run — 41 checks, 0 failed (Tier 1+2) | — |
 | `verify_m15_output.log` | Historical M15 run — 44 checks, 0 failed. The original script is absent; M23 re-covers promotion and fast-path behavior against current goldens. | — |
@@ -272,10 +293,16 @@ Key aspects:
 | `verify_m23_live_output.log` | Argos + Tesco live smoke — both reused active parsers through the HTML fast path | **real BrightData** |
 | `verify_m24.py` | M24 — API price normalization, Amazon regression, six failed-run paths, migration, dedup, payload preview, and exception detail | offline |
 | `verify_m24_output.log` | Latest run — 20 checks, 0 failed | — |
+| `verify_m25.py` | M25 — evidence-gated source-absence judgment, short-circuit/fail-open behavior, signature persistence, and router fallback | offline |
+| `verify_m25_output.log` | Latest run — 11 checks, 0 failed | — |
+| `verify_m26.py` | M26 — cancellation-safe subprocess reaping, spawn retry/cap, fallback observability, DB/client cleanup, and cold-start limiting | offline |
+| `verify_m26_output.log` | Latest run — 28 checks, 0 failed | — |
+| `verify_m27.py` | M27 — JSON/JSONL poll parsing, shared status envelopes, auth/timeout diagnostics, and M13 one-trigger regression | offline |
+| `verify_m27_output.log` | Latest run — 23 checks, 0 failed | — |
 | `verify_clear_db.py` | `ScrapeDB.clear_site()` — FK-safe delete ordering, atomicity, idempotency, cross-site isolation, schema preservation, foreign_keys=OFF compat | offline |
 | `verify_clear_db_output.log` | Latest run — 42 checks, 0 failed | — |
 
-**Total: 540+ checks passed across all milestones. M24 adds 20 offline checks for API price normalization and failed-run observability.**
+**Total: 598+ checks passed across all milestones. M27 adds 23 offline polling-shape and diagnostics checks.**
 
 ## How to re-run
 
@@ -301,6 +328,9 @@ python -m src.scraping.tests.verify_m21  | tee src/scraping/tests/verify_m21_out
 python -m src.scraping.tests.verify_m22  | tee src/scraping/tests/verify_m22_output.log
 python -m src.scraping.tests.verify_m23  | tee src/scraping/tests/verify_m23_output.log
 python -m src.scraping.tests.verify_m24  | tee src/scraping/tests/verify_m24_output.log
+python -m src.scraping.tests.verify_m25  | tee src/scraping/tests/verify_m25_output.log
+python -m src.scraping.tests.verify_m26  | tee src/scraping/tests/verify_m26_output.log
+python -m src.scraping.tests.verify_m27  | tee src/scraping/tests/verify_m27_output.log
 python src/scraping/tests/verify_clear_db.py | tee src/scraping/tests/verify_clear_db_output.log
 ```
 
@@ -332,8 +362,11 @@ On Windows, prefix with `PYTHONIOENCODING=utf-8` (or use PowerShell's `$env:PYTH
 | M22 | ProductData unit-price removal, API JSON-heal and cache contamination guards | offline | offline |
 | M23 | Argos runtime promotion repair, site profiles, anchored prices, thinking output cap | offline | offline |
 | M24 | API price normalization, failed-run execution log, schema migration, payload diagnostics | offline | offline |
+| M25 | Evidence-gated repair source-absence pre-screen, run signature, router fallback | offline | offline |
+| M26 | Cancellation-safe sandbox lifecycle, bounded spawn/network fan-out, reusable LLM clients | offline | offline |
+| M27 | Shape-tolerant JSON/JSONL polling + diagnostics | offline | offline |
 
-**Total: 540+ checks passed across all milestones.**
+**Total: 598+ checks passed across all milestones.**
 
 ## LLM-dependent tests
 

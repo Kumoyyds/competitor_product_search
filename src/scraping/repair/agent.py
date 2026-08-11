@@ -6,7 +6,7 @@ Temperature ladder lives in config.py (must match model ladder length).
 
 Ladder (config-driven):
   Turn A (no_product): index==0 only
-  Turn B (source_absence): index==1 and not last (skip when nothing left to skip)
+  Turn B (source_absence): index==1 with prior gate/missing-field evidence
   Turn C (parser_gen): every attempt, thinking mode on last only
 
 Each attempt records a full trace (code, capture summary, errors) fed back to
@@ -140,7 +140,7 @@ async def run_repair_ladder(
     """Run the repair ladder. Returns the final outcome: product, invalid-target, or failure.
 
     Node count = len(cfg.repair_model_ladder).  Edit the config lists to add/remove
-    nodes — Turn A/B/thinking adapt via semantic positions (first/not-last-second/last).
+    nodes — Turn A/B/thinking adapt via semantic positions (first/second/last).
     """
     cfg = get_config()
     ladder = cfg.repair_model_ladder
@@ -204,7 +204,8 @@ async def _try_repair(
     """Run one ladder attempt.  index/model/is_last come from the config-driven loop.
 
     Turn A (no_product): index==0 only.
-    Turn B (source_absence): index==1 and NOT last (skip when nothing left to skip).
+    Turn B (source_absence): index==1 when the prior parser ran but missed a
+      required field.
     Turn C (parser_gen): every attempt; captures output + errors into an
       AttemptRecord appended to ctx.attempts — aligned by index, no mislabelling.
     """
@@ -221,8 +222,12 @@ async def _try_repair(
         if verdict and verdict.get("decision") == "no_product":
             return NoProductVerdict(phrase=verdict.get("phrase"))
 
-    # Turn B — source_absence, second attempt only when not also the last
-    if index == 1 and not is_last:
+    # Turn B — source_absence, on the second attempt.
+    # Requires evidence: the previous attempt must have produced a runnable
+    # parser that still missed required fields. A sandbox crash means the
+    # generated code was broken, which says nothing about whether the page
+    # carries the data — asking then would invite a false source_absent.
+    if index == 1 and _has_source_absence_evidence(ctx):
         absent = await _ask_source_absence(judgment_llm, ctx)
         if absent and absent.get("decision") == "source_absent":
             return SourceAbsent(reason=absent.get("reason", "source_absent"))
@@ -292,6 +297,16 @@ async def _try_repair(
         parser_id=result,             # result is int (parser id) when not GoldenRejection
         parser_source=parser_source,
     )
+
+
+def _has_source_absence_evidence(ctx: RepairContext) -> bool:
+    """Return whether the previous runnable parser missed required fields."""
+    if not ctx.attempts:
+        return False
+    previous = ctx.attempts[-1]
+    if previous.failure_stage != "gate":
+        return False
+    return bool((previous.capture or {}).get("missing_required"))
 
 
 def _make_llm(model: str, temperature: float = 0.1, enable_thinking: bool = False):
@@ -386,12 +401,15 @@ def _parse(resp) -> Optional[dict[str, Any]]:
 def _backfill_phrase(site: str, phrase: Optional[str]) -> None:
     if not phrase:
         return
+    db: ScrapeDB | None = None
     try:
         cfg = get_config()
         db = ScrapeDB(cfg.db_path)
         db.init_db()
         PhraseStore(db).add(site, phrase, source="agent_backfill")
-        db.close()
         logger.info("backfilled phrase for site=%s: %r", site, phrase[:80])
     except Exception:
         logger.exception("phrase backfill failed")
+    finally:
+        if db is not None:
+            db.close()

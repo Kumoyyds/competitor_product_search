@@ -423,15 +423,20 @@ def _coverage_shortfall(
 
 async def _batch_fetch(scraper, urls: list[str]) -> list[tuple[str, int, str]]:
     """Fetch all URLs; returns list of (url, status_code, html)."""
+    if not urls:
+        return []
+    cfg = get_config()
     unlocker = scraper._get_unlocker()
+    semaphore = asyncio.Semaphore(min(cfg.per_site_concurrency, len(urls)))
 
     async def _one(url: str) -> tuple[str, int, str]:
-        try:
-            status, html = await with_extraction_retry(unlocker.fetch, url)
-            return (url, status, html)
-        except Exception as e:
-            logger.warning("cold start fetch failed for %s: %s", url, e)
-            return (url, 0, "")
+        async with semaphore:
+            try:
+                status, html = await with_extraction_retry(unlocker.fetch, url)
+                return (url, status, html)
+            except Exception as e:
+                logger.warning("cold start fetch failed for %s: %s", url, e)
+                return (url, 0, "")
 
     results = await asyncio.gather(*[_one(u) for u in urls])
     return list(results)

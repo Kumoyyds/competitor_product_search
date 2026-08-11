@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 from ..config import get_config
 from ..detection import detect_invalid_page
-from ..exceptions import BrightDataInfraError, ScrapeFailed
+from ..exceptions import BrightDataInfraError, SandboxSpawnError, ScrapeFailed
 from ..extraction import BrightDataUnlocker, with_extraction_retry
 from ..models.product_data import ProductData
 from ..models.results import InvalidTargetResult, ScrapeOutcome
@@ -102,7 +102,14 @@ class HTMLScraper(BaseScraper):
             )
 
         # Step 3: Parser list (M6)
-        parser_run = await self._run_parsers(html, url)
+        try:
+            parser_run = await self._run_parsers(html, url)
+        except (SandboxSpawnError, OSError) as exc:
+            failure = self._sandbox_spawn_failure(url, "parser_list", exc, html)
+            self._record_failure(
+                url, host, failure, int((time.monotonic() - start) * 1000)
+            )
+            raise failure from exc
 
         if parser_run is not None:
             parsed_dict, parser_id, parser_version, parser_errors = parser_run
@@ -125,12 +132,19 @@ class HTMLScraper(BaseScraper):
         # Step 5: Repair ladder (M8) — imported lazily to avoid circular import
         from ..repair.agent import run_repair_ladder
 
-        outcome = await run_repair_ladder(
-            scraper=self,
-            url=url,
-            html=html,
-            initial_errors=parser_errors,
-        )
+        try:
+            outcome = await run_repair_ladder(
+                scraper=self,
+                url=url,
+                html=html,
+                initial_errors=parser_errors,
+            )
+        except (SandboxSpawnError, OSError) as exc:
+            failure = self._sandbox_spawn_failure(url, "repair", exc, html)
+            self._record_failure(
+                url, host, failure, int((time.monotonic() - start) * 1000)
+            )
+            raise failure from exc
 
         if isinstance(outcome, ProductData):
             latency = int((time.monotonic() - start) * 1000)
@@ -172,10 +186,14 @@ class HTMLScraper(BaseScraper):
         cfg = get_config()
         errors: list[str] = []
 
-        db = ScrapeDB(cfg.db_path)
-        db.init_db()
-        parsers = ParserStore(db).get_active_ordered_by_hits(self.site)
-        db.close()
+        db: ScrapeDB | None = None
+        try:
+            db = ScrapeDB(cfg.db_path)
+            db.init_db()
+            parsers = ParserStore(db).get_active_ordered_by_hits(self.site)
+        finally:
+            if db is not None:
+                db.close()
 
         if not parsers:
             return None
@@ -267,6 +285,7 @@ class HTMLScraper(BaseScraper):
     # ------------------------------------------------------------------
 
     def _check_mass_invalid_target(self, host: str, url: str) -> None:
+        db: ScrapeDB | None = None
         try:
             cfg = get_config()
             db = ScrapeDB(cfg.db_path)
@@ -299,24 +318,42 @@ class HTMLScraper(BaseScraper):
                     "mass_invalid_target: site=%s count=%d total=%d",
                     self.site, count, total,
                 )
-            db.close()
         except Exception:
             logger.exception("mass_invalid_target check failed (non-fatal)")
+        finally:
+            if db is not None:
+                db.close()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     def _load_phrases(self) -> list[str]:
+        db: ScrapeDB | None = None
         try:
             cfg = get_config()
             db = ScrapeDB(cfg.db_path)
             db.init_db()
             phrases = PhraseStore(db).get_phrases(self.site)
-            db.close()
             return phrases
         except Exception:
             return []
+        finally:
+            if db is not None:
+                db.close()
+
+    def _sandbox_spawn_failure(
+        self, url: str, stage: str, exc: OSError, html: str
+    ) -> ScrapeFailed:
+        return ScrapeFailed(
+            site=self.site,
+            url=url,
+            scraper_name=self.__class__.__name__,
+            failed_stage=stage,
+            signature=(self.site, "sandbox_spawn", ""),
+            snapshot=html[:2000],
+            errors=[f"{type(exc).__name__}: {exc}"],
+        )
 
 # ---------------------------------------------------------------------------
 # Fast-path distrust guard (M15)

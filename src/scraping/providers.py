@@ -6,13 +6,22 @@ Adding a vendor requires one registry entry and its API key in ``.env``.
 
 from __future__ import annotations
 
+import atexit
+import asyncio
 import logging
+import threading
+import weakref
 from dataclasses import dataclass
 from typing import Any, Optional
 
 from .config import get_config
 
 logger = logging.getLogger(__name__)
+
+_CHAT_CLIENTS: dict[tuple[Any, ...], Any] = {}
+_CHAT_CLIENTS_LOCK = threading.Lock()
+_CLIENT_CLOSE_TASKS: set[asyncio.Task[None]] = set()
+_CLIENT_CLOSE_TASKS_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -159,24 +168,130 @@ def make_chat_client(
     if output_cap is not None:
         extra_body = {**(extra_body or {}), "max_tokens": output_cap}
 
-    logger.info(
-        "Creating LLM client purpose=%s provider=%s model=%s base_url=%s "
-        "thinking=%s max_tokens=%s",
-        purpose or "unspecified",
+    try:
+        loop_identity: weakref.ReferenceType[Any] | None = weakref.ref(
+            asyncio.get_running_loop()
+        )
+    except RuntimeError:
+        loop_identity = None
+
+    # Include endpoint/key/class identity as well as semantic call parameters.
+    # This keeps cache reuse safe across set_config(), key rotation, endpoint
+    # overrides, and tests that replace ChatOpenAI. ``purpose`` is only logging
+    # metadata and deliberately does not split connection pools.
+    cache_key = (
+        ChatOpenAI,
         provider_name,
         bare_model,
-        base_url,
+        float(temperature),
         enable_thinking,
-        output_cap if output_cap is not None else "provider-default",
+        output_cap,
+        base_url,
+        api_key,
+        loop_identity,
     )
-    return ChatOpenAI(
-        api_key=api_key,
-        base_url=base_url,
-        model=bare_model,
-        temperature=temperature,
-        model_kwargs=model_kwargs,
-        extra_body=extra_body,
-    )
+    with _CHAT_CLIENTS_LOCK:
+        cached = _CHAT_CLIENTS.get(cache_key)
+        if cached is not None:
+            return cached
+
+        logger.info(
+            "Creating LLM client purpose=%s provider=%s model=%s base_url=%s "
+            "thinking=%s max_tokens=%s",
+            purpose or "unspecified",
+            provider_name,
+            bare_model,
+            base_url,
+            enable_thinking,
+            output_cap if output_cap is not None else "provider-default",
+        )
+        client = ChatOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            model=bare_model,
+            temperature=temperature,
+            model_kwargs=model_kwargs,
+            extra_body=extra_body,
+        )
+        _CHAT_CLIENTS[cache_key] = client
+        return client
+
+
+async def _close_async_roots(roots: list[Any]) -> None:
+    for root in roots:
+        try:
+            await root.close()
+        except Exception:
+            logger.exception("failed to close an async LLM client")
+
+
+def _close_task_done(task: asyncio.Task[None]) -> None:
+    with _CLIENT_CLOSE_TASKS_LOCK:
+        _CLIENT_CLOSE_TASKS.discard(task)
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.error("async LLM client cleanup task was cancelled")
+    except Exception:
+        logger.exception("async LLM client cleanup task failed")
+
+
+def _dispose_chat_clients(*, close_async: bool) -> None:
+    with _CHAT_CLIENTS_LOCK:
+        clients = list(_CHAT_CLIENTS.values())
+        _CHAT_CLIENTS.clear()
+
+    sync_roots: dict[int, Any] = {}
+    async_roots: dict[int, Any] = {}
+    for client in clients:
+        sync_root = getattr(client, "root_client", None)
+        async_root = getattr(client, "root_async_client", None)
+        if sync_root is not None and callable(getattr(sync_root, "close", None)):
+            sync_roots[id(sync_root)] = sync_root
+        if async_root is not None and callable(getattr(async_root, "close", None)):
+            async_roots[id(async_root)] = async_root
+
+    for root in sync_roots.values():
+        try:
+            root.close()
+        except Exception:
+            logger.exception("failed to close a synchronous LLM client")
+
+    if not async_roots:
+        return
+    if not close_async:
+        logger.debug(
+            "interpreter shutdown -- skipping async LLM client close because "
+            "its owning event loop may already be closed"
+        )
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(_close_async_roots(list(async_roots.values())))
+    else:
+        task = loop.create_task(_close_async_roots(list(async_roots.values())))
+        with _CLIENT_CLOSE_TASKS_LOCK:
+            _CLIENT_CLOSE_TASKS.add(task)
+        task.add_done_callback(_close_task_done)
+
+
+def close_chat_clients() -> None:
+    """Clear cached clients and best-effort close their HTTP connection pools."""
+    _dispose_chat_clients(close_async=True)
+
+
+def reset_chat_clients() -> None:
+    """Testing/configuration hook: dispose all cached clients."""
+    close_chat_clients()
+
+
+def _close_chat_clients_at_exit() -> None:
+    """Close only loop-independent client resources during interpreter exit."""
+    _dispose_chat_clients(close_async=False)
+
+
+atexit.register(_close_chat_clients_at_exit)
 
 
 def _provider_name(spec: ProviderSpec) -> str:

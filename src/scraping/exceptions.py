@@ -52,5 +52,9 @@ class BrightDataInfraError(Exception):
         self.status_code = status_code
 
 
+class SandboxSpawnError(OSError):
+    """The parser sandbox subprocess could not be started."""
+
+
 class ColdStartInputError(ValueError):
     """Cold-start workbook does not satisfy the declared input contract."""

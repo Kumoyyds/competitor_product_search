@@ -76,6 +76,9 @@ class ScrapingConfig(BaseSettings):
 
     # --- sandbox ---
     sandbox_timeout: int = 10
+    sandbox_max_concurrency: int = 8
+    sandbox_spawn_retries: int = 2
+    sandbox_spawn_retry_interval: float = 1.0
     sandbox_import_whitelist: list[str] = Field(
         default=["bs4", "lxml", "re", "json"]
     )
@@ -171,6 +174,29 @@ class ScrapingConfig(BaseSettings):
     def _validate_golden_max(cls, value: int) -> int:
         if value < 1:
             raise ValueError("golden_max_samples_per_page_type must be >= 1")
+        return value
+
+    @field_validator(
+        "per_site_concurrency", "sandbox_timeout", "sandbox_max_concurrency"
+    )
+    @classmethod
+    def _validate_positive_sandbox_int(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("timeout/concurrency values must be >= 1")
+        return value
+
+    @field_validator("sandbox_spawn_retries")
+    @classmethod
+    def _validate_sandbox_retries(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("sandbox_spawn_retries must be >= 0")
+        return value
+
+    @field_validator("sandbox_spawn_retry_interval")
+    @classmethod
+    def _validate_sandbox_retry_interval(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("sandbox_spawn_retry_interval must be >= 0")
         return value
 
     def is_mandatory_page_type(self, page_type: str) -> bool:

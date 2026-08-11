@@ -323,6 +323,9 @@ All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (s
 | `bd_async_poll_interval_seconds` | 4 | Sleep between Datasets/DCA poll GETs (M13) |
 | `json_heal_budget` | 1 | Single-shot for API route |
 | `sandbox_timeout` | 10s | Kill parser subprocess after this |
+| `sandbox_max_concurrency` | 8 | Maximum live parser subprocesses per event loop |
+| `sandbox_spawn_retries` | 2 | Retries after `fork`/spawn reports process or memory exhaustion |
+| `sandbox_spawn_retry_interval` | 1.0s | Base interval for linearly backed-off spawn retries |
 | `sandbox_import_whitelist` | `bs4, lxml, re, json` | Only these can be imported |
 | `prune_sliding_window` | 50 | Runs before natural prune considers a parser |
 | `per_site_parser_limit` | 4 | Hard cap on active parsers per site |

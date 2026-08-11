@@ -1,6 +1,6 @@
 # Scraping Module
 
-**Status**: M1–M24 complete. Full Phase 0 lifecycle. M24 normalizes API price qualifiers and makes every terminal scraper attempt queryable. See `src/scraping/tests/`.
+**Status**: M1–M27 complete. Full Phase 0 lifecycle. M27 makes Datasets/DCA polling shape-tolerant and diagnostic. See `src/scraping/tests/`.
 
 ## Responsibility
 
@@ -46,10 +46,10 @@ BaseScraper (ABC)
 
 Config-driven: attempt count = `len(cfg.repair_model_ladder)`. Each attempt registers a full `AttemptRecord` (code, capture summary, errors) fed back to the next attempt — no index misalignment, works for any node count. Default: `["deepseek-v4-flash", "deepseek-v4-flash"]` (2 attempts; previously 4, reduced in `fb68f14`).
 
-When the ladder has 2 nodes, Turn B (source_absence) is skipped (attempt 1 is the last, and source_absence only runs on non-last attempts). The logic is:
+With the default 2-node ladder, Turn B runs before attempt 1 only when attempt 0 produced a runnable parser, failed at the gates, and its capture summary shows missing required fields. Sandbox failures, golden failures, and gate failures involving only optional fields do not provide source-absence evidence, so they continue directly to parser generation. The logic is:
 
 1. **Turn A — no_product judgment** (attempt 0 only): LLM decides if HTML is a real product page. If not, backfill phrase to `invalid_target_phrases` and return `InvalidTargetResult`. Does NOT consume budget.
-2. **Turn B — source_absence** (non-last attempt only; skipped on 2-node ladder): Distinguishes "hard-to-parse product page" (solvable) vs "no data on page" (source_absent → terminal).
+2. **Turn B — source_absence** (attempt 1 only, evidence-gated): Distinguishes "hard-to-parse product page" (solvable) vs "no data on page" (source_absent → terminal). It may stop the last attempt before its expensive parser-generation call; LLM errors or a `solvable` verdict fail open to Turn C.
 3. **Turn C — parser generation** (every attempt): LLM produces `def parse(html, url) -> dict` → sandbox → gates → `promote_candidate()` (golden test) → active parser row inserted.
 4. **Last attempt**: thinking mode enabled (`reasoning_effort="high"`, `extra_body: {thinking: {type: enabled}}`). Strategy: `_ROLE_STRATEGY["last"]` (step-by-step, inspect all prior records).
 
@@ -114,6 +114,12 @@ M13 splits each client into `_trigger()` (retryable — a failed POST creates no
 - `BrightDataInfraError` on poll timeout/failure propagates exactly once — no retry, no re-trigger, honoring the "no retry" intent from D21.
 - The HTML route (Unlocker) is completely unaffected (`with_extraction_retry` was not modified).
 
+### Datasets/DCA polling response parsing (M27)
+
+Bright Data's `/dca/dataset` endpoint serves completed collections as JSON Lines. A one-record response is one JSON object plus a newline, so `httpx.Response.json()` returns a `dict`, not the list the old DCA terminal check required. M27 routes both Datasets and DCA polling through one shape-tolerant loop: it accepts JSON arrays, JSON objects, single-line JSONL, and multi-line JSONL; classifies pending/failed status envelopes; fails fast on 401/403; and includes the last response shape in timeout diagnostics. Trigger retry behavior is unchanged, so polling can never create a second job.
+
+Known limitation: the current Tesco DCA collector does not emit a Clubcard/member-price field. The fallback therefore cannot populate `membership_price` until the collector definition is updated in the Bright Data console; the code-side aliases remain best-effort only.
+
 ## File Structure
 
 ```
@@ -121,7 +127,7 @@ src/scraping/
 ├── __init__.py             # Public API: scrape(), ProductData, ScrapeFailed
 ├── config.py               # ScrapingConfig (spec §7)
 ├── providers.py            # LLM model/provider registry + unified client factory (M18)
-├── exceptions.py           # ScrapeFailed, BrightDataInfraError
+├── exceptions.py           # ScrapeFailed, BrightDataInfraError, SandboxSpawnError
 ├── detection.py            # Invalid page detection (5 signals)
 ├── router.py               # Two-hop dispatch + fallback loop + escalation writer (M10)
 ├── registry.py             # @register_scraper decorator
@@ -140,7 +146,7 @@ src/scraping/
 │   ├── bright_data.py      # Unlocker / Datasets / DCA async clients
 │   └── retry.py            # Extraction retry (D7)
 ├── repair/
-│   ├── sandbox.py          # M7 — subprocess + AST scan + timeout + setrlimit (POSIX)
+│   ├── sandbox.py          # M7/M26 — AST isolation + bounded, cancellation-safe subprocess lifecycle
 │   ├── agent.py            # M8 — repair ladder (RepairContext, ladder driver, no_product/source_absence branches)
 │   ├── prompts.py          # M8/M14/M15 — prompt builders + SCHEMA_HINT + PriceContext renderer
 │   ├── prepass.py          # M14/M15 — price-aware context builder (PriceEvidence, PriceContext, anchoring, cross-sell delete, promotion signal detector)
@@ -149,7 +155,7 @@ src/scraping/
 ├── storage/
 │   ├── database.py         # 6 SQLite tables (golden_samples CHECK incl. membership since M14)
 │   └── ...                 # store classes (golden, parser, run, result, escalation, phrase)
-└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M24)
+└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M27)
 ```
 
 ## Milestone Status
@@ -180,6 +186,9 @@ src/scraping/
 | M22 | Remove ProductData unit-price fields + guard API JSON healing/cache against unit-price contamination | ✔ verify_m22.py |
 | M23 | Argos promotion/runtime repair + site profiles + anchored prices + thinking output cap | ✔ verify_m23.py |
 | M24 | API price-contract normalization + failed-run observability + schema migration | ✔ verify_m24.py |
+| M25 | Evidence-gated source-absence pre-screen on repair attempt 1 | ✔ verify_m25.py |
+| M26 | Cancellation-safe sandbox lifecycle + bounded process/network/client resources | ✔ verify_m26.py |
+| M27 | Shape-tolerant JSON/JSONL polling + status/auth/timeout diagnostics | ✔ verify_m27.py |
 
 ## Public API
 
@@ -207,7 +216,7 @@ The workbook requires `page_type` + `url`. Mandatory coverage is validated befor
 - `cold_start_max_repair_rounds = 10` — runaway guard for the otherwise human-terminated cold-start repair loop
 - `bd_async_poll_max_seconds` / `bd_async_poll_interval_seconds` — Datasets/DCA poll budget (default: 300s / 4s; from M13 Amazon fix)
 - `json_heal_budget = 1`
-- `sandbox_timeout = 10s`, `sandbox_import_whitelist = [bs4, lxml, re, json]`
+- `sandbox_timeout = 10s`, `sandbox_max_concurrency = 8`, `sandbox_spawn_retries = 2`, `sandbox_spawn_retry_interval = 1.0s`, `sandbox_import_whitelist = [bs4, lxml, re, json]`
 - `prune_sliding_window = 50`, `per_site_parser_limit = 4`
 - `cold_start_page_require_mandatory` — default mandatory: standard, discounted, out_of_stock, membership; multipack optional
 - `golden_max_samples_per_page_type = 3` — global cap for cold start and runtime auto-seeding
@@ -245,7 +254,7 @@ For each new milestone:
 3. **Update [tests/README.md](tests/README.md)** — add the new files to the table.
 4. **Prefer offline** — mock BrightData / LLM where possible. Real API only when strictly needed (e.g., LLM-generated parser correctness).
 
-See [tests/README.md](tests/README.md) for the full inventory (540+ checks, including 90 offline M23 checks and 20 offline M24 checks).
+See [tests/README.md](tests/README.md) for the full inventory (598+ checks, including the 23-check offline M27 polling suite).
 
 ## M19 — Cold-start correction and golden reuse
 
@@ -303,6 +312,31 @@ See [tests/README.md](tests/README.md) for the full inventory (540+ checks, incl
 - Existing databases gain `scrape_runs.signature` and `scrape_runs.error` automatically through the serialized incremental migration in `ScrapeDB.init_db()`.
 
 **Verification**: `verify_m24.py` — 20 offline checks covering price normalization, the Amazon equal-price regression, all six terminal raise sites, failure/success/recovery dedup behavior, historical schema migration, payload preview persistence, exception detail, and the mass-invalid denominator change.
+
+## M25 — Evidence-gated repair source-absence pre-screen
+
+- Turn B now runs at repair attempt 1 even when that attempt is the last configured node, allowing a `source_absent` verdict to skip the final parser-generation call.
+- The judgment is asked only when the immediately preceding attempt ran successfully, failed at validation, and reported missing required fields. Sandbox crashes, golden rejections, and optional-only omissions remain on the parser-repair path.
+- `source_absent` remains a scraper-scoped `ScrapeFailed`: it is written to `scrape_runs.signature`, and the router still tries the next scraper. The aggregate escalation reason remains `parser_broken`; no schema migration is required.
+
+**Verification**: `verify_m25.py` — fully offline coverage for the evidence matrix, one/two/three-node ladder positions, source-absence short-circuit and fail-open behavior, run signature persistence, and router fallback.
+
+## M26 — Process and resource lifecycle hardening
+
+- Sandbox calls hold an event-loop-local concurrency gate, retry transient `EAGAIN`/`ENOMEM` spawn failures with diagnostics, and track owned child PIDs.
+- Normal completion, timeout, and cancellation share one cleanup path that closes stdin, kills a live child, and awaits `waitpid` before returning. Spawn failures become `sandbox_spawn` scraper failures so router fallback and failure observability remain intact.
+- Exceptional database paths close in `finally`; equivalent LLM clients reuse connection pools and expose explicit/exit cleanup; cold-start fetch fan-out respects `per_site_concurrency`.
+
+**Verification**: `verify_m26.py` — 26 fully offline checks for cancellation/timeout reaping, retry exhaustion, concurrency caps, scraper/router fallback, exceptional DB cleanup, LLM client reuse/closure, cold-start limiting, and invalid config guards.
+
+## M27 — Shape-tolerant Datasets/DCA polling
+
+- Completed DCA collections may be `application/jsonl`; single-record bodies parse as a JSON object rather than a JSON array.
+- Datasets and DCA now share JSON/JSONL normalization plus pending/failed/ready status classification without changing trigger retry boundaries.
+- Permanent 401/403 responses fail immediately, while timeouts report poll count, last HTTP status, and a bounded body preview.
+- The Tesco DCA collector currently omits Clubcard/member-price data, so that fallback remains unable to populate `membership_price` until the external collector is changed.
+
+**Verification**: `verify_m27.py` — 23 offline checks covering the two observed single-record JSONL shapes, Argos gate-valid mapping, multi-line JSONL, 200/202 status envelopes, failure/auth handling, malformed/empty bodies, timeout diagnostics, one-trigger preservation, and Datasets regressions.
 
 ## Observations from M12 Qwen Live Run (2026-07-19)
 

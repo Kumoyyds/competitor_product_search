@@ -17,18 +17,33 @@ Design decisions:
 from __future__ import annotations
 
 import ast
+import atexit
 import asyncio
+import errno
 import json
 import logging
 import platform
 import sys
+import threading
 import traceback
+import weakref
 from dataclasses import dataclass
 from typing import Any, Optional
 
 from ..config import get_config
+from ..exceptions import SandboxSpawnError
 
 logger = logging.getLogger(__name__)
+
+_GATES: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop,
+    tuple[int, weakref.ReferenceType[asyncio.Semaphore]],
+] = weakref.WeakKeyDictionary()
+_GATES_LOCK = threading.Lock()
+_LIVE: set[asyncio.subprocess.Process] = set()
+_LIVE_LOCK = threading.Lock()
+_REAP_TASKS: set[asyncio.Task[None]] = set()
+_REAP_TASKS_LOCK = threading.Lock()
 
 _FORBIDDEN_NAMES = {
     "open", "eval", "exec", "compile", "__import__",
@@ -108,6 +123,145 @@ def _attr_root(node: ast.Attribute) -> Optional[str]:
     return None
 
 
+def active_child_pids() -> tuple[int, ...]:
+    """Return PIDs currently owned by sandbox calls, for diagnostics/tests."""
+    with _LIVE_LOCK:
+        return tuple(sorted(proc.pid for proc in _LIVE))
+
+
+def _gate(limit: int) -> asyncio.Semaphore:
+    """Return an event-loop-local semaphore with the configured capacity."""
+    loop = asyncio.get_running_loop()
+    with _GATES_LOCK:
+        current = _GATES.get(loop)
+        semaphore = current[1]() if current is not None else None
+        if current is None or current[0] != limit or semaphore is None:
+            semaphore = asyncio.Semaphore(limit)
+            _GATES[loop] = (limit, weakref.ref(semaphore))
+        return semaphore
+
+
+def _nproc_soft_limit() -> int | str:
+    if platform.system() == "Windows":
+        return "unavailable"
+    try:
+        import resource
+
+        return resource.getrlimit(resource.RLIMIT_NPROC)[0]
+    except (AttributeError, ImportError, OSError, ValueError):
+        return "unavailable"
+
+
+def _spawn_diagnostics() -> str:
+    return (
+        f"live_sandboxes={len(active_child_pids())}, "
+        f"asyncio_tasks={len(asyncio.all_tasks())}, "
+        f"threads={threading.active_count()}, "
+        f"rlimit_nproc_soft={_nproc_soft_limit()}"
+    )
+
+
+async def _spawn() -> asyncio.subprocess.Process:
+    """Start the sandbox child, retrying transient process-table exhaustion."""
+    cfg = get_config()
+    retries = cfg.sandbox_spawn_retries
+    interval = cfg.sandbox_spawn_retry_interval
+    for attempt in range(retries + 1):
+        try:
+            return await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "src.scraping.repair.sandbox",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as exc:
+            diagnostic = _spawn_diagnostics()
+            retryable = exc.errno in (errno.EAGAIN, errno.ENOMEM)
+            if retryable and attempt < retries:
+                logger.warning(
+                    "sandbox spawn failed (%s); retry %d/%d in %.2fs; %s",
+                    exc,
+                    attempt + 1,
+                    retries,
+                    interval * (attempt + 1),
+                    diagnostic,
+                )
+                await asyncio.sleep(interval * (attempt + 1))
+                continue
+            logger.error("sandbox spawn failed permanently (%s); %s", exc, diagnostic)
+            raise SandboxSpawnError(
+                exc.errno,
+                f"cannot start sandbox subprocess: {exc}; {diagnostic}",
+            ) from exc
+    raise AssertionError("sandbox spawn retry loop exited unexpectedly")
+
+
+async def _terminate_and_wait(proc: asyncio.subprocess.Process) -> None:
+    """Close stdin, terminate a live child, and wait until it is reaped."""
+    if proc.stdin is not None:
+        try:
+            proc.stdin.close()
+        except (BrokenPipeError, ConnectionResetError, OSError, RuntimeError):
+            pass
+    if proc.returncode is None:
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError, RuntimeError):
+            pass
+    try:
+        await proc.wait()
+    except ProcessLookupError:
+        pass
+    with _LIVE_LOCK:
+        _LIVE.discard(proc)
+
+
+async def _wait_for_reap(cleanup: asyncio.Task[None]) -> None:
+    """Finish cleanup even if the caller receives additional cancellations."""
+    caller = asyncio.current_task()
+    cancelled_during_cleanup = False
+    while True:
+        try:
+            await asyncio.shield(cleanup)
+            break
+        except asyncio.CancelledError:
+            if cleanup.cancelled():
+                raise
+            cancelled_during_cleanup = True
+            if caller is not None:
+                caller.uncancel()
+    if cancelled_during_cleanup:
+        raise asyncio.CancelledError()
+
+
+def _reap_done(task: asyncio.Task[None], proc: asyncio.subprocess.Process) -> None:
+    with _REAP_TASKS_LOCK:
+        _REAP_TASKS.discard(task)
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.error("sandbox child cleanup was cancelled for pid=%s", proc.pid)
+    except Exception:
+        logger.exception("sandbox child cleanup failed for pid=%s", proc.pid)
+
+
+def _kill_live_children_at_exit() -> None:
+    """Best-effort last line of defence for interpreter shutdown."""
+    with _LIVE_LOCK:
+        processes = tuple(_LIVE)
+    for proc in processes:
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except (ProcessLookupError, RuntimeError, OSError):
+                pass
+
+
+atexit.register(_kill_live_children_at_exit)
+
+
 async def run_in_sandbox(
     code: str,
     html: str,
@@ -133,27 +287,27 @@ async def run_in_sandbox(
 
     payload = json.dumps({"code": code, "html": html, "url": url})
 
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-m",
-        "src.scraping.repair.sandbox",
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    async with _gate(cfg.sandbox_max_concurrency):
+        proc = await _spawn()
+        with _LIVE_LOCK:
+            _LIVE.add(proc)
 
-    try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(input=payload.encode("utf-8")),
-            timeout=timeout,
-        )
-    except asyncio.TimeoutError:
         try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        await proc.wait()
-        return SandboxTimeout(timeout=timeout)
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(input=payload.encode("utf-8")),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                return SandboxTimeout(timeout=timeout)
+        finally:
+            # A dedicated task plus cancellation-deferring wait keeps every
+            # caller cancellation from abandoning the child at sys.stdin.read().
+            cleanup = asyncio.create_task(_terminate_and_wait(proc))
+            with _REAP_TASKS_LOCK:
+                _REAP_TASKS.add(cleanup)
+            cleanup.add_done_callback(lambda task, child=proc: _reap_done(task, child))
+            await _wait_for_reap(cleanup)
 
     stdout = stdout_bytes.decode("utf-8", errors="replace").strip()
     stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
