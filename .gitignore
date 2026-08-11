@@ -14,3 +14,4 @@ input/
 scraping.db
 scraping.db-shm
 scraping.db-wal
+*.ipynb
