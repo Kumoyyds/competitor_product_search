@@ -14,21 +14,21 @@ from .base import BudgetExhausted, SearchProvider, SearchProviderError
 # Fallback: "{code}-en" when no explicit mapping exists.
 # ---------------------------------------------------------------------------
 _COUNTRY_TO_REGION: dict[str, str] = {
-    "uk": "uk-en",
-    "gb": "uk-en",
-    "de": "de-de",
-    "fr": "fr-fr",
-    "us": "us-en",
-    "nl": "nl-nl",
-    "jp": "jp-ja",
-    "es": "es-es",
-    "it": "it-it",
-    "pt": "pt-pt",
-    "se": "se-sv",
-    "pl": "pl-pl",
-    "br": "br-pt",
-    "au": "au-en",
-    "ca": "ca-en",
+    "uk": "uk-en",  # United Kingdom      — English
+    "gb": "uk-en",  # United Kingdom      — English (alias of "uk")
+    "de": "de-de",  # Germany             — German
+    "fr": "fr-fr",  # France              — French
+    "us": "us-en",  # United States       — English
+    "nl": "nl-nl",  # Netherlands         — Dutch
+    "jp": "jp-ja",  # Japan               — Japanese
+    "es": "es-es",  # Spain               — Spanish
+    "it": "it-it",  # Italy               — Italian
+    "pt": "pt-pt",  # Portugal            — Portuguese
+    "se": "se-sv",  # Sweden              — Swedish
+    "pl": "pl-pl",  # Poland              — Polish
+    "br": "br-pt",  # Brazil              — Portuguese
+    "au": "au-en",  # Australia           — English
+    "ca": "ca-en",  # Canada              — English
 }
 
 

@@ -1,6 +1,7 @@
 #!/bin/sh
 # 1) Auto-sync CLAUDE.md <-> AGENTS.md (bidirectional).
-# 2) Reject staged files with a UTF-8 BOM, invalid UTF-8, or GBK mojibake.
+# 2) Auto-generate capability lists in the READMEs.
+# 3) Reject staged files with a UTF-8 BOM, invalid UTF-8, or GBK mojibake.
 # Enabled once per clone with: git config core.hooksPath .githooks
 # Cross-platform: Git for Windows runs hooks with its bundled sh.
 
@@ -17,4 +18,5 @@ if [ -z "$PY" ]; then
 fi
 
 "$PY" "$ROOT/scripts/sync_agent_docs.py" --pre-commit --root "$ROOT" || exit 1
+"$PY" "$ROOT/scripts/gen_capability_docs.py" --pre-commit --root "$ROOT" || exit 1
 "$PY" "$ROOT/scripts/check_encoding.py" --pre-commit --root "$ROOT" || exit 1

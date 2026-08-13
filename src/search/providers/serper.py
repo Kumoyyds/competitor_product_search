@@ -13,24 +13,24 @@ from .base import BudgetExhausted, SearchProvider, SearchProviderError
 
 _ENDPOINT = "https://google.serper.dev/search"
 
-# Map general country codes (from config_search.yaml) to Serper's ISO 3166-1 alpha-2 gl param.
+# Map public-API country-code arguments to Serper's ISO 3166-1 alpha-2 gl param.
 # Serper uses "gb" not "uk" for the United Kingdom.
 _COUNTRY_TO_GL: dict[str, str] = {
-    "uk": "gb",
-    "gb": "gb",
-    "de": "de",
-    "fr": "fr",
-    "nl": "nl",
-    "us": "us",
-    "es": "es",
-    "it": "it",
-    "jp": "jp",
-    "au": "au",
-    "ca": "ca",
-    "br": "br",
-    "pl": "pl",
-    "se": "se",
-    "pt": "pt",
+    "uk": "gb",  # United Kingdom  (input "uk" → Serper expects "gb")
+    "gb": "gb",  # United Kingdom
+    "de": "de",  # Germany
+    "fr": "fr",  # France
+    "nl": "nl",  # Netherlands
+    "us": "us",  # United States
+    "es": "es",  # Spain
+    "it": "it",  # Italy
+    "jp": "jp",  # Japan
+    "au": "au",  # Australia
+    "ca": "ca",  # Canada
+    "br": "br",  # Brazil
+    "pl": "pl",  # Poland
+    "se": "se",  # Sweden
+    "pt": "pt",  # Portugal
 }
 
 

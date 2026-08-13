@@ -15,7 +15,7 @@ search  →  domain_filter  →  base_match  →  distinguishing  →  aggregate
 1. **search** — fires query variants at the first provider in the chain (DuckDuckGo / Serper / custom), dedups results by URL.
 2. **domain_filter** — drops candidates whose host isn't the target marketplace (e.g. only keep `*.tesco.com` when targeting Tesco).
 3. **base_match** — for each surviving candidate, compares **brand** (rapidfuzz against `brand.xlsx`, three-state pass/fail/unknown) and **numeric attributes** (volume, weight, count, ABV, storage… extracted via quantulum3 + regex). Mismatches kill the candidate; missing info passes through as `unknown`.
-4. **distinguishing** — one batched LLM call (Qwen `qwen-flash`) decides which surviving candidate (if any) is the same SKU, catching variant differences the rules miss (flavour, colour, version, pack size).
+4. **distinguishing** — one batched call to the configured LLM decides which surviving candidate (if any) is the same SKU, catching variant differences the rules miss (flavour, colour, version, pack size).
 5. **aggregate** — picks the verdict (`match` / `no_match`) and the per-layer trace.
 
 Short-circuiting: whenever a layer kills every candidate, the pipeline skips straight to `aggregate`. The LLM is never called when cheap rules already settled the question.
@@ -35,13 +35,12 @@ py -3.12 -m venv .venv
 pip install -r requirements.txt
 
 # 2. set API keys in .env at repo root
-#    QWEN_KEY=...
+#    DEEPSEEK_KEY=... or QWEN_KEY=..., depending on llm.model
 #    SERPER_KEY=...
 
-# 3. edit config_search.yaml — point input_file at your spreadsheet, set web/country/output_file
-
-# 4. run
-python run.py
+# 3. run with explicit per-run arguments
+python -m src.search.batch --input input/products.xlsx --sku-col product_name `
+    --web-col web --country-col country --output output/results.xlsx
 ```
 
 ### Programmatic (single product)
@@ -64,6 +63,11 @@ async def demo():
 asyncio.run(demo())
 ```
 
+> **In a Jupyter notebook**, the cell is already running inside an event loop, so `asyncio.run(demo())` raises `RuntimeError: asyncio.run() cannot be called from a running event loop`. Replace the last line with top-level await instead:
+> ```python
+> await demo()
+> ```
+
 ### Validation (budget-capped sanity check)
 
 ```powershell
@@ -78,12 +82,70 @@ Stratified sample from `src/0_Data/tesco_algo.xlsx`, capped at 50 Serper calls. 
 
 ### Batch mode
 
-- **Where**: `input/{input_file}.xlsx` (filename set in [config_search.yaml](../../config_search.yaml))
+- **Where**: any `.xlsx` path passed as `input_file` / `--input`; the path is not prefixed or rewritten
 - **Required columns** (name configurable):
-  - `item_sku_name_de` (or whatever you set as `input_sku_name_col`) — the product name string
-- **config_search.yaml keys consumed**:
-  - `input_file`, `input_sku_name_col`, `country` (general country code: `uk` / `fr` / `de` / `nl`; each search engine maps it internally), `web` (target marketplace, e.g. `amazon.de`), `output_file`
-  - Optional: `serper_max_calls` (cap total Serper calls), `concurrency` (default 16)
+  - `item_sku_name_de` (or whatever you pass as `sku_col`) — the product name string
+  - `web` (or whatever you pass as `web_col`) — the target marketplace code, such as `tesco` or `amazon`
+  - `country` (or whatever you pass as `country_col`) — the general country code (`uk` / `fr` / `de` / `nl`; each provider maps it internally)
+- **Arguments**: `sku_col`, `web_col`, `country_col`, optional `output_file`, `serper_max_calls`, `concurrency` (default 16), and `progress`
+- **Invalid rows**: a blank/NaN website or country cell becomes a row-level `error` with `url_search_1="not found"`; other rows continue. A missing required column raises `KeyError` before the run starts.
+
+### Accepted `website` values
+
+The website code is looked up in two places in [maintain/search_config.yaml](maintain/search_config.yaml): `domain_map` (which host must the URL have) and `search.retailer_keywords` (which word gets appended to the query). Matching is case-insensitive.
+
+<!-- BEGIN GENERATED: websites-table -->
+| `website` | Host kept by `domain_filter` | Retailer keyword |
+|---|---|---|
+| `tesco` | `tesco.com` (plus subdomains) | Tesco |
+| `argos` | `argos.co.uk` (plus subdomains) | Argos |
+| `amazon.co.uk` | `amazon.co.uk` (plus subdomains) | — |
+| `amazon.nl` | `amazon.nl` (plus subdomains) | — |
+| `amazon` | — | Amazon |
+<!-- END GENERATED: websites-table -->
+
+A `domain_map` value **ending in `.`** is a registrable-name prefix — it matches that name under any TLD. Values without the trailing dot match that exact host and its subdomains only. Look-alikes (`notamazon.de`, `amazon.de.evil.com`) are rejected either way.
+
+An unlisted website code doesn't raise — every candidate fails `domain_filter` and the row comes back `no_match`. To support a new marketplace, add a `domain_map` entry plus a `search.retailer_keywords` entry — no code change needed.
+
+### Accepted `country` values
+
+Pass a plain ISO-3166-1 alpha-2 code (lower- or upper-case); each provider translates it internally — DuckDuckGo to a `region` string, Serper to a `gl` parameter. Codes explicitly mapped by at least one provider:
+
+<!-- BEGIN GENERATED: countries-table -->
+| `country` | Country | DuckDuckGo `region` | Serper `gl` |
+|---|---|---|---|
+| `uk` / `gb` | United Kingdom | `uk-en` | `gb` |
+| `de` | Germany | `de-de` | `de` |
+| `fr` | France | `fr-fr` | `fr` |
+| `us` | United States | `us-en` | `us` |
+| `nl` | Netherlands | `nl-nl` | `nl` |
+| `jp` | Japan | `jp-ja` | `jp` |
+| `es` | Spain | `es-es` | `es` |
+| `it` | Italy | `it-it` | `it` |
+| `pt` | Portugal | `pt-pt` | `pt` |
+| `se` | Sweden | `se-sv` | `se` |
+| `pl` | Poland | `pl-pl` | `pl` |
+| `br` | Brazil | `br-pt` | `br` |
+| `au` | Australia | `au-en` | `au` |
+| `ca` | Canada | `ca-en` | `ca` |
+<!-- END GENERATED: countries-table -->
+
+An unmapped code doesn't fail — it degrades: DuckDuckGo falls back to `<code>-en` (English results in that country) and Serper forwards the code to Google as-is. Add the country to `_COUNTRY_TO_REGION` in [providers/duckduckgo.py](providers/duckduckgo.py) and `_COUNTRY_TO_GL` in [providers/serper.py](providers/serper.py) when you need the local language instead. Note `country` only steers the search engine — it is independent of `website`, so pairing `amazon` with `de` is what targets `amazon.de`.
+
+### Accepted LLM vendors
+
+Vendor routing comes from [maintain/llm_router_config.yaml](maintain/llm_router_config.yaml); the active model comes from `llm.model` in [maintain/search_config.yaml](maintain/search_config.yaml).
+
+<!-- BEGIN GENERATED: llm-table -->
+Active model: `deepseek-v4-flash` (routed through `deepseek`).
+
+| Routing keyword | Base URL | Required `.env` key |
+|---|---|---|
+| `qwen` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `QWEN_KEY` |
+| `deepseek` | `https://api.deepseek.com/v1` | `DEEPSEEK_KEY` |
+<!-- END GENERATED: llm-table -->
+
 ### Programmatic
 
 Whatever you pass to `match_product(product_name, website, brand=None, country="uk")`. `brand` is optional — if provided it skips brand extraction on the query side.
@@ -94,7 +156,7 @@ Reads `src/0_Data/tesco_algo.xlsx` by default; override with `--input`.
 
 ### Environment (`.env` at repo root)
 
-- `QWEN_KEY` — DashScope key for the Qwen LLM (distinguishing layer), required
+- The model API key shown in [Accepted LLM vendors](#accepted-llm-vendors) for the route selected by `llm.model`
 - `SERPER_KEY` — google.serper.dev key, only needed if Serper is in the provider chain
 
 ---
@@ -103,7 +165,7 @@ Reads `src/0_Data/tesco_algo.xlsx` by default; override with `--input`.
 
 ### Batch mode
 
-`output/{output_file}.xlsx` — your input file with these extra columns appended:
+The path supplied as `output_file` / `--output` contains your input with these extra columns appended. The Python API can omit `output_file` and use the returned DataFrame directly.
 
 | Column | Content |
 |---|---|
@@ -128,10 +190,11 @@ Reads `src/0_Data/tesco_algo.xlsx` by default; override with `--input`.
 
 | File | When / how to update |
 |---|---|
-| **[maintain/brand.xlsx](maintain/brand.xlsx)** | Add a row whenever a brand isn't being recognised; remove a row to drop a false-positive brand. Only the `brandname_en` column is read — other columns are ignored. After saving, **restart the Python process** (the brand list is `lru_cache`-d for the lifetime of the process; batch runs `python run.py` start fresh, so this is automatic). What's safe to add: normal brands ("Kopparberg"), short brands ("AEG", "7Up"), digit-bearing brands ("19 Crimes"), and even common English words ("Tropical", "Green") — the multi-brand any-pair-match comparison handles collisions correctly. Pure-numeric brands ("555") work but use sparingly — they may collide with codes/prices in titles. |
-| **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. Key sections: `domain_map` (add new marketplaces here), `search.retailer_keywords`, `brand.fuzzy_same_threshold` / `fuzzy_differ_threshold` (88 / 40 default), `numeric.continuous_tolerance` (±10%), `numeric.entity_to_attr` + `unit_conversions` + `discrete_attrs` (to support new attributes/units), `llm.model` (currently `qwen-flash`), `cache.sqlite_path`. Restart after editing. |
+| **[maintain/brand.xlsx](maintain/brand.xlsx)** | Add a row whenever a brand isn't being recognised; remove a row to drop a false-positive brand. Only the `brandname_en` column is read — other columns are ignored. After saving, **restart the Python process** (the brand list is `lru_cache`-d for the lifetime of the process; CLI batch runs start fresh, so this is automatic). What's safe to add: normal brands ("Kopparberg"), short brands ("AEG", "7Up"), digit-bearing brands ("19 Crimes"), and even common English words ("Tropical", "Green") — the multi-brand any-pair-match comparison handles collisions correctly. Pure-numeric brands ("555") work but use sparingly — they may collide with codes/prices in titles. |
+| **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. Key sections: `domain_map` (add new marketplaces here), `search.retailer_keywords`, `brand.fuzzy_same_threshold` / `fuzzy_differ_threshold` (88 / 40 default), `numeric.continuous_tolerance` (±10%), `numeric.entity_to_attr` + `unit_conversions` + `discrete_attrs` (to support new attributes/units), `llm.model`, `cache.sqlite_path`, and `db`. Restart after editing. |
 | **[maintain/llm_router_config.yaml](maintain/llm_router_config.yaml)** | Keyword → `(base_url, key_name)` routing table for the `distinguishing` layer's LLM. Add an entry here when introducing a new LLM vendor — no code change needed. |
-| **[config_search.yaml](../../config_search.yaml)** (repo root) | Per-run job config: which input file, which marketplace, country code, output filename, optional Serper budget. |
+
+Per-run job settings are passed directly to `match_product_batch()` or its CLI; there is no per-run YAML file.
 
 ### Common maintenance tasks
 
@@ -151,6 +214,7 @@ Reads `src/0_Data/tesco_algo.xlsx` by default; override with `--input`.
 - **Brand list** is the main one — new SKUs from new brands appear constantly. Periodically scan rows where `match_layer_trace` shows `"brand": "unknown"` despite a brand-looking token in the product name, and add those brands.
 - **Numeric mapping** (`entity_to_attr` + `unit_conversions`) is fine for groceries / beverages / basic electronics. Adding a new category (e.g. screen sizes for monitors, voltages for batteries) means adding entries here.
 - **Domain map** needs an entry per new marketplace you support.
+- **Generated capability regions** in this README and the root README are refreshed from provider code and the maintained YAML files by `scripts/gen_capability_docs.py`; hand-edits inside `BEGIN/END GENERATED` markers are overwritten.
 
 ### Validating after a maintenance edit
 
@@ -169,7 +233,7 @@ Tests skip cleanly if a referenced brand was removed from `brand.xlsx` — so br
 ## 6. Script map
 
 ```
-[main.py] ──→ [pipeline.py] ──→ [graph.py] ──→ [layers/search] ──→ [layers/query_builder]
+[batch.py] ──→ [pipeline.py] ──→ [graph.py] ──→ [layers/search] ──→ [layers/query_builder]
    │               │                │              │
    │               │                │              └──→ [providers/serper]  (or [providers/duckduckgo])
    │               │                │
@@ -203,7 +267,9 @@ Key: `──→` = imports/calls. `graph.py` wires the 5 layers via LangGraph co
 
 | Path | Purpose |
 |---|---|
-| [pipeline.py](pipeline.py) | Public `match_product(...)` entrypoint |
+| [pipeline.py](pipeline.py) | Public `match_product(...)` entrypoint; standalone calls create `mode=single` traces by default |
+| [batch.py](batch.py) | Public `match_product_batch(...)` entrypoint + flag-only CLI |
+| [db.py](db.py) / [trace.py](trace.py) | SQLite run/task persistence and task-local trace collection |
 | [graph.py](graph.py) | LangGraph wiring of the 5 layers |
 | [layers/](layers/) | One file per layer (`search`, `domain_filter`, `brand`, `numeric`, `base_match`, `distinguishing`, `aggregate`) + `query_builder` |
 | [providers/](providers/) | `DuckDuckGoProvider` (active, free) + `SerperProvider` (active, paid) — chainable; add new search providers here |
@@ -212,7 +278,6 @@ Key: `──→` = imports/calls. `graph.py` wires the 5 layers via LangGraph co
 | [cache.py](cache.py) | SQLite cache for base extraction |
 | [utils.py](utils.py) | Brand-set loader + word-boundary literal matcher (reads `maintain/brand.xlsx`) |
 | [maintain/](maintain/) | **Maintained files** — `brand.xlsx` + `search_config.yaml` + `llm_router_config.yaml`. See §5 above for the how-to. |
-| [main.py](main.py) | Excel batch driver invoked by `python run.py` |
 | [search_link_algorithm_spec.md](search_link_algorithm_spec.md) | Full design rationale |
 | [CLAUDE.md](CLAUDE.md) | Code-internals reference for AI assistants / developers |
 

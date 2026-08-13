@@ -23,7 +23,21 @@ _COUNT_X_RE = re.compile(
     r"\b(\d+)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*(ml|l|cl|g|kg|mg)\b",
     re.IGNORECASE,
 )
-_PACK_RE = re.compile(r"\b(?:pack of|pk of)\s*(\d+)\b", re.IGNORECASE)
+_PACK_RE = re.compile(
+    r"\b(?:(?:pack|pk)\s+of\s*(\d+)|(\d+)\s*(?:-\s*)?(?:pack|pk))\b",
+    re.IGNORECASE,
+)
+_SCREEN_INCH_RE = re.compile(
+    r"(?<![\w.])(\d+(?:\.\d+)?)\s*(?:"
+    r"[\"″”]|-?\s*(?:inches|inch)\b|"
+    r"-\s*in\b(?!\s*-\s*\d)|\s+in\b(?=\s*(?:$|[.,;/)]))"
+    r")",
+    re.IGNORECASE,
+)
+_SLASH_STORAGE_RE = re.compile(
+    r"\b(\d+(?:\.\d+)?)\s*GB\s*/\s*(\d+(?:\.\d+)?)\s*GB\b",
+    re.IGNORECASE,
+)
 
 
 def _normalize_unit(u: str) -> str:
@@ -41,13 +55,35 @@ def _disambiguate(entity_name: str, text: str, span: tuple[int, int]) -> str | N
     if not rule:
         return None
     window = int(config.get("numeric", "ambiguity_window_chars", default=20))
-    start = max(0, span[0] - window)
-    end = min(len(text), span[1] + window)
-    ctx = text[start:end].lower()
-    for kw, attr in rule.items():
-        if kw.lower() in ctx:
-            return attr
-    return None
+
+    def keyword_pattern(keyword: str) -> re.Pattern[str]:
+        parts = [re.escape(part) for part in keyword.lower().split()]
+        return re.compile(r"(?<!\w)" + r"\s+".join(parts) + r"(?!\w)")
+
+    def nearest(ctx: str, *, preceding: bool) -> str | None:
+        matches: list[tuple[int, int, str]] = []
+        for keyword, attr in rule.items():
+            for match in keyword_pattern(keyword).finditer(ctx.lower()):
+                distance = len(ctx) - match.end() if preceding else match.start()
+                # At equal distance, prefer a longer, more specific phrase such as
+                # "memory card" over its generic prefix "memory".
+                matches.append((distance, -len(match.group()), attr))
+        if not matches:
+            return None
+        return min(matches)[2]
+
+    # Product qualifiers usually follow the quantity ("8GB RAM"). Prefer that
+    # direction, but do not let a later quantity's qualifier leak into this one.
+    after = text[span[1] : min(len(text), span[1] + window)]
+    next_number = re.search(r"\d", after)
+    if next_number:
+        after = after[: next_number.start()]
+    attr = nearest(after, preceding=False)
+    if attr is not None:
+        return attr
+
+    before = text[max(0, span[0] - window) : span[0]]
+    return nearest(before, preceding=True)
 
 
 def _convert(value: float, unit_raw: str, attr_key: str) -> float | None:
@@ -101,7 +137,27 @@ def extract_numerics(text: str) -> dict[str, float]:
     m_pack = _PACK_RE.search(text)
     if m_pack and "count" not in out:
         try:
-            out["count"] = float(int(m_pack.group(1)))
+            out["count"] = float(int(m_pack.group(1) or m_pack.group(2)))
+        except ValueError:
+            pass
+
+    m_screen = _SCREEN_INCH_RE.search(text)
+    if m_screen and "screen_inch" not in out:
+        try:
+            out["screen_inch"] = float(m_screen.group(1))
+        except ValueError:
+            pass
+
+    # Phone listings often omit qualifiers in compact RAM/storage notation
+    # ("6GB/128GB"). Recording only the larger value as storage is safer than
+    # letting first-value-wins turn 6GB into a hard storage mismatch. Do not
+    # infer the smaller value as RAM without an explicit qualifier.
+    m_slash_storage = _SLASH_STORAGE_RE.search(text)
+    if m_slash_storage and "storage_gb" not in out:
+        try:
+            out["storage_gb"] = max(
+                float(m_slash_storage.group(1)), float(m_slash_storage.group(2))
+            )
         except ValueError:
             pass
 

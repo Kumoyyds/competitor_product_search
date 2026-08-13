@@ -3,33 +3,27 @@
 ## Current MVP Flow (search module only)
 
 ```
-User runs: python run.py
+User calls match_product_batch(...) or python -m src.search.batch
     │
     ▼
-run.py ──► src.search.main (via runpy)
+src.search.batch
     │
-    ├── Reads config.yaml (input file, SKU column, country, marketplace)
-    ├── Reads input Excel from input/
-    ├── Splits DataFrame into partitions
+    ├── Receives full input/output paths and SKU/web/country column names
+    ├── Creates one mode=batch DB run
+    ├── Reads the input Excel
     │
     ▼
-ThreadPoolExecutor (16 workers)
+asyncio.Semaphore (16 concurrent rows by default)
     │
-    ├── Per partition: find_url_llm()
+    ├── Per row: match_product()
     │       │
-    │       ├── Per row: do_product_searching()
-    │       │       │
-    │       │       ├── Serper API → Google search (site:marketplace)
-    │       │       ├── URL filtering (check_url)
-    │       │       ├── Brand filtering (get_brand, check_found_brand)
-    │       │       ├── LangChain agent (Qwen LLM) picks best URL
-    │       │       └── Returns URL or 'not found'
-    │       │
-    │       └── Returns DataFrame with URL column added
+    │       ├── Resolves that row's website and country
+    │       ├── Search provider chain (DuckDuckGo / Serper)
+    │       ├── Domain, brand and numeric filtering
+    │       ├── Batched LLM distinguishing step when needed
+    │       └── Flushes one task trace to SQLite
     │
-    ├── Saves partition results to output/output_partitions/
-    ├── Combines all partitions
-    └── Saves final result to output/result.xlsx
+    └── Returns the enriched DataFrame and optionally writes Excel
 ```
 
 ## Planned Full Architecture
@@ -94,8 +88,8 @@ Cross-cutting:
 
 ## MVP vs Future Expansion
 
-**MVP (current)**: The search module is fully functional as a standalone pipeline. Run `python run.py` with a configured `config.yaml` and input Excel file.
+**MVP (current)**: The search module is fully functional as a standalone pipeline. Use `match_product()` for one product or `match_product_batch()` / `python -m src.search.batch` for Excel batches. Per-run settings are arguments, not YAML.
 
-**Phase 2**: Extract orchestration from `search/main.py` into `orchestrator/`. Add `api/` for programmatic access. Introduce `storage/` to replace file-based I/O. Define `models/` for structured data passing between modules.
+**Phase 2**: Move higher-level orchestration into `orchestrator/`. Add `api/` endpoints. Introduce `storage/` beyond the current search trace database and define cross-module models.
 
 **Phase 3**: Add `scraping/` for product page data extraction. Add `matching/` for attribute-level comparison beyond URL matching. This enables the full pipeline: find URL → scrape product data → match against SKU attributes.

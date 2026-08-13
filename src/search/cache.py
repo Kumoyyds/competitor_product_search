@@ -10,10 +10,14 @@ from . import config
 from .models import BaseAttributes
 
 
+EXTRACTOR_VERSION = "2"
+
+
 class BaseExtractionCache:
     """Process-wide SQLite cache for base attribute extraction.
 
-    Keyed on md5(title). Values are JSON blobs of {"brand": ..., "numerics": {...}}.
+    Keyed on md5(extractor_version + title). Values are JSON blobs of
+    {"brand": ..., "numerics": {...}}.
     Synchronous SQLite calls are cheap; the cache is exposed via sync .get/.set
     and base_match wraps them with asyncio.to_thread when needed.
     """
@@ -40,7 +44,8 @@ class BaseExtractionCache:
 
     @staticmethod
     def _key(title: str) -> str:
-        return hashlib.md5(title.encode("utf-8")).hexdigest()
+        value = f"{EXTRACTOR_VERSION}|{title}"
+        return hashlib.md5(value.encode("utf-8")).hexdigest()
 
     def get(self, title: str) -> BaseAttributes | None:
         with self._lock, self._connect() as conn:
