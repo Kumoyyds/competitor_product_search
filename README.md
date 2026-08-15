@@ -29,11 +29,11 @@ This is to help online retailer find the url of product on competitor platforms.
 4. make sure your file is ready.
     things to check:
     - **sku name**, you should test which language works well, ex: for amazon.fr, most product names are in French, and after testing on google, french product name is indeed easier to be reached. then we should use french sku name.
-    - **target web column**, currently <!-- BEGIN GENERATED: websites-inline -->`tesco`, `argos`, `amazon.co.uk`, `amazon.nl`, `amazon`<!-- END GENERATED: websites-inline -->. Each row can target a different marketplace. Add more in `domain_map` + `search.retailer_keywords`.
+    - **target web column**, currently <!-- BEGIN GENERATED: websites-inline -->`tesco`, `argos`, `amazon.co.uk`, `amazon.nl`<!-- END GENERATED: websites-inline -->. Each row can target a different marketplace. Add more in `domain_map`; its key is also the retailer keyword used by keyword-mode queries.
     - **country code column**, one of <!-- BEGIN GENERATED: countries-inline -->`uk` (= `gb`), `de`, `fr`, `us`, `nl`, `jp`, `es`, `it`, `pt`, `se`, `pl`, `br`, `au`, `ca`<!-- END GENERATED: countries-inline --> — each row can use a different country, and each search engine maps these internally to its own format (DuckDuckGo `region`, Serper `gl`). Other codes still run but fall back to English results. Full table: [src/search/README.md §3](src/search/README.md#3-input).
     - **be in .xlsx**
 
-5. tune **src/search/maintain/search_config.yaml** when needed (provider chain, thresholds, domain map)
+5. tune **src/search/maintain/search_config.yaml** when needed (provider chain, per-provider query mode, thresholds, domain map)
 6. run with explicit per-run arguments (input/output are complete paths and are not prefixed):
 `python -m src.search.batch --input input/products.xlsx --sku-col product_name --web-col web --country-col country --output output/result.xlsx`
 7. get your result at the path passed to `--output`

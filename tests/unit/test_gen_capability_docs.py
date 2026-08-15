@@ -10,8 +10,10 @@ from scripts.gen_capability_docs import (
     build_blocks,
     collapse_country_rows,
     collect_countries,
+    collect_websites,
     inject_generated_blocks,
     render_countries_table,
+    render_websites_table,
 )
 
 
@@ -67,6 +69,21 @@ def test_injection_is_idempotent():
     assert once == twice
     assert "before <!-- BEGIN" in once
     assert "<!-- END GENERATED: countries-inline --> after" in once
+
+
+def test_websites_come_only_from_domain_map(tmp_path):
+    config_path = tmp_path / "search_config.yaml"
+    config_path.write_text(
+        "domain_map:\n  tesco: tesco.com\n  amazon.nl: amazon.nl\n",
+        encoding="utf-8",
+    )
+
+    rows = collect_websites(config_path)
+
+    assert rows == [("tesco", "tesco.com"), ("amazon.nl", "amazon.nl")]
+    table = render_websites_table(rows)
+    assert table.splitlines()[0] == "| `website` | Host kept by `domain_filter` |"
+    assert "Retailer keyword" not in table
 
 
 def test_real_readmes_are_fresh():

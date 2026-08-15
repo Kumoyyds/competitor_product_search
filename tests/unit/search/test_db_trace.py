@@ -176,6 +176,26 @@ def test_short_path_records_five_primary_node_events():
     assert recorder.failure_kind == FAILURE_NO_SEARCH_RESULTS
 
 
+def test_domain_filter_records_product_page_reject_counts():
+    candidate = RawCandidate(
+        title="Tesco search results",
+        url="https://www.tesco.com/shop/en-GB/search?q=saucery",
+    )
+
+    recorder, result = _run_recorded(FakeProvider([candidate]))
+
+    assert result.verdict == FinalVerdict.NO_MATCH
+    event = next(
+        item
+        for item in recorder.attempts[0].node_events
+        if item["node"] == "domain_filter" and item["status"] == "ok"
+    )
+    assert event["detail"]["domain_rejects"] == {
+        "host": 0,
+        "not_product_page": 1,
+    }
+
+
 def test_llm_error_is_not_business_no_match():
     candidate = RawCandidate(
         title="Magic Rock Saucery 4 X 330ML",

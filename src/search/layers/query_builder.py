@@ -5,18 +5,18 @@ import re
 from .. import config
 
 
-def build_queries(product_name: str, website: str, brand: str | None = None) -> list[str]:
-    """Return the deduped list of query variants to fire against the search provider.
-
-    Per spec §3.1: include retailer keyword for recall; never use a `site:` operator
-    (domain filtering happens at layer 2). Variants are simple rule-based for now,
-    LLM rewrite hook can be added later behind the same interface.
-    """
-    retailer = config.retailer_keyword_for(website)
+def build_queries(
+    product_name: str,
+    website: str,
+    brand: str | None = None,
+    provider_name: str | None = None,
+) -> list[str]:
+    """Return provider-specific, deduplicated search queries."""
+    del brand  # Retained in the public signature for caller compatibility.
     base = product_name.strip()
-    variants_cfg = config.get("search", "query_variants", default=["raw"]) or ["raw"]
-
-    raw_q = f"{base} {retailer}".strip()
+    retailer = website.strip()
+    mode = config.query_mode_for(provider_name or "")
+    domain = config.domain_for(website)
     out: list[str] = []
     seen: set[str] = set()
 
@@ -26,16 +26,13 @@ def build_queries(product_name: str, website: str, brand: str | None = None) -> 
             seen.add(q.lower())
             out.append(q)
 
-    if "raw" in variants_cfg:
-        _add(raw_q)
-    if "with_retailer_kw" in variants_cfg:
-        _add(raw_q)
-    if "with_brand" in variants_cfg and brand:
-        _add(f"{brand} {base} {retailer}")
-    if "strip_parens" in variants_cfg:
-        stripped = re.sub(r"\([^)]*\)", "", base)
-        _add(f"{stripped} {retailer}")
+    def _add_for_name(name: str) -> None:
+        if mode in {"keyword", "both"} or domain is None:
+            _add(f"{name} {retailer}")
+        if mode in {"sitename", "both"} and domain is not None:
+            _add(f"{name} site:{domain}")
 
-    if not out:
-        _add(raw_q)
+    _add_for_name(base)
+    if config.strip_parens_enabled():
+        _add_for_name(re.sub(r"\([^)]*\)", "", base))
     return out

@@ -74,7 +74,7 @@ Short-circuits when every candidate dies at a layer — LLM is never called when
 
 | File | Purpose |
 |------|---------|
-| `src/search/maintain/search_config.yaml` | Pipeline tuning: `search.provider` (string or ordered list for chain), thresholds, domain map, LLM model, cache path |
+| `src/search/maintain/search_config.yaml` | Pipeline tuning: `search.provider` (string or ordered list for chain), per-provider `query_mode`, `strip_parens`, thresholds, domain map, LLM model, cache path |
 | `src/search/maintain/llm_router_config.yaml` | Keyword → `(base_url, key_name)` routing table so switching LLM vendor/model is a single-line edit to `llm.model` |
 | `.env` (repo root) | API keys: `QWEN_KEY` or `DEEPSEEK_KEY` as selected by `llm.model`; `SERPER_KEY` only if Serper is in the provider chain |
 
@@ -82,7 +82,7 @@ Short-circuits when every candidate dies at a layer — LLM is never called when
 
 - Input: any `.xlsx` path passed to `match_product_batch()` / `--input`
 - Brand list: `src/search/maintain/brand.xlsx` (needs manual maintenance for new brands)
-- Cache: `.cache/base_extraction.sqlite` (auto-managed; keyed on md5(title))
+- Cache: `.cache/base_extraction.sqlite` (auto-managed; keyed on extractor version + country + title)
 - Final output: optional `.xlsx` path passed to `match_product_batch()` / `--output`
 - Trace DB: `search_db.sqlite` by default (single calls use `mode=single`; batches use `mode=batch`)
 

@@ -7,6 +7,7 @@ from ..models import CandidateEval, RawCandidate
 from ..providers.base import BudgetExhausted, SearchProvider, SearchProviderError
 from .. import config
 from .query_builder import build_queries
+from .url_rules import clean_url
 
 
 async def search_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -17,7 +18,12 @@ async def search_node(state: dict[str, Any]) -> dict[str, Any]:
     country: str = state.get("country", "uk")
 
     k = int(config.get("search", "k", default=10))
-    queries = build_queries(product_name, website, brand=brand)
+    queries = build_queries(
+        product_name,
+        website,
+        brand=brand,
+        provider_name=provider.name,
+    )
 
     try:
         results = await asyncio.gather(
@@ -43,10 +49,19 @@ async def search_node(state: dict[str, Any]) -> dict[str, Any]:
             errors.append(repr(r))
             continue
         for raw in r:
-            if raw.url in seen_urls:
+            cleaned_url = clean_url(raw.url)
+            if cleaned_url in seen_urls:
                 continue
-            seen_urls.add(raw.url)
-            candidates.append(CandidateEval(raw=raw))
+            seen_urls.add(cleaned_url)
+            candidates.append(
+                CandidateEval(
+                    raw=RawCandidate(
+                        title=raw.title,
+                        url=cleaned_url,
+                        snippet=raw.snippet,
+                    )
+                )
+            )
 
     return {
         **state,

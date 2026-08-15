@@ -214,26 +214,17 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-def collect_websites(config_path: Path) -> list[tuple[str, str | None, str | None]]:
+def collect_websites(config_path: Path) -> list[tuple[str, str | None]]:
     config = _load_yaml(config_path)
-    search = config.get("search") or {}
     domains = config.get("domain_map") or {}
-    keywords = search.get("retailer_keywords") or {}
-    if not isinstance(domains, dict) or not isinstance(keywords, dict):
-        fail(f"{config_path}: domain_map and search.retailer_keywords must be mappings")
-
-    ordered: list[str] = []
-    for key in [*domains, *keywords]:
-        code = str(key)
-        if code not in ordered:
-            ordered.append(code)
+    if not isinstance(domains, dict):
+        fail(f"{config_path}: domain_map must be a mapping")
     return [
         (
-            code,
+            str(code),
             None if domains.get(code) is None else str(domains[code]),
-            None if keywords.get(code) is None else str(keywords[code]),
         )
-        for code in ordered
+        for code in domains
     ]
 
 
@@ -305,8 +296,8 @@ def render_countries_table(
     return "\n".join(lines)
 
 
-def render_websites_inline(rows: Sequence[tuple[str, str | None, str | None]]) -> str:
-    return ", ".join(f"`{code}`" for code, _domain, _keyword in rows)
+def render_websites_inline(rows: Sequence[tuple[str, str | None]]) -> str:
+    return ", ".join(f"`{code}`" for code, _domain in rows)
 
 
 def _domain_cell(domain: str | None) -> str:
@@ -317,14 +308,13 @@ def _domain_cell(domain: str | None) -> str:
     return f"`{_cell(domain)}` (plus subdomains)"
 
 
-def render_websites_table(rows: Sequence[tuple[str, str | None, str | None]]) -> str:
+def render_websites_table(rows: Sequence[tuple[str, str | None]]) -> str:
     lines = [
-        "| `website` | Host kept by `domain_filter` | Retailer keyword |",
-        "|---|---|---|",
+        "| `website` | Host kept by `domain_filter` |",
+        "|---|---|",
     ]
-    for code, domain, keyword in rows:
-        keyword_cell = _cell(keyword) if keyword is not None else "—"
-        lines.append(f"| `{_cell(code)}` | {_domain_cell(domain)} | {keyword_cell} |")
+    for code, domain in rows:
+        lines.append(f"| `{_cell(code)}` | {_domain_cell(domain)} |")
     return "\n".join(lines)
 
 

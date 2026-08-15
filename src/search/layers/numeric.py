@@ -9,6 +9,29 @@ from ..models import Verdict
 
 _quantulum_parser = None
 
+_DECIMAL_NUMBER = r"\d+(?:\.\d+)?"
+
+
+def _keyword_fragment(keyword: str) -> str:
+    """Return a regex fragment for a configured word or short phrase."""
+    parts = [
+        re.escape(part)
+        for part in re.split(r"[\s-]+", keyword.strip())
+        if part
+    ]
+    return r"[\s-]+".join(parts)
+
+
+def _alternation(keywords: list[str]) -> str:
+    fragments = {_keyword_fragment(keyword) for keyword in keywords if keyword.strip()}
+    return "|".join(sorted(fragments, key=len, reverse=True)) or r"(?!)"
+
+
+def _flatten_keywords(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        return [str(item) for items in value.values() for item in (items or [])]
+    return [str(item) for item in (value or [])]
+
 
 def _get_parser():
     global _quantulum_parser
@@ -18,18 +41,77 @@ def _get_parser():
     return _quantulum_parser
 
 
-_ABV_RE = re.compile(r"\bABV\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%", re.IGNORECASE)
+_LOCALE_CONFIG = config.get("numeric", "locale", default={}) or {}
+_DECIMAL_COMMA_COUNTRIES = {
+    str(item).strip().lower()
+    for item in (_LOCALE_CONFIG.get("decimal_comma_countries") or [])
+}
+_PACK_CONFIG = _LOCALE_CONFIG.get("pack_keywords", {}) or {}
+_PACK_AFTER_RE = _alternation(
+    [str(item) for item in (_PACK_CONFIG.get("after_count") or ["pack", "pk"])]
+)
+_PACK_BEFORE_RE = _alternation(
+    [str(item) for item in (_PACK_CONFIG.get("before_count") or ["pack of", "pk of"])]
+)
+_INCH_KEYWORDS = _flatten_keywords(
+    _LOCALE_CONFIG.get("inch_keywords", {"en": ["inch", "inches", "in"]})
+)
+_LONG_INCH_RE = _alternation(
+    [keyword for keyword in _INCH_KEYWORDS if keyword.casefold() != "in"]
+)
+_ABV_KEYWORD_RE = _alternation(
+    [str(item) for item in (_LOCALE_CONFIG.get("abv_keywords") or ["abv"])]
+)
+_UNIT_CASE_OVERRIDES = {
+    str(symbol).casefold(): str(canonical)
+    for symbol, canonical in (
+        _LOCALE_CONFIG.get("unit_case_overrides", {}) or {}
+    ).items()
+}
+_CASE_SYMBOL_ALTERNATION = "|".join(
+    re.escape(symbol)
+    for symbol in sorted(_UNIT_CASE_OVERRIDES, key=len, reverse=True)
+) or r"(?!)"
+_NETWORK_GENERATION_VALUES = {
+    float(value)
+    for value in (_LOCALE_CONFIG.get("network_generation_values") or [])
+}
+_DEVICE_CONTEXT_KEYWORDS = [
+    str(item) for item in (_LOCALE_CONFIG.get("device_context_keywords") or [])
+]
+_DEVICE_CONTEXT_RE = re.compile(
+    rf"(?<!\w)(?:{_alternation(_DEVICE_CONTEXT_KEYWORDS)})(?!\w)",
+    re.IGNORECASE,
+)
+_UNIT_KEYWORDS = [
+    str(unit)
+    for conversions in (
+        config.get("numeric", "unit_conversions", default={}) or {}
+    ).values()
+    for unit in (conversions or {})
+]
+_THOUSANDS_UNIT_RE = _alternation(_UNIT_KEYWORDS)
+
+_ABV_RE = re.compile(
+    rf"(?:"
+    rf"(?<!\w)(?:{_ABV_KEYWORD_RE})(?!\w)\s*[:=]?\s*({_DECIMAL_NUMBER})\s*%|"
+    rf"({_DECIMAL_NUMBER})\s*%\s*(?<!\w)(?:{_ABV_KEYWORD_RE})(?!\w)|"
+    rf"({_DECIMAL_NUMBER})\s*(?<!\w)(?:{_ABV_KEYWORD_RE})(?!\w)\s*-?\s*%"
+    rf")",
+    re.IGNORECASE,
+)
 _COUNT_X_RE = re.compile(
     r"\b(\d+)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*(ml|l|cl|g|kg|mg)\b",
     re.IGNORECASE,
 )
 _PACK_RE = re.compile(
-    r"\b(?:(?:pack|pk)\s+of\s*(\d+)|(\d+)\s*(?:-\s*)?(?:pack|pk))\b",
+    rf"(?<!\w)(?:(\d+)\s*(?:-\s*)?(?:{_PACK_AFTER_RE})(?!\w)|"
+    rf"(?:{_PACK_BEFORE_RE})(?!\w)\s*(\d+))(?!\w)",
     re.IGNORECASE,
 )
 _SCREEN_INCH_RE = re.compile(
     r"(?<![\w.])(\d+(?:\.\d+)?)\s*(?:"
-    r"[\"″”]|-?\s*(?:inches|inch)\b|"
+    rf"[\"″”]|-?\s*(?:{_LONG_INCH_RE})(?!\w)|"
     r"-\s*in\b(?!\s*-\s*\d)|\s+in\b(?=\s*(?:$|[.,;/)]))"
     r")",
     re.IGNORECASE,
@@ -38,6 +120,58 @@ _SLASH_STORAGE_RE = re.compile(
     r"\b(\d+(?:\.\d+)?)\s*GB\s*/\s*(\d+(?:\.\d+)?)\s*GB\b",
     re.IGNORECASE,
 )
+_THOUSANDS_DOT_RE = re.compile(
+    rf"(?<![\d.])(\d{{1,3}})\.(\d{{3}})(?!\d)"
+    rf"(?=\s*(?:{_THOUSANDS_UNIT_RE})(?!\w))",
+    re.IGNORECASE,
+)
+_UNIT_CASE_RE = re.compile(
+    rf"(?<![\w.\-/])({_DECIMAL_NUMBER})(\s*)({_CASE_SYMBOL_ALTERNATION})(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def _normalize_separators(text: str, country: str | None = None) -> str:
+    """Normalize locale separators before regex and quantulum extraction.
+
+    A comma followed by exactly three digits remains an English grouping
+    separator. Other commas between digits become decimal points. A grouping
+    dot is removed only for configured decimal-comma markets and only when a
+    known unit immediately follows the three-digit group.
+    """
+
+    def replace_comma(match: re.Match[str]) -> str:
+        following = re.match(r"\d+", text[match.end() :])
+        if following and len(following.group()) == 3:
+            return ","
+        return "."
+
+    normalized = re.sub(r"(?<=\d),(?=\d)", replace_comma, text)
+    if (country or "").strip().lower() in _DECIMAL_COMMA_COUNTRIES:
+        normalized = _THOUSANDS_DOT_RE.sub(r"\1\2", normalized)
+    return normalized
+
+
+def _normalize_unit_case(text: str) -> str:
+    """Rewrite configured unit-symbol variants before quantulum parses them."""
+    has_device_context = bool(_DEVICE_CONTEXT_RE.search(text))
+
+    def replace(match: re.Match[str]) -> str:
+        number, whitespace, symbol = match.groups()
+        canonical = _UNIT_CASE_OVERRIDES.get(symbol.casefold())
+        if canonical is None or symbol == canonical:
+            return match.group(0)
+
+        # An uppercase G is ambiguous with mobile-network generations and
+        # camera-lens designations. Abstain instead of creating a hard false
+        # weight mismatch when either independent safety signal fires.
+        if symbol.casefold() == "g":
+            if float(number) in _NETWORK_GENERATION_VALUES or has_device_context:
+                return match.group(0)
+
+        return f"{number}{whitespace}{canonical}"
+
+    return _UNIT_CASE_RE.sub(replace, text)
 
 
 def _normalize_unit(u: str) -> str:
@@ -102,7 +236,7 @@ def _convert(value: float, unit_raw: str, attr_key: str) -> float | None:
     return float(value) * float(factor)
 
 
-def extract_numerics(text: str) -> dict[str, float]:
+def extract_numerics(text: str, country: str | None = None) -> dict[str, float]:
     """Return {attr_key: value_in_base_unit} for a product title or candidate text.
 
     Custom regex fallbacks run before quantulum3 so we don't lose ABV / `N X Nml`
@@ -110,12 +244,15 @@ def extract_numerics(text: str) -> dict[str, float]:
     """
     if not text:
         return {}
+    text = _normalize_separators(text, country=country)
+    text = _normalize_unit_case(text)
     out: dict[str, float] = {}
 
     m_abv = _ABV_RE.search(text)
     if m_abv:
         try:
-            out["abv_percent"] = float(m_abv.group(1))
+            value = next(group for group in m_abv.groups() if group is not None)
+            out["abv_percent"] = float(value)
         except ValueError:
             pass
 
@@ -191,15 +328,14 @@ def extract_numerics(text: str) -> dict[str, float]:
 
         v = _convert(q.value, unit_name, attr)
         if v is None:
-            symbol = ""
             try:
                 symbols = getattr(q.unit, "symbols", None) or []
-                if symbols:
-                    symbol = symbols[0]
             except Exception:
-                symbol = ""
-            if symbol:
+                symbols = []
+            for symbol in symbols:
                 v = _convert(q.value, symbol, attr)
+                if v is not None:
+                    break
         if v is None:
             continue
         out[attr] = v

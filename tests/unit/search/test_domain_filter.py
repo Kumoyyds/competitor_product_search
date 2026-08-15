@@ -22,7 +22,7 @@ def test_domain_filter_passes_tesco_links():
 
 
 def test_domain_filter_passes_subdomain():
-    cands = _make("https://groceries.tesco.com/product/abc")
+    cands = _make("https://groceries.tesco.com/products/123")
     out = asyncio.run(domain_filter_node({"website": "tesco", "candidates": cands}))
     assert out["candidates"][0].trace.domain == Verdict.PASS
 
@@ -66,14 +66,39 @@ def test_host_matches_exact_target(host, target, expected):
     assert _host_matches(host, target) is expected
 
 
-def test_domain_filter_passes_amazon_any_tld():
+def test_domain_filter_uses_explicit_amazon_marketplace():
     cands = _make(
-        "https://www.amazon.de/dp/B000",
-        "https://amazon.co.uk/dp/B111",
-        "https://www.notamazon.de/dp/B222",
+        "https://www.amazon.de/dp/B09TRRYFMY",
+        "https://amazon.co.uk/dp/B0C123ABCD",
+        "https://www.notamazon.de/dp/B0D456EFGH",
     )
-    out = asyncio.run(domain_filter_node({"website": "amazon", "candidates": cands}))
+    out = asyncio.run(
+        domain_filter_node({"website": "amazon.co.uk", "candidates": cands})
+    )
     res = out["candidates"]
-    assert res[0].trace.domain == Verdict.PASS and res[0].alive is True
+    assert res[0].trace.domain == Verdict.FAIL and res[0].alive is False
     assert res[1].trace.domain == Verdict.PASS and res[1].alive is True
     assert res[2].trace.domain == Verdict.FAIL and res[2].alive is False
+
+
+def test_domain_filter_rejects_gallery_pages_after_host_passes():
+    cands = _make(
+        "https://www.amazon.nl/dp/B09TRRYFMY",
+        "https://www.amazon.nl/drukspuit-metaal?s?k=drukspuit+metaal",
+        "https://www.amazon.nl/b?node=16462610031",
+        "https://www.tesco.com/shop/en-GB/search?q=tea",
+    )
+
+    amazon_out = asyncio.run(
+        domain_filter_node({"website": "amazon.nl", "candidates": cands[:3]})
+    )
+    tesco_out = asyncio.run(
+        domain_filter_node({"website": "tesco", "candidates": cands[3:]})
+    )
+
+    assert amazon_out["candidates"][0].trace.domain == Verdict.PASS
+    for candidate in amazon_out["candidates"][1:] + tesco_out["candidates"]:
+        assert candidate.trace.domain == Verdict.FAIL
+        assert candidate.alive is False
+    assert amazon_out["domain_rejects"] == {"host": 0, "not_product_page": 2}
+    assert tesco_out["domain_rejects"] == {"host": 0, "not_product_page": 1}

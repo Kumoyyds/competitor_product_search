@@ -16,6 +16,9 @@ _PROMPT_HEADER = (
     "candidate listings is the same SKU as the query.\n"
     "Focus on variant-level distinctions (flavour, colour, version, pack size, etc.) — "
     "obvious brand and numeric mismatches have already been filtered upstream.\n"
+    "Each candidate must be a single-product page. Reject any candidate whose URL is a "
+    "search-results, category, browse, or brand-store page, and never infer the product "
+    "from a snippet that describes one item on a listing page.\n"
     "Return STRICT JSON only, no extra text:\n"
     '{"match_idx": <int|null>, "reason": "<one short sentence>"}\n'
     "Use null for match_idx when none of the candidates is the same SKU."
@@ -47,6 +50,7 @@ def _build_user_msg(query_name: str, query_brands: list[str], query_num: dict[st
         lines.append(
             f"  [{i}] title: {c.raw.title}"
         )
+        lines.append(f"      url: {c.raw.url}")
         lines.append(
             f"      brand: {_render_brands(c.base.brands)} | numeric: {_render_attrs(c.base.numerics)}"
         )

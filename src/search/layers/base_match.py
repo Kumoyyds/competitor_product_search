@@ -9,22 +9,34 @@ from .brand import compare_brands, extract_brands
 from .numeric import compare_numerics, extract_numerics
 
 
-def _extract(text: str, supplied_brand: str | None, cache: BaseExtractionCache | None) -> BaseAttributes:
+def _extract(
+    text: str,
+    supplied_brand: str | None,
+    cache: BaseExtractionCache | None,
+    country: str | None = None,
+) -> BaseAttributes:
     if cache:
-        hit = cache.get(text)
+        hit = cache.get(text, country)
         if hit is not None:
             return hit
     attrs = BaseAttributes(
         brands=extract_brands(text, supplied=supplied_brand),
-        numerics=extract_numerics(text),
+        numerics=extract_numerics(text, country=country),
     )
     if cache:
-        cache.set(text, attrs)
+        cache.set(text, attrs, country)
     return attrs
 
 
-def _evaluate_one(cand: CandidateEval, query: BaseAttributes, cache: BaseExtractionCache | None) -> CandidateEval:
-    cand.base = _extract(cand.raw.title, supplied_brand=None, cache=cache)
+def _evaluate_one(
+    cand: CandidateEval,
+    query: BaseAttributes,
+    cache: BaseExtractionCache | None,
+    country: str | None = None,
+) -> CandidateEval:
+    cand.base = _extract(
+        cand.raw.title, supplied_brand=None, cache=cache, country=country
+    )
 
     bv = compare_brands(query.brands, cand.base.brands)
     cand.trace.brand = bv
@@ -42,12 +54,13 @@ def _evaluate_one(cand: CandidateEval, query: BaseAttributes, cache: BaseExtract
 async def base_match_node(state: dict[str, Any]) -> dict[str, Any]:
     candidates: list[CandidateEval] = state.get("candidates", [])
     cache = get_cache()
+    country = state.get("country")
 
     query_attrs = state.get("query_attrs")
     if query_attrs is None:
         query_attrs = BaseAttributes(
             brands=extract_brands(state["product_name"], supplied=state.get("brand")),
-            numerics=extract_numerics(state["product_name"]),
+            numerics=extract_numerics(state["product_name"], country=country),
         )
 
     alive = [c for c in candidates if c.alive]
@@ -55,7 +68,10 @@ async def base_match_node(state: dict[str, Any]) -> dict[str, Any]:
         return {**state, "candidates": candidates, "query_attrs": query_attrs}
 
     results = await asyncio.gather(
-        *(asyncio.to_thread(_evaluate_one, c, query_attrs, cache) for c in alive)
+        *(
+            asyncio.to_thread(_evaluate_one, c, query_attrs, cache, country)
+            for c in alive
+        )
     )
     by_id = {id(r): r for r in results}
     new_list = [by_id.get(id(c), c) for c in candidates]

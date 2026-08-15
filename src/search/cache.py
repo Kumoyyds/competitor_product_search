@@ -10,14 +10,14 @@ from . import config
 from .models import BaseAttributes
 
 
-EXTRACTOR_VERSION = "2"
+EXTRACTOR_VERSION = "4"
 
 
 class BaseExtractionCache:
     """Process-wide SQLite cache for base attribute extraction.
 
-    Keyed on md5(extractor_version + title). Values are JSON blobs of
-    {"brand": ..., "numerics": {...}}.
+    Keyed on md5(extractor_version + country + title). Values are JSON blobs of
+    {"brands": [...], "numerics": {...}}.
     Synchronous SQLite calls are cheap; the cache is exposed via sync .get/.set
     and base_match wraps them with asyncio.to_thread when needed.
     """
@@ -43,14 +43,16 @@ class BaseExtractionCache:
             )
 
     @staticmethod
-    def _key(title: str) -> str:
-        value = f"{EXTRACTOR_VERSION}|{title}"
+    def _key(title: str, country: str | None = None) -> str:
+        country_key = (country or "").strip().lower()
+        value = f"{EXTRACTOR_VERSION}|{country_key}|{title}"
         return hashlib.md5(value.encode("utf-8")).hexdigest()
 
-    def get(self, title: str) -> BaseAttributes | None:
+    def get(self, title: str, country: str | None = None) -> BaseAttributes | None:
         with self._lock, self._connect() as conn:
             cur = conn.execute(
-                "SELECT payload FROM base_cache WHERE hash = ?", (self._key(title),)
+                "SELECT payload FROM base_cache WHERE hash = ?",
+                (self._key(title, country),),
             )
             row = cur.fetchone()
         if not row:
@@ -67,12 +69,14 @@ class BaseExtractionCache:
             numerics={k: float(v) for k, v in (data.get("numerics") or {}).items()},
         )
 
-    def set(self, title: str, attrs: BaseAttributes) -> None:
+    def set(
+        self, title: str, attrs: BaseAttributes, country: str | None = None
+    ) -> None:
         payload = json.dumps({"brands": list(attrs.brands), "numerics": attrs.numerics})
         with self._lock, self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO base_cache (hash, payload) VALUES (?, ?)",
-                (self._key(title), payload),
+                (self._key(title, country), payload),
             )
 
 

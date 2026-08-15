@@ -69,5 +69,16 @@ def domain_for(website: str) -> str | None:
     return get("domain_map", website.lower())
 
 
-def retailer_keyword_for(website: str) -> str:
-    return get("search", "retailer_keywords", website.lower(), default=website)
+def query_mode_for(provider_name: str) -> str:
+    """Return the configured query strategy for *provider_name*."""
+    mode = get("search", "query_mode", provider_name.lower(), default="keyword")
+    if not isinstance(mode, str) or mode not in {"keyword", "sitename", "both"}:
+        raise ValueError(
+            f"invalid search.query_mode for {provider_name!r}: {mode!r}; "
+            "expected keyword, sitename, or both"
+        )
+    return mode
+
+
+def strip_parens_enabled() -> bool:
+    return bool(get("search", "strip_parens", default=True))

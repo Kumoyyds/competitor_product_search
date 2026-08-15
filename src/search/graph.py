@@ -32,7 +32,10 @@ def _instrument(name: str, fn):
         if recorder is not None and name == "search":
             recorder.set_query_variants(
                 build_queries(
-                    state["product_name"], state["website"], brand=state.get("brand")
+                    state["product_name"],
+                    state["website"],
+                    brand=state.get("brand"),
+                    provider_name=state["provider"].name,
                 )
             )
 
@@ -66,11 +69,15 @@ def _instrument(name: str, fn):
         event_traceback = None
         detail: dict[str, Any] = {}
 
-        if name == "domain_filter" and not config.domain_for(state["website"]):
-            status = "error"
-            error_kind = "DomainMapMissing"
-            error_message = f"domain_map has no entry for {state['website']!r}"
-            detail = {"website": state["website"], "expected_domain": None}
+        if name == "domain_filter":
+            detail["domain_rejects"] = out.get(
+                "domain_rejects", {"host": 0, "not_product_page": 0}
+            )
+            if not config.domain_for(state["website"]):
+                status = "error"
+                error_kind = "DomainMapMissing"
+                error_message = f"domain_map has no entry for {state['website']!r}"
+                detail.update({"website": state["website"], "expected_domain": None})
         elif name == "distinguishing" and out.get("llm_error_kind"):
             status = "error"
             error_kind = out["llm_error_kind"]

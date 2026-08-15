@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from .. import config
 from ..models import CandidateEval, Verdict
+from .url_rules import is_product_url
 
 
 def _host_matches(host: str, target: str) -> bool:
@@ -27,22 +28,29 @@ async def domain_filter_node(state: dict[str, Any]) -> dict[str, Any]:
     website: str = state["website"]
     target = config.domain_for(website)
     candidates: list[CandidateEval] = state.get("candidates", [])
+    rejects = {"host": 0, "not_product_page": 0}
 
     if not target:
         for c in candidates:
             c.trace.domain = Verdict.FAIL
             c.alive = False
-        return {**state, "candidates": candidates}
+            rejects["host"] += 1
+        return {**state, "candidates": candidates, "domain_rejects": rejects}
 
     for c in candidates:
         try:
             host = urlparse(c.raw.url).netloc
         except Exception:
             host = ""
-        if host and _host_matches(host, target):
-            c.trace.domain = Verdict.PASS
-        else:
+        if not host or not _host_matches(host, target):
             c.trace.domain = Verdict.FAIL
             c.alive = False
+            rejects["host"] += 1
+        elif not is_product_url(website, c.raw.url):
+            c.trace.domain = Verdict.FAIL
+            c.alive = False
+            rejects["not_product_page"] += 1
+        else:
+            c.trace.domain = Verdict.PASS
 
-    return {**state, "candidates": candidates}
+    return {**state, "candidates": candidates, "domain_rejects": rejects}

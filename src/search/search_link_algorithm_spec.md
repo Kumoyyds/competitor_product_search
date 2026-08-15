@@ -64,19 +64,19 @@ search → domain_filter → base_match → distinguishing → aggregate
 
 **职责**：把 `product_name + website (+ brand)` 转成搜索 query，调 search provider，产出候选列表；同时提取 query 侧的 `BaseAttributes` 供后续 base 比对用。
 
-**Search provider** 设计为可插拔抽象接口。当前实现接 Serper（异步 HTTP），DuckDuckGo 等其他 provider 留 placeholder，实现同一接口即可替换，无需改调用方。在配置里按名字选择当前 provider。
+**Search provider** 设计为可插拔抽象接口。当前实现接 Serper（异步 HTTP）与基于 `ddgs` 库的 DuckDuckGo provider，实现同一接口即可替换，无需改调用方。在配置里可按名字选择单 provider 或有序 fallback chain。
 
-**Query 构建**：query 里加入零售商关键词（"Argos" / "Tesco"）提升召回；**不要用 `site:` 限制**（域名过滤交给第 2 层，且部分 provider 不支持 `site:`）。可并行发多条 query 变体（原名 / 加品牌 / 去括号噪声），合并去重。零结果时可让 LLM 改写一次 query 重试。Phase 0 允许先用规则版 query builder，接口一致后续可升级为 LLM agent。
+**Query 构建**：由 `search.query_mode` 按 provider 选择 `keyword`（`product_name + domain_map key`）、`sitename`（`product_name + site:domain_map value`）或 `both`。`both` 的两种形式并发发出并合并去重；因为部分 provider 不可靠地支持 `site:`，未配置的 provider 默认保持 `keyword`。`search.strip_parens` 开启时为每种形式额外生成去括号变体。`domain_map` 缺失时，`sitename` / `both` 优雅降级为 keyword，不在 query builder 抛错。
 
 **并行点**：多 query 变体并发发出（`asyncio.gather`），是搜索层的速度主收益。
 
 ---
 
-### 第 2 层：域名过滤
+### 第 2 层：域名与 URL 形态过滤
 
-**职责**：保留 URL 域名命中目标 website 的候选，其余写 `domain=fail`、`alive=False`。
+**职责**：先保留 URL 域名命中目标 website 的候选，再对已配置规则的网站验证其路径是否为单品页；域名不符或属于搜索结果、分类、browse、品牌店等非单品页面的候选均写 `domain=fail`、`alive=False`。
 
-维护一张静态映射表：`amazon → amazon.co.uk`、`tesco → tesco.com`、`argos → argos.co.uk`。纯字符串匹配，无 I/O。
+搜索结果进入管道时先按 `url_rules.strip_query_params` 的 denylist 清除追踪参数，再基于清洗后的 URL 去重。`domain_map` 维护 website 到允许域名的映射，`url_rules.product_path` 可选地维护 website 到单品页路径正则；没有路径规则的网站保持原有的仅域名过滤行为。该层为纯规则判断、无 I/O，并记录 host 与非单品页两类拒绝数量供 trace 排查。
 
 ---
 
@@ -162,6 +162,7 @@ search → domain_filter → base_match → distinguishing → aggregate
 以下内容全部外置到配置文件：
 
 - Serper API key、当前 search provider 名（`serper` / `duckduckgo`）
+- 各 provider 的 query 构建方式（`keyword` / `sitename` / `both`）与是否生成去括号变体
 - LLM provider 名（`qwen` / `deepseek`）及 API key
 - Brand fuzzy 阈值（SAME 阈值默认 88，DIFFER 阈值默认 40）
 - Numeric 连续属性容差（默认 ±10%）
@@ -173,7 +174,7 @@ search → domain_filter → base_match → distinguishing → aggregate
 
 1. 数据模型：`LayerTrace`、`CandidateEval`、`BaseAttributes`、`MatchResult` 等核心结构。
 2. 静态配置：域名映射表、品牌词表（先放几百个种子品牌）、numeric 映射/消歧/换算/离散集合。
-3. 搜索层：SerperProvider + DuckDuckGo placeholder + query builder（先规则版）。
+3. 搜索层：SerperProvider + DuckDuckGoProvider + provider-specific query builder。
 4. base 匹配层：brand 提取与比对 → numeric 提取与比对 → 合并，**每个子模块配单元测试**（最核心）。
 5. SQLite 缓存接入 base 提取。
 6. distinguishing 层：prompt 模板 + LLM 调用（batched 单调用）。

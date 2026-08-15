@@ -18,17 +18,15 @@ search:
   provider: [duckduckgo, serper]
   # Max number of results to request per search query
   k: 10
-  # Query rewriting strategies applied to each product name:
-  #   raw            – use the product name as-is
-  #   with_retailer_kw – append the retailer keyword (e.g. "Tesco")
-  #   strip_parens   – remove parenthesised text from the name
-  query_variants: [raw, with_retailer_kw, strip_parens]
-  # Keyword appended to queries when using the "with_retailer_kw" variant.
-  # Keyed by the website argument passed to the public APIs.
-  retailer_keywords:
-    tesco: Tesco
-    argos: Argos
-    amazon: Amazon
+  # Query construction strategy per provider:
+  #   keyword  – "{product_name} {domain_map key}"
+  #   sitename – "{product_name} site:{domain_map value}"
+  #   both     – issue both forms concurrently and merge the candidate pools
+  query_mode:
+    duckduckgo: both
+    serper: keyword
+  # Also issue each configured form with parenthesised text removed.
+  strip_parens: true
 
 # Maps website codes to expected host domains.
 # The domain_filter layer kills candidates whose URL host doesn't match.
@@ -41,6 +39,21 @@ domain_map:
   amazon.co.uk: amazon.co.uk
   amazon.nl: amazon.nl
 
+url_rules:
+  # Tracking parameters stripped from every candidate URL at ingest. A trailing
+  # "*" means prefix matching; other entries match the whole parameter name.
+  strip_query_params:
+    [srsltid, gclid, gbraid, wbraid, dclid, fbclid, msclkid, ttclid,
+     igshid, mc_cid, mc_eid, "utm_*", ref, ref_]
+  # Path regex a URL must match to count as one product page. Websites absent
+  # here retain the previous host-only filtering behaviour.
+  product_path:
+    tesco:        '/products/\d+'
+    argos:        '/product/\d+'
+    amazon:       '/(dp|gp/product)/[A-Z0-9]{10}'
+    amazon.co.uk: '/(dp|gp/product)/[A-Z0-9]{10}'
+    amazon.nl:    '/(dp|gp/product)/[A-Z0-9]{10}'
+
 brand:
   # RapidFuzz score >= this → brands considered the same (pass)
   fuzzy_same_threshold: 88
@@ -52,6 +65,72 @@ numeric:
   # Allowed relative difference for continuous attributes (e.g. weight, volume).
   # 0.10 = ±10%. Values outside this range → fail.
   continuous_tolerance: 0.10
+  # Locale-aware syntax used by the numeric regex pre-pass. Keyword lists are
+  # deliberately combined across languages because result titles can use a
+  # different language from the requested market.
+  locale:
+    decimal_comma_countries: [de, fr, nl, es, it, pt, se, pl, br]
+    pack_keywords:
+      # Phrases following the number: "4 pack", "24er Pack", "4 stuks".
+      after_count:
+        - pack
+        - pk
+        - pcs
+        - count
+        - er pack
+        - stück
+        - stueck
+        - stk
+        - stuks
+        - stuk
+        - st
+      # Phrases preceding the number: "Pack of 4", "Doos van 12".
+      before_count:
+        - pack of
+        - pk of
+        - packung mit
+        - set mit
+        - doos van
+        - set van
+        - pak van
+        - lot de
+        - paquet de
+        - pack de
+        - boîte de
+        - boite de
+    inch_keywords:
+      en: [inch, inches, in]
+      de: [zoll]
+      fr: [pouces, pouce]
+    abv_keywords: [abv, vol, vol., alc, alc., alk, alk., alcohol, alkoholgehalt]
+    # quantulum3 resolves these case variants to the wrong entity. Keys are
+    # case-folded and rewritten to the canonical symbol before parsing.
+    unit_case_overrides:
+      g: g
+      gb: GB
+      mb: MB
+      mm: mm
+      tb: TB
+    # These values followed by uppercase G are mobile network generations,
+    # not grams (for example, "Galaxy A25 5G").
+    network_generation_values: [2, 3, 4, 5]
+    # In device listings, uppercase G may also be a network or lens label.
+    # Keep 4g/5g out: word boundaries would match the tail of 1.4G/2.5G.
+    device_context_keywords:
+      - phone
+      - smartphone
+      - mobile
+      - sim
+      - lte
+      - android
+      - galaxy
+      - iphone
+      - смартфон
+      - lens
+      - camera
+      - af-s
+      - nikkor
+      - dslr
   # Maps quantulum3 entity names to canonical attribute names used internally.
   entity_to_attr:
     volume: volume_ml
@@ -72,6 +151,7 @@ numeric:
       ml: 1
       millilitre: 1
       millilitres: 1
+      "cubic centimetre": 1
       cl: 10
       centilitre: 10
       "fluid ounce": 29.5735
@@ -164,8 +244,8 @@ llm:
 
 cache:
   # Path to the SQLite file caching base extraction results (brand + numeric).
-  # Keyed on md5(extractor version + title) — same title is never re-extracted
-  # until the extractor version changes.
+  # Keyed on md5(extractor version + country + title) — the same title/country
+  # pair is never re-extracted until the extractor version changes.
   sqlite_path: .cache/base_extraction.sqlite
 
 db:

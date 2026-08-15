@@ -12,7 +12,7 @@ It replaces the old "let an LLM agent pick a URL" approach with a **5-layer pipe
 search  →  domain_filter  →  base_match  →  distinguishing  →  aggregate
 ```
 
-1. **search** — fires query variants at the first provider in the chain (DuckDuckGo / Serper / custom), dedups results by URL.
+1. **search** — builds provider-specific keyword and/or `site:` queries, fires them concurrently at the first provider in the chain (DuckDuckGo / Serper / custom), and dedups results by URL.
 2. **domain_filter** — drops candidates whose host isn't the target marketplace (e.g. only keep `*.tesco.com` when targeting Tesco).
 3. **base_match** — for each surviving candidate, compares **brand** (rapidfuzz against `brand.xlsx`, three-state pass/fail/unknown) and **numeric attributes** (volume, weight, count, ABV, storage… extracted via quantulum3 + regex). Mismatches kill the candidate; missing info passes through as `unknown`.
 4. **distinguishing** — one batched call to the configured LLM decides which surviving candidate (if any) is the same SKU, catching variant differences the rules miss (flavour, colour, version, pack size).
@@ -92,21 +92,20 @@ Stratified sample from `src/0_Data/tesco_algo.xlsx`, capped at 50 Serper calls. 
 
 ### Accepted `website` values
 
-The website code is looked up in two places in [maintain/search_config.yaml](maintain/search_config.yaml): `domain_map` (which host must the URL have) and `search.retailer_keywords` (which word gets appended to the query). Matching is case-insensitive.
+The website code is looked up in `domain_map` in [maintain/search_config.yaml](maintain/search_config.yaml). Its key is the retailer keyword used by keyword-mode queries; its value is the host used by `site:` queries and `domain_filter`. Matching is case-insensitive.
 
 <!-- BEGIN GENERATED: websites-table -->
-| `website` | Host kept by `domain_filter` | Retailer keyword |
-|---|---|---|
-| `tesco` | `tesco.com` (plus subdomains) | Tesco |
-| `argos` | `argos.co.uk` (plus subdomains) | Argos |
-| `amazon.co.uk` | `amazon.co.uk` (plus subdomains) | — |
-| `amazon.nl` | `amazon.nl` (plus subdomains) | — |
-| `amazon` | — | Amazon |
+| `website` | Host kept by `domain_filter` |
+|---|---|
+| `tesco` | `tesco.com` (plus subdomains) |
+| `argos` | `argos.co.uk` (plus subdomains) |
+| `amazon.co.uk` | `amazon.co.uk` (plus subdomains) |
+| `amazon.nl` | `amazon.nl` (plus subdomains) |
 <!-- END GENERATED: websites-table -->
 
 A `domain_map` value **ending in `.`** is a registrable-name prefix — it matches that name under any TLD. Values without the trailing dot match that exact host and its subdomains only. Look-alikes (`notamazon.de`, `amazon.de.evil.com`) are rejected either way.
 
-An unlisted website code doesn't raise — every candidate fails `domain_filter` and the row comes back `no_match`. To support a new marketplace, add a `domain_map` entry plus a `search.retailer_keywords` entry — no code change needed.
+An unlisted website code doesn't raise — sitename mode falls back to a keyword query, then every candidate fails `domain_filter` and the row comes back `no_match`. To support a new marketplace, add one `domain_map` entry — no code change needed.
 
 ### Accepted `country` values
 
@@ -131,7 +130,7 @@ Pass a plain ISO-3166-1 alpha-2 code (lower- or upper-case); each provider trans
 | `ca` | Canada | `ca-en` | `ca` |
 <!-- END GENERATED: countries-table -->
 
-An unmapped code doesn't fail — it degrades: DuckDuckGo falls back to `<code>-en` (English results in that country) and Serper forwards the code to Google as-is. Add the country to `_COUNTRY_TO_REGION` in [providers/duckduckgo.py](providers/duckduckgo.py) and `_COUNTRY_TO_GL` in [providers/serper.py](providers/serper.py) when you need the local language instead. Note `country` only steers the search engine — it is independent of `website`, so pairing `amazon` with `de` is what targets `amazon.de`.
+An unmapped code doesn't fail — it degrades: DuckDuckGo falls back to `<code>-en` (English results in that country) and Serper forwards the code to Google as-is. Add the country to `_COUNTRY_TO_REGION` in [providers/duckduckgo.py](providers/duckduckgo.py) and `_COUNTRY_TO_GL` in [providers/serper.py](providers/serper.py) when you need the local language instead. Note `country` only steers the search engine; `website` must still name an explicit `domain_map` entry such as `amazon.nl`.
 
 ### Accepted LLM vendors
 
@@ -191,7 +190,7 @@ The path supplied as `output_file` / `--output` contains your input with these e
 | File | When / how to update |
 |---|---|
 | **[maintain/brand.xlsx](maintain/brand.xlsx)** | Add a row whenever a brand isn't being recognised; remove a row to drop a false-positive brand. Only the `brandname_en` column is read — other columns are ignored. After saving, **restart the Python process** (the brand list is `lru_cache`-d for the lifetime of the process; CLI batch runs start fresh, so this is automatic). What's safe to add: normal brands ("Kopparberg"), short brands ("AEG", "7Up"), digit-bearing brands ("19 Crimes"), and even common English words ("Tropical", "Green") — the multi-brand any-pair-match comparison handles collisions correctly. Pure-numeric brands ("555") work but use sparingly — they may collide with codes/prices in titles. |
-| **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. Key sections: `domain_map` (add new marketplaces here), `search.retailer_keywords`, `brand.fuzzy_same_threshold` / `fuzzy_differ_threshold` (88 / 40 default), `numeric.continuous_tolerance` (±10%), `numeric.entity_to_attr` + `unit_conversions` + `discrete_attrs` (to support new attributes/units), `llm.model`, `cache.sqlite_path`, and `db`. Restart after editing. |
+| **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. Key sections: `domain_map` (key = retailer keyword, value = accepted host / `site:` value), `search.query_mode`, `search.strip_parens`, `brand.fuzzy_same_threshold` / `fuzzy_differ_threshold` (88 / 40 default), `numeric.continuous_tolerance` (±10%), `numeric.entity_to_attr` + `unit_conversions` + `discrete_attrs` (to support new attributes/units), `llm.model`, `cache.sqlite_path`, and `db`. Restart after editing. |
 | **[maintain/llm_router_config.yaml](maintain/llm_router_config.yaml)** | Keyword → `(base_url, key_name)` routing table for the `distinguishing` layer's LLM. Add an entry here when introducing a new LLM vendor — no code change needed. |
 
 Per-run job settings are passed directly to `match_product_batch()` or its CLI; there is no per-run YAML file.
@@ -202,7 +201,8 @@ Per-run job settings are passed directly to `match_product_batch()` or its CLI; 
 |---|---|
 | Recognise a new brand | Append to `maintain/brand.xlsx` `brandname_en`, save, restart |
 | Drop a noisy brand | Delete that row in `maintain/brand.xlsx`, save, restart |
-| Add a new marketplace | In `maintain/search_config.yaml`: add `domain_map: { <name>: <host> }` and `search.retailer_keywords: { <name>: <keyword> }` |
+| Add a new marketplace | In `maintain/search_config.yaml`, add `domain_map: { <retailer-keyword>: <host> }` |
+| Change query construction | Set a provider's `search.query_mode` to `keyword`, `sitename`, or `both`; toggle `search.strip_parens` for parenthesis-free variants |
 | Make brand matching stricter / looser | Raise / lower `brand.fuzzy_same_threshold` in `maintain/search_config.yaml` |
 | Allow more slop in weights/volumes | Raise `numeric.continuous_tolerance` |
 | Support a new unit (e.g. `floz`) | Add it under the relevant attribute in `numeric.unit_conversions` |
