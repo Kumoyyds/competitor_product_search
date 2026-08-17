@@ -12,3 +12,12 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not live'"
+asyncio_mode = "auto"
+markers = [
+    "live: calls real BrightData or LLM APIs and may incur charges; skipped by default, run with -m live",
+    "slow: starts real sandbox subprocesses or performs multi-second I/O",
+]

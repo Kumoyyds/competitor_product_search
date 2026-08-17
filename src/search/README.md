@@ -177,10 +177,6 @@ The path supplied as `output_file` / `--output` contains your input with these e
 
 `output/validation_report.xlsx` with columns: `product_name`, `legacy_url`, `new_verdict`, `new_url`, `layer_trace_json`, `candidates_considered`, `reason`. Console also prints the per-layer verdict counts and per-provider call counts.
 
-### Cache (auto-managed)
-
-`.cache/base_extraction.sqlite` — SQLite cache of brand + numeric extraction per title. Safe to delete; will rebuild on next run.
-
 ---
 
 ## 5. Files to maintain
@@ -190,7 +186,7 @@ The path supplied as `output_file` / `--output` contains your input with these e
 | File | When / how to update |
 |---|---|
 | **[maintain/brand.xlsx](maintain/brand.xlsx)** | Add a row whenever a brand isn't being recognised; remove a row to drop a false-positive brand. Only the `brandname_en` column is read — other columns are ignored. After saving, **restart the Python process** (the brand list is `lru_cache`-d for the lifetime of the process; CLI batch runs start fresh, so this is automatic). What's safe to add: normal brands ("Kopparberg"), short brands ("AEG", "7Up"), digit-bearing brands ("19 Crimes"), and even common English words ("Tropical", "Green") — the multi-brand any-pair-match comparison handles collisions correctly. Pure-numeric brands ("555") work but use sparingly — they may collide with codes/prices in titles. |
-| **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. Key sections: `domain_map` (key = retailer keyword, value = accepted host / `site:` value), `search.query_mode`, `search.strip_parens`, `brand.fuzzy_same_threshold` / `fuzzy_differ_threshold` (88 / 40 default), `numeric.continuous_tolerance` (±10%), `numeric.entity_to_attr` + `unit_conversions` + `discrete_attrs` (to support new attributes/units), `llm.model`, `cache.sqlite_path`, and `db`. Restart after editing. |
+| **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. Key sections: `domain_map` (key = retailer keyword, value = accepted host / `site:` value), `search.query_mode`, `search.strip_parens`, `brand.fuzzy_same_threshold` / `fuzzy_differ_threshold` (88 / 40 default), `numeric.continuous_tolerance` (±10%), `numeric.entity_to_attr` + `unit_conversions` + `discrete_attrs` (to support new attributes/units), `llm.model`, and `db`. Restart after editing. |
 | **[maintain/llm_router_config.yaml](maintain/llm_router_config.yaml)** | Keyword → `(base_url, key_name)` routing table for the `distinguishing` layer's LLM. Add an entry here when introducing a new LLM vendor — no code change needed. |
 
 Per-run job settings are passed directly to `match_product_batch()` or its CLI; there is no per-run YAML file.
@@ -219,14 +215,13 @@ Per-run job settings are passed directly to `match_product_batch()` or its CLI; 
 ### Validating after a maintenance edit
 
 ```powershell
-python -m pytest tests/unit/search/ -v
+python -m pytest
 ```
 Tests skip cleanly if a referenced brand was removed from `brand.xlsx` — so brand-list edits won't break the suite.
 
 ### What does NOT need maintenance
 
 - Code under `layers/`, `providers/`, `graph.py`, `pipeline.py` — only edit when changing algorithm behaviour.
-- The SQLite cache — auto-managed at `.cache/base_extraction.sqlite`.
 
 ---
 
@@ -241,8 +236,7 @@ Tests skip cleanly if a referenced brand was removed from `brand.xlsx` — so br
    │               │                │
    │               │                ├──→ [layers/base_match] ──→ [layers/brand]
    │               │                │         │                    └──→ [utils.py]
-   │               │                │         ├──→ [layers/numeric]
-   │               │                │         └──→ [cache.py]
+   │               │                │         └──→ [layers/numeric]
    │               │                │
    │               │                ├──→ [layers/distinguishing]
    │               │                └──→ [layers/aggregate]
@@ -275,10 +269,9 @@ Key: `──→` = imports/calls. `graph.py` wires the 5 layers via LangGraph co
 | [providers/](providers/) | `DuckDuckGoProvider` (active, free) + `SerperProvider` (active, paid) — chainable; add new search providers here |
 | [models.py](models.py) | Data classes (`MatchResult`, `LayerTrace`, `CandidateEval`, …) |
 | [config.py](config.py) | Loader for `maintain/search_config.yaml`; `resolve_llm_route()` keyword-routes `llm.model` via `maintain/llm_router_config.yaml` |
-| [cache.py](cache.py) | SQLite cache for base extraction |
 | [utils.py](utils.py) | Brand-set loader + word-boundary literal matcher (reads `maintain/brand.xlsx`) |
 | [maintain/](maintain/) | **Maintained files** — `brand.xlsx` + `search_config.yaml` + `llm_router_config.yaml`. See §5 above for the how-to. |
 | [search_link_algorithm_spec.md](search_link_algorithm_spec.md) | Full design rationale |
 | [CLAUDE.md](CLAUDE.md) | Code-internals reference for AI assistants / developers |
 
-Unit tests live at [tests/unit/search/](../../tests/unit/search/). Run: `python -m pytest tests/unit/search/ -v` (offline — no API cost).
+Unit tests live at [tests/unit/search/](../../tests/unit/search/). Run `python -m pytest` for the default offline, zero-cost suite. Use `python -m pytest -m live` only when API-backed tests are intended; they require keys and may incur cost.

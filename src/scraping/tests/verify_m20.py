@@ -11,24 +11,11 @@ import traceback
 from datetime import datetime, timezone
 from decimal import Decimal
 
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
+from ._harness import FAILED, PASSED, SKIPPED, check, section, skip, run_main
 
 
-def check(name: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print()
-    print("=" * 72)
-    print(title)
-    print("=" * 72)
 
 
 def raw_product(**overrides):
@@ -178,22 +165,8 @@ def verify_prompt_and_feedback() -> None:
 
 
 def main() -> int:
-    try:
-        verify_price_contract()
-        verify_prompt_and_feedback()
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
-
-    print()
-    print("=" * 72)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 72)
-    for name, detail in FAILED:
-        print(f"  FAILED: {name}  ({detail})")
-    return 1 if FAILED else 0
+    return run_main(verify_price_contract, verify_prompt_and_feedback)
 
 
 if __name__ == "__main__":
     sys.exit(main())
-

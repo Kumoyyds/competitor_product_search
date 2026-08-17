@@ -53,7 +53,9 @@ Reads `src/0_Data/tesco_algo.xlsx`, runs a stratified sample, writes `output/val
 - always try some sample, like 20/50 before running the whole file, in case anything goes unexpectedly. **remember, every search costs** (serper: ~50000 credits / $50; duckduckgo is free but has a rate limit).
 
 # tests
-`python -m pytest tests/unit/search/ -v` — offline unit tests, zero API cost.
+`python -m pytest` — default offline test suite, zero API cost.
+
+`python -m pytest -m live` — explicitly run tests that use real API keys and may incur cost.
 
 # future work to be done
 1. **more search engines** — the chain is N-provider generic; just subclass `SearchProvider` and register in `make_provider()`.

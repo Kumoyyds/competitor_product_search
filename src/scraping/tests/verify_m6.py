@@ -13,39 +13,24 @@ Offline: patches BrightData unlocker to return the Argos fixture HTML.
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
-import tempfile
 import traceback
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from ._harness import FAILED, PASSED, check, run_main, section, use_temp_scrape_db
 
 # Set DB path BEFORE importing scraping module so config picks it up
-_DB_PATH = os.path.join(tempfile.gettempdir(), "verify_m6.db")
-if os.path.exists(_DB_PATH):
-    os.remove(_DB_PATH)
-os.environ["SCRAPING_DB_PATH"] = _DB_PATH
+_DB_PATH = use_temp_scrape_db("verify_m6")
 
 from src.scraping import config as _config
 _config._config = None  # reset cached config
 
-DATA_DIR = Path(__file__).parent.parent / "data"
-
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
+DATA_DIR = Path(__file__).parent.parent / "data" / "html_sample"
 
 
-def check(name: str, cond: bool, detail: str = "") -> None:
-    if cond:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print(); print("=" * 70); print(title); print("=" * 70)
+
 
 
 # A hand-written parser for Argos JSON-LD Product schema
@@ -139,7 +124,7 @@ async def run() -> None:
                   "success", "fast", winning_parser_id=broken_id)
     db.close()
 
-    argos_html = (DATA_DIR / "argos_response_1.html").read_text(encoding="utf-8")
+    argos_html = (DATA_DIR / "argos_game_normal.html").read_text(encoding="utf-8")
 
     async def _fake_fetch(url):
         return (200, argos_html)
@@ -197,23 +182,7 @@ async def run() -> None:
 
 
 def main() -> int:
-    try:
-        asyncio.run(run())
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
-    finally:
-        if os.path.exists(_DB_PATH):
-            os.remove(_DB_PATH)
-
-    print(); print("=" * 70)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 70)
-    if FAILED:
-        for name, detail in FAILED:
-            print(f"  FAILED: {name}  ({detail})")
-        return 1
-    return 0
+    return run_main(run, width=70)
 
 
 if __name__ == "__main__":

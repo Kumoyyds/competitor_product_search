@@ -17,16 +17,12 @@ Cost: ~$0.01-0.05 per full run (a handful of Qwen requests).
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
-import tempfile
 import traceback
 from pathlib import Path
+from ._harness import FAILED, PASSED, SKIPPED, check, run_main, section, skip, use_temp_scrape_db
 
-_DB_PATH = os.path.join(tempfile.gettempdir(), "verify_m8.db")
-if os.path.exists(_DB_PATH):
-    os.remove(_DB_PATH)
-os.environ["SCRAPING_DB_PATH"] = _DB_PATH
+_DB_PATH = use_temp_scrape_db("verify_m8")
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -35,30 +31,15 @@ from src.scraping import config as _config
 _config._config = None
 cfg = _config.get_config()
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR = Path(__file__).parent.parent / "data" / "html_sample"
 HAS_LLM = bool(cfg.qwen_key)
 
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
-SKIPPED: list[str] = []
 
 
-def check(name: str, cond: bool, detail: str = "") -> None:
-    if cond:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def skip(name: str, reason: str) -> None:
-    SKIPPED.append(name)
-    print(f"  [SKIP] {name}  ({reason})")
 
 
-def section(title: str) -> None:
-    print(); print("=" * 70); print(title); print("=" * 70)
 
 
 async def run() -> None:
@@ -166,7 +147,7 @@ async def run() -> None:
               (outcome.phrase or "")[:60])
 
     section("M8.7 - Repair agent: generates parser for real Argos HTML")
-    argos_html = (DATA_DIR / "argos_response_1.html").read_text(encoding="utf-8")
+    argos_html = (DATA_DIR / "argos_game_normal.html").read_text(encoding="utf-8")
 
     # Use HTMLScraper stub for run_repair_ladder
     class DummyScraper:
@@ -205,23 +186,7 @@ async def run() -> None:
 
 
 def main() -> int:
-    try:
-        asyncio.run(run())
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
-    finally:
-        if os.path.exists(_DB_PATH):
-            os.remove(_DB_PATH)
-
-    print(); print("=" * 70)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed, {len(SKIPPED)} skipped")
-    print("=" * 70)
-    if FAILED:
-        for name, detail in FAILED:
-            print(f"  FAILED: {name}  ({detail})")
-        return 1
-    return 0
+    return run_main(run, width=70)
 
 
 if __name__ == "__main__":

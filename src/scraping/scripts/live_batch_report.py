@@ -1,11 +1,11 @@
-"""Verification script for M12 -- End-to-end live scraping with real BrightData + Qwen.
+"""Live batch scraping and report tool (formerly the M12 verification script).
 
-Reads URLs from src/scraping/data/tesco_test.xlsx.xlsx, runs the full Router.scrape()
+Reads URLs from `src/scraping/data/test_data/tesco_argos.xlsx`, runs the full `Router.scrape()`
 pipeline for each, and logs detailed per-URL scraping status including which
 mechanisms triggered.
 
 Run from repo root:
-    python -m src.scraping.tests.verify_m12
+    python -m src.scraping.scripts.live_batch_report
 
 Requires: BRIGHT_DATA_KEY (or BRIGHT_UNLOCKER_KEY / SCRAPING_BRIGHT_DATA_KEY) in .env (refuses to run without it).
 Optional: QWEN_KEY in .env (HTML scrapers will escalate without repair; API scrapers still work).
@@ -33,7 +33,7 @@ from typing import Any, Optional, TextIO
 #  SETUP: temp DB + config  (MUST run at module level before any
 #  scraping import, to avoid polluting production DB)
 # ====================================================================
-_DB_PATH = os.path.join(tempfile.gettempdir(), "verify_m12.db")
+_DB_PATH = os.path.join(tempfile.gettempdir(), "live_batch_report.db")
 if os.path.exists(_DB_PATH):
     try:
         os.remove(_DB_PATH)
@@ -53,7 +53,7 @@ _cfg = _cfg_mod.get_config()
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
 INPUT_XLSX = _DATA_DIR / "test_data/tesco_argos.xlsx"
-OUTPUT_LOG = Path(__file__).parent / "verify_m12_qwen_output.log"
+OUTPUT_LOG = Path(__file__).resolve().parents[3] / "output" / "live_batch_report.log"
 
 HAS_BRIGHT_DATA = bool(_cfg.bright_data_key)
 HAS_LLM = bool(_cfg.qwen_key)
@@ -103,6 +103,7 @@ class TeeWriter:
     """Writes to stdout AND a log file simultaneously."""
 
     def __init__(self, file_path: Path) -> None:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         self._file: TextIO = open(str(file_path), "w", encoding="utf-8")
         self._stdout: TextIO = sys.stdout
 
@@ -784,7 +785,7 @@ def main() -> int:
     _tee = TeeWriter(OUTPUT_LOG)
 
     try:
-        _print(f"verify_m12: End-to-End Live Scraping Verification")
+        _print("Live batch scraping report")
         _print(f"Started:    {datetime.now(timezone.utc).isoformat()}")
         _print(f"Log file:   {OUTPUT_LOG}")
         _print(f"Temp DB:    {_DB_PATH}")

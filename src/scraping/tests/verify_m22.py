@@ -21,25 +21,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
+from ._harness import FAILED, PASSED, SKIPPED, check, section, skip, run_main
 FIXTURE_DIR = Path(__file__).parent.parent / "data" / "html_sample"
 
 
-def check(name: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print()
-    print("=" * 74)
-    print(title)
-    print("=" * 74)
 
 
 def verify_model_and_amazon_mapping() -> None:
@@ -258,19 +245,7 @@ async def run() -> None:
 
 
 def main() -> int:
-    try:
-        asyncio.run(run())
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
-
-    print()
-    print("=" * 74)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 74)
-    for name, detail in FAILED:
-        print(f"  FAILED: {name}  ({detail})")
-    return 1 if FAILED else 0
+    return run_main(run, width=74)
 
 
 if __name__ == "__main__":

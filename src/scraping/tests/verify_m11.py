@@ -22,13 +22,11 @@ import tempfile
 import traceback
 from pathlib import Path
 from unittest.mock import patch
+from ._harness import FAILED, PASSED, SKIPPED, check, run_main, section, skip, use_temp_scrape_db
 
 from openpyxl import Workbook
 
-_DB_PATH = os.path.join(tempfile.gettempdir(), "verify_m11.db")
-if os.path.exists(_DB_PATH):
-    os.remove(_DB_PATH)
-os.environ["SCRAPING_DB_PATH"] = _DB_PATH
+_DB_PATH = use_temp_scrape_db("verify_m11")
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -42,27 +40,12 @@ from src.scraping.providers import resolve_provider
 _, _coldstart_provider = resolve_provider(cfg.cold_start_model_ladder[0])
 HAS_LLM = bool(cfg.api_key_for(_coldstart_provider.key_name))
 
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
-SKIPPED: list[str] = []
 
 
-def check(name: str, cond: bool, detail: str = "") -> None:
-    if cond:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def skip(name: str, reason: str) -> None:
-    SKIPPED.append(name)
-    print(f"  [SKIP] {name}  ({reason})")
 
 
-def section(title: str) -> None:
-    print(); print("=" * 70); print(title); print("=" * 70)
 
 
 async def run() -> None:
@@ -200,23 +183,7 @@ async def run() -> None:
 
 
 def main() -> int:
-    try:
-        asyncio.run(run())
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
-    finally:
-        if os.path.exists(_DB_PATH):
-            os.remove(_DB_PATH)
-
-    print(); print("=" * 70)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed, {len(SKIPPED)} skipped")
-    print("=" * 70)
-    if FAILED:
-        for name, detail in FAILED:
-            print(f"  FAILED: {name}  ({detail})")
-        return 1
-    return 0
+    return run_main(run, width=70)
 
 
 if __name__ == "__main__":

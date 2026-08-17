@@ -30,7 +30,7 @@ search  →  domain_filter  →  base_match  →  distinguishing  →  aggregate
 
 | Config | Location | What it controls |
 |--------|----------|-----------------|
-| **Pipeline config** | [maintain/search_config.yaml](maintain/search_config.yaml) | Thresholds, domain map, unit conversions, LLM model, cache path. **Edit for tuning, not per-run.** |
+| **Pipeline config** | [maintain/search_config.yaml](maintain/search_config.yaml) | Thresholds, domain map, unit conversions, LLM model. **Edit for tuning, not per-run.** |
 | **LLM router config** | [maintain/llm_router_config.yaml](maintain/llm_router_config.yaml) | Keyword → `(base_url, key_name)` table. Switching LLM vendor/model is a single-line edit to `llm.model` above; add a vendor entry here only when introducing a brand-new vendor. |
 
 Per-run settings are arguments to `match_product()` / `match_product_batch()` or flags to `python -m src.search.batch`. There is no per-run YAML. Pipeline internals read `maintain/search_config.yaml` via `config.py`.
@@ -48,14 +48,13 @@ Per-run settings are arguments to `match_product()` / `match_product_batch()` or
 | [utils.py](utils.py) | brand-set loader (reads ONLY `brandname_en` from `maintain/brand.xlsx`), `find_literal_brands()`, accent stripping |
 | [maintain/](maintain/) | **Human-edited files**: `brand.xlsx` + `search_config.yaml`. See README §5 for the how-to. |
 | [providers/](providers/) | `SearchProvider` abstract + `DuckDuckGoProvider` (active, free, rate-limit retry) + `SerperProvider` (active, paid, aiohttp). Both have internal `_COUNTRY_TO_*` mappings. Add new ones by subclassing `base.SearchProvider`. |
-| [cache.py](cache.py) | SQLite cache keyed on extractor version + country + title for base extraction. Default path `.cache/base_extraction.sqlite`. |
 | [layers/query_builder.py](layers/query_builder.py) | Builds provider-specific `keyword` / `sitename` / `both` queries plus optional parenthesis-free variants. Missing domain mappings make sitename mode fall back to keyword. |
 | [layers/search.py](layers/search.py) | search node — fans variants out with `asyncio.gather`, dedups by URL, surfaces `BudgetExhausted` |
 | [layers/domain_filter.py](layers/domain_filter.py) | host-vs-`domain_map` and configured product-path match; sets `domain=pass/fail`, kills wrong-host and gallery/category candidates. A `domain_map` value ending in `.` is a registrable-name prefix matching any TLD (`amazon.` → `amazon.de` / `amazon.co.uk`); without it, exact host + subdomains |
 | [layers/url_rules.py](layers/url_rules.py) | strips configured tracking query parameters before candidate dedup and validates single-product URL shapes for configured websites |
 | [layers/brand.py](layers/brand.py) | three-state brand. `extract_brands()` returns **all literal matches in order of first appearance** — falls back to single fuzzy result, then single uppercase-first-token heuristic. `compare_brands(list, list)` uses **any-pair-pass / all-pairs-differ-fail** so noise tokens in `brand.xlsx` (e.g. "Tropical" inside "Tetley Tropical Tea") don't drown out the real brand. |
 | [layers/numeric.py](layers/numeric.py) | Regex pre-pass for ABV, pack/count, and screen-inch patterns; then quantulum3 fills volume / weight / storage / power / voltage / charge / length. Comparison: discrete-equal, continuous ±10%. |
-| [layers/base_match.py](layers/base_match.py) | per-candidate brand+numeric via `asyncio.to_thread`; reads/writes `cache.BaseExtractionCache` |
+| [layers/base_match.py](layers/base_match.py) | per-candidate brand+numeric via `asyncio.to_thread` |
 | [layers/distinguishing.py](layers/distinguishing.py) | **single batched** routed-LLM call; returns `{match_idx, reason}` JSON. Never asks the LLM for self-reported confidence. |
 | [layers/aggregate.py](layers/aggregate.py) | picks `MATCH` (any candidate with `distinguishing=pass`) or `NO_MATCH` (representative trace = deepest-reached candidate) |
 
@@ -68,7 +67,6 @@ Per-run settings are arguments to `match_product()` / `match_product_batch()` or
 - **Every top-level match is traced by default** — standalone calls create one `mode=single` run/task; batch rows reuse the batch task context and do not create nested runs. Pass `record=False` for an unrecorded standalone call.
 - **Multi-brand extraction** — `extract_brands()` returns every literal hit, not just the longest/first. `compare_brands()` uses any-pair-pass + all-pairs-differ-fail. Titles where a non-brand word collides with `brand.xlsx` (e.g. "Tetley ... Tropical Tea") are safe.
 - **Numeric regex pre-pass before quantulum3** — quantulum3 misses ABV and treats the leading number in `4 X 330ml` as dimensionless. Regex owns `abv_percent` and `count`; quantulum3 fills the rest.
-- **Cache key includes `cache.EXTRACTOR_VERSION`** — bump it whenever brand/numeric extraction behavior changes so stale rows become unreachable without a migration.
 
 ## Config knobs in maintain/search_config.yaml
 
@@ -80,7 +78,6 @@ Per-run settings are arguments to `match_product()` / `match_product_batch()` or
 | `brand` | `fuzzy_same_threshold` (default 88), `fuzzy_differ_threshold` (default 40) |
 | `numeric` | `continuous_tolerance` (default 0.10), `entity_to_attr`, `unit_conversions`, `discrete_attrs`, `ambiguity_rules` |
 | `llm` | `model` (the one line to edit to switch vendor/model, routed via `maintain/llm_router_config.yaml`), `temperature`, `timeout_s` |
-| `cache` | `sqlite_path` (default `.cache/base_extraction.sqlite`) |
 
 ## Batch arguments
 

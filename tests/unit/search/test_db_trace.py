@@ -1,13 +1,12 @@
 import asyncio
 import sqlite3
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from src.search.db import SearchDB
 from src.search.models import FinalVerdict, RawCandidate
 from src.search.pipeline import match_product
-from src.search.providers.base import SearchProvider
 from src.search.trace import (
     AttemptRecord,
     FAILURE_ALL_DOMAIN_FILTERED,
@@ -27,20 +26,8 @@ from src.search.trace import (
     reset_recorder,
     set_recorder,
 )
-
-
-class FakeProvider(SearchProvider):
-    name = "fake"
-
-    def __init__(self, results=None, error=None, name="fake"):
-        self.results = results or []
-        self.error = error
-        self.name = name
-
-    async def search(self, query, k=10, country="uk"):
-        if self.error:
-            raise self.error
-        return list(self.results)
+from tests._support.llm import failing_llm, fake_llm
+from tests._support.providers import FakeSearchProvider
 
 
 def _run_recorded(provider, llm=None):
@@ -68,8 +55,7 @@ def _run_recorded(provider, llm=None):
         finally:
             reset_recorder(token)
 
-    with patch("src.search.layers.base_match.get_cache", return_value=None):
-        return asyncio.run(run())
+    return asyncio.run(run())
 
 
 def _candidate(domain=None, brand=None, numeric=None):
@@ -163,7 +149,7 @@ def test_derive_failure_kind_match_and_task_error():
 
 
 def test_short_path_records_five_primary_node_events():
-    recorder, result = _run_recorded(FakeProvider())
+    recorder, result = _run_recorded(FakeSearchProvider())
     assert result.verdict == FinalVerdict.NO_MATCH
     primary = [event for event in recorder.attempts[0].node_events if event["status"] != "warning"]
     assert [(event["node"], event["status"]) for event in primary] == [
@@ -182,7 +168,7 @@ def test_domain_filter_records_product_page_reject_counts():
         url="https://www.tesco.com/shop/en-GB/search?q=saucery",
     )
 
-    recorder, result = _run_recorded(FakeProvider([candidate]))
+    recorder, result = _run_recorded(FakeSearchProvider([candidate]))
 
     assert result.verdict == FinalVerdict.NO_MATCH
     event = next(
@@ -201,9 +187,8 @@ def test_llm_error_is_not_business_no_match():
         title="Magic Rock Saucery 4 X 330ML",
         url="https://www.tesco.com/products/1",
     )
-    llm = AsyncMock()
-    llm.ainvoke = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
-    recorder, result = _run_recorded(FakeProvider([candidate]), llm=llm)
+    llm = failing_llm(RuntimeError("LLM unavailable"))
+    recorder, result = _run_recorded(FakeSearchProvider([candidate]), llm=llm)
     assert result.verdict == FinalVerdict.NO_MATCH
     assert recorder.failure_kind == FAILURE_LLM_ERROR
     assert recorder.attempts[0].llm_calls[0]["status"] == "error"
@@ -214,11 +199,8 @@ def test_llm_parse_error_is_structured():
         title="Magic Rock Saucery 4 X 330ML",
         url="https://www.tesco.com/products/1",
     )
-    llm = AsyncMock()
-    llm.ainvoke = AsyncMock(
-        return_value=type("Msg", (), {"content": "definitely not JSON"})()
-    )
-    recorder, result = _run_recorded(FakeProvider([candidate]), llm=llm)
+    llm = fake_llm("definitely not JSON")
+    recorder, result = _run_recorded(FakeSearchProvider([candidate]), llm=llm)
     assert result.verdict == FinalVerdict.NO_MATCH
     assert recorder.failure_kind == FAILURE_LLM_PARSE_ERROR
     assert recorder.attempts[0].llm_calls[0]["status"] == "parse_error"
@@ -229,15 +211,10 @@ def test_provider_chain_records_distinct_attempts():
         title="Magic Rock Saucery 4 X 330ML",
         url="https://www.tesco.com/products/1",
     )
-    llm = AsyncMock()
-    llm.ainvoke = AsyncMock(
-        return_value=type(
-            "Msg", (), {"content": '{"match_idx": 0, "reason": "same SKU"}'}
-        )()
-    )
+    llm = fake_llm('{"match_idx": 0, "reason": "same SKU"}')
     providers = [
-        FakeProvider(name="first"),
-        FakeProvider([candidate], name="second"),
+        FakeSearchProvider(name="first"),
+        FakeSearchProvider([candidate], name="second"),
     ]
     recorder, result = _run_recorded(providers, llm=llm)
     assert result.verdict == FinalVerdict.MATCH
@@ -247,7 +224,7 @@ def test_provider_chain_records_distinct_attempts():
 
 
 def test_search_db_idempotent_and_flushes_full_task(tmp_path):
-    path = tmp_path / "search.sqlite"
+    path = tmp_path / "search.db"
     db = SearchDB(str(path))
     SearchDB(str(path))
     db.start_run(
@@ -271,22 +248,15 @@ def test_search_db_idempotent_and_flushes_full_task(tmp_path):
         title="Magic Rock Saucery 4 X 330ML",
         url="https://www.tesco.com/products/1",
     )
-    llm = AsyncMock()
-    llm.ainvoke = AsyncMock(
-        return_value=type(
-            "Msg",
-            (),
-            {
-                "content": '{"match_idx": 0, "reason": "same SKU"}',
-                "usage_metadata": {
-                    "input_tokens": 10,
-                    "output_tokens": 5,
-                    "total_tokens": 15,
-                },
-            },
-        )()
+    llm = fake_llm(
+        '{"match_idx": 0, "reason": "same SKU"}',
+        usage_metadata={
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+        },
     )
-    recorder, _ = _run_recorded(FakeProvider([candidate]), llm=llm)
+    recorder, _ = _run_recorded(FakeSearchProvider([candidate]), llm=llm)
     db.flush_task(recorder)
     db.finish_run("run-1", status="completed", provider_calls={"fake": 1})
 

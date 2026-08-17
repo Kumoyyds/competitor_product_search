@@ -180,7 +180,9 @@ src/scraping/
 ├── storage/                        6 SQLite tables (parsers, golden_samples, scrape_runs,
 │                                   results, escalations, invalid_target_phrases)
 ├── data/                           Sample HTMLs / JSON for tests
-└── tests/                          verify_mN.py + verify_mN_output.log per milestone
+├── scripts/live_batch_report.py    Paid end-to-end batch report tool
+└── tests/                          Legacy verify scripts pending pytest migration;
+                                    historical logs live in tests/logs/archive/
 ```
 
 ## Adding a new site
@@ -387,32 +389,31 @@ The default is a dry run. Stale samples are evicted first, then oldest auto-seed
 
 ## Verification
 
-Every milestone ships with a runnable verify script. To reproduce the relevant verification set:
+The default test command is offline and does not use paid APIs:
 
 ```bash
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m1_m3
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m4_m5
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m6
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m7
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m8    # real LLM (configured repair ladder)
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m9
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m10
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m11   # real LLM (configured cold-start ladder)
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m12   # real BrightData + LLM, per-site batch
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m13   # offline — mocked BD, proves no duplicate triggers
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m14   # offline tiers; LLM tier skips without a key
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m17   # offline — Excel contract + golden caps/pruning
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m18   # offline — provider registry/client factory
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m19   # offline — cold-start correction loop + golden reuse
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m20   # offline — canonical price-field contract
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m21   # offline — human-terminated cold-start repair
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m22   # offline — unit-price removal + JSON-heal guard
-PYTHONIOENCODING=utf-8 python -m src.scraping.tests.verify_m23   # offline — site profiles, fast path, Argos IDs
+python -m pytest
 ```
 
-M15/M16 have no standalone script: M15's was superseded and M23 re-covers promotion and fast-path behavior against the current goldens, while M16 was verified by re-running M14 on the fixed fixtures. Their logs remain under [tests/](tests/).
+API-backed tests are opt-in and require the corresponding keys:
 
-Latest results are saved to [tests/verify_m*_output.log](tests/). See [tests/README.md](tests/README.md) for the 520+ check inventory and re-run instructions.
+```bash
+python -m pytest -m live
+```
+
+New tests belong under `tests/unit/scraping/` and use pytest markers. The
+milestone-era `src/scraping/tests/verify_mN.py` scripts remain only during the
+staged migration; do not add new scripts or committed output logs. Historical
+logs are immutable audit evidence under [tests/logs/archive/](tests/logs/archive/).
+
+The former M12 live batch is now an operational, paid report command:
+
+```bash
+python -m src.scraping.scripts.live_batch_report
+```
+
+It writes `output/live_batch_report.log` and may call both BrightData and the
+configured LLM.
 
 ## Design
 
@@ -450,4 +451,4 @@ Full design spec: [scraping_module_spec_v1_2.md](scraping_module_spec_v1_2.md) (
 - Add a new site → see "Adding a new site" above; `hosts.yaml`, `sites.yaml`, and `scrapers/sites/__init__.py` all need an entry.
 - Change page-type availability or cold-start requirements → per site in [sites.yaml](sites.yaml), globally in [config.py](config.py). Never encode a site's page types in detector code.
 - Modify a D-numbered decision → read its rationale in the spec first.
-- Ship a new milestone → follow the Verification Discipline in [CLAUDE.md](CLAUDE.md): a runnable `verify_mN.py` + its `.log` output, and a row in [tests/README.md](tests/README.md).
+- Add or change behavior → add topic-based pytest coverage under `tests/unit/scraping/`; mark paid API tests `live` and long subprocess/I/O tests `slow`.

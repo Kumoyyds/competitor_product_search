@@ -11,13 +11,13 @@ import json
 import sys
 import traceback
 from unittest.mock import MagicMock, patch
+from tests._support.http import FakeAsyncClient, FakeClock
 
 from src.scraping.config import ScrapingConfig, set_config
 from src.scraping.exceptions import BrightDataInfraError
 
 
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
+from ._harness import FAILED, PASSED, SKIPPED, check, section, skip, run_main
 
 TEST_CONFIG = {
     "bd_async_poll_max_seconds": 2,
@@ -27,66 +27,12 @@ TEST_CONFIG = {
 }
 
 
-def check(name: str, condition: bool, detail: object = "") -> None:
-    rendered = str(detail)
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({rendered})" if rendered else ""))
-    else:
-        FAILED.append((name, rendered))
-        print(f"  [FAIL] {name}  ({rendered})")
 
 
-def section(title: str) -> None:
-    print()
-    print("=" * 72)
-    print(title)
-    print("=" * 72)
 
 
-class FakeClock:
-    def __init__(self) -> None:
-        self.now = 0.0
-        self.sleep_calls = 0
-
-    def monotonic(self) -> float:
-        return self.now
-
-    async def sleep(self, seconds: float) -> None:
-        self.sleep_calls += 1
-        self.now += seconds
 
 
-class FakeAsyncClient:
-    queue: list[MagicMock] = []
-    calls: list[tuple[str, str]] = []
-
-    def __init__(self, timeout: float):
-        self.timeout = timeout
-
-    @classmethod
-    def reset(cls, responses: list[MagicMock]) -> None:
-        cls.queue = list(responses)
-        cls.calls = []
-
-    async def post(self, url: str, **kwargs: object) -> MagicMock:
-        self.calls.append(("POST", url))
-        return self._next()
-
-    async def get(self, url: str, **kwargs: object) -> MagicMock:
-        self.calls.append(("GET", url))
-        return self._next()
-
-    def _next(self) -> MagicMock:
-        if not self.queue:
-            raise RuntimeError("Unexpected request: response queue empty")
-        return self.queue.pop(0)
-
-    async def __aenter__(self) -> FakeAsyncClient:
-        return self
-
-    async def __aexit__(self, *args: object) -> None:
-        return None
 
 
 _UNSET = object()
@@ -351,17 +297,13 @@ async def run() -> None:
 
 
 def main() -> int:
-    print("Verification script for M27 — shape-tolerant Bright Data polling")
-    print("(offline, mocked httpx.AsyncClient, no real API calls)")
-    asyncio.run(run())
-    print()
-    print("=" * 72)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 72)
-    if FAILED:
-        for name, detail in FAILED:
-            print(f"  FAILED: {name}  ({detail})")
-    return 1 if FAILED else 0
+    return run_main(
+        run,
+        title=(
+            "Verification script for M27 — shape-tolerant Bright Data polling\n"
+            "(offline, mocked httpx.AsyncClient, no real API calls)"
+        ),
+    )
 
 
 if __name__ == "__main__":

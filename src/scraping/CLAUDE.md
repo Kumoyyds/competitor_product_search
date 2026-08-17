@@ -155,7 +155,7 @@ src/scraping/
 ├── storage/
 │   ├── database.py         # 6 SQLite tables (golden_samples CHECK incl. membership since M14)
 │   └── ...                 # store classes (golden, parser, run, result, escalation, phrase)
-└── tests/                  # verify_mN.py + verify_mN_output.log per milestone (M1-M27)
+└── tests/                  # Legacy verify_mN.py scripts pending topic-based pytest migration
 ```
 
 ## Milestone Status
@@ -173,7 +173,7 @@ src/scraping/
 | M9 | Golden set + promote/prune | ✔ verify_m9.py |
 | M10 | Scraper-level fallback + escalation writing | ✔ verify_m10.py |
 | M11 | Cold start CLI (real configured cold-start provider) | ✔ verify_m11.py |
-| M12 | End-to-end live scraping (real BrightData + Qwen, 4-way concurrent, config-driven ladder) | ✔ verify_m12.py |
+| M12 | End-to-end live scraping (real BrightData + Qwen, 4-way concurrent, config-driven ladder) | Historical logs; tool moved to `scripts/live_batch_report.py` |
 | M13 | Datasets/DCA polling fix — trigger/poll split (no duplicate BD triggers) | ✔ verify_m13.py |
 | M14 | Price-aware pre-pass + anchoring + prompt rewrite (evidence-driven, site-agnostic) + membership golden bucket (5 types) + API membership mapping | ✔ verify_m14.py |
 | M15 | Data-quality gates: promotion detection (structural, visual-value-bar-first), availability normalization, gate2 structural rules, fast-path distrust guard, prompt rewrite | ✔ verify_m15.py |
@@ -246,15 +246,20 @@ The cap is injected into `extra_body` as a body-level `max_tokens`, **not** pass
 
 ## Verification Discipline (mandatory)
 
-Every milestone verification MUST leave persistent artifacts under `src/scraping/tests/`. Inline-only verification (bash `python -c "..."` output that disappears into chat history) is not acceptable — the user must be able to audit and re-run.
+Add new developer tests by topic under `tests/unit/scraping/` and run them with
+pytest. Keep the default suite offline and deterministic by mocking BrightData,
+HTTP, and LLM clients. Any test that calls a real paid API MUST use
+`@pytest.mark.live`; it is excluded from the default `python -m pytest` run.
+Tests that launch real sandbox subprocesses or perform multi-second I/O SHOULD
+also use `@pytest.mark.slow`.
 
-For each new milestone:
-1. **Add a `verify_mN.py` script** — named checks with `[PASS]`/`[FAIL]` output, ends with `SUMMARY: N passed, M failed`, exits non-zero on failure.
-2. **Capture the output log** — run with `| tee src/scraping/tests/verify_mN_output.log`.
-3. **Update [tests/README.md](tests/README.md)** — add the new files to the table.
-4. **Prefer offline** — mock BrightData / LLM where possible. Real API only when strictly needed (e.g., LLM-generated parser correctness).
+Do not add new `verify_mN.py` scripts or committed run logs. Existing milestone
+scripts are migration inputs only: move their checks to topic-based pytest files,
+then delete a script once every check has equivalent coverage. Historical logs
+under `tests/logs/archive/` are immutable audit evidence.
 
-See [tests/README.md](tests/README.md) for the full inventory (598+ checks, including the 23-check offline M27 polling suite).
+The paid end-to-end batch report is operational tooling, not a test. Run it only
+when explicitly needed with `python -m src.scraping.scripts.live_batch_report`.
 
 ## M19 — Cold-start correction and golden reuse
 

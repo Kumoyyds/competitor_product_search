@@ -15,26 +15,14 @@ from decimal import Decimal
 from pathlib import Path
 
 # Track results
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
+from ._harness import FAILED, PASSED, check, run_main, section, use_temp_scrape_db
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "html_sample"
+_DB_PATH = use_temp_scrape_db("verify_m4_m5")
 
 
-def check(name: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print()
-    print("=" * 70)
-    print(title)
-    print("=" * 70)
 
 
 # ---------------------------------------------------------------------------
@@ -283,13 +271,7 @@ def verify_html_scraper_integration() -> None:
     section("M5.3 - HTMLScraper end-to-end with stubbed extraction")
 
     import asyncio
-    import os
-    import tempfile
     from unittest.mock import patch
-
-    os.environ["SCRAPING_DB_PATH"] = os.path.join(tempfile.gettempdir(), "verify_m5.db")
-    if os.path.exists(os.environ["SCRAPING_DB_PATH"]):
-        os.remove(os.environ["SCRAPING_DB_PATH"])
 
     # Reload config to pick up env var
     from src.scraping import config as config_module
@@ -338,11 +320,6 @@ def verify_html_scraper_integration() -> None:
         check("InvalidTargetResult carries http_status signal",
               "http_status" in result.reason_signal, result.reason_signal)
 
-    # Cleanup
-    if os.path.exists(os.environ["SCRAPING_DB_PATH"]):
-        os.remove(os.environ["SCRAPING_DB_PATH"])
-
-
 def _make_async_return(value):
     async def _fn(*args, **kwargs):
         return value
@@ -354,10 +331,7 @@ def _make_async_return(value):
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    print("Verification script for M4 + M5")
-    print(f"Data directory: {DATA_DIR}")
-
-    verifiers = [
+    return run_main(
         verify_amazon_mapping,
         verify_argos_dca_mapping,
         verify_tesco_dca_mapping,
@@ -365,25 +339,9 @@ def main() -> int:
         verify_detection_on_real_html,
         verify_detection_signals,
         verify_html_scraper_integration,
-    ]
-
-    for fn in verifiers:
-        try:
-            fn()
-        except Exception:
-            FAILED.append((fn.__name__, "EXCEPTION"))
-            print(f"  [EXCEPTION] {fn.__name__}")
-            traceback.print_exc()
-
-    print()
-    print("=" * 70)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 70)
-    if FAILED:
-        for name, detail in FAILED:
-            print(f"  FAILED: {name}  ({detail})")
-        return 1
-    return 0
+        title=f"Verification script for M4 + M5\nData directory: {DATA_DIR}",
+        width=70,
+    )
 
 
 if __name__ == "__main__":

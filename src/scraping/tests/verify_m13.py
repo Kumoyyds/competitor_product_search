@@ -16,10 +16,12 @@ import time
 import traceback
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from tests._support.http import FakeAsyncClient
 
 # Track results
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
+from ._harness import FAILED, PASSED, check, run_main, section, use_temp_scrape_db
+
+DB_PATH = Path(use_temp_scrape_db("verify_m13"))
 
 # Test config — fast timeouts for tests (no real waiting)
 # interval=0.1 means ~10 polls per second; max=1 means ~10 GETs before deadline
@@ -29,75 +31,18 @@ TEST_CONFIG = {
     "extraction_retry_count": 2,
     "extraction_retry_interval": 0.01,  # fast retry in tests
     "bright_data_key": "test-key",
-    "db_path": "verify_m13.db",
+    "db_path": str(DB_PATH),
 }
 
-# Cleanup test DB
-DB_PATH = Path("verify_m13.db")
 
 
-def check(name: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
-
-def section(title: str) -> None:
-    print()
-    print("=" * 70)
-    print(title)
-    print("=" * 70)
 
 
 # ---------------------------------------------------------------------------
 # Fake httpx client for mocking BD behavior
 # ---------------------------------------------------------------------------
 
-class FakeAsyncClient:
-    """Mock httpx.AsyncClient that returns scripted responses from a shared queue."""
-
-    def __init__(self, timeout):
-        self.timeout = timeout
-        self._closed = False
-        # Shared state across all instances via class-level config
-        # Set per test via set_shared_queue / set_shared_tracker
-
-    @classmethod
-    def set_shared_queue(cls, queue):
-        cls._shared_queue = queue
-
-    @classmethod
-    def set_shared_tracker(cls, tracker):
-        cls._shared_tracker = tracker
-
-    async def post(self, url, **kwargs):
-        if hasattr(FakeAsyncClient, '_shared_tracker'):
-            FakeAsyncClient._shared_tracker.append(("POST", url))
-        if self._closed:
-            raise RuntimeError("Client already closed")
-        return self._next_response()
-
-    async def get(self, url, **kwargs):
-        if hasattr(FakeAsyncClient, '_shared_tracker'):
-            FakeAsyncClient._shared_tracker.append(("GET", url))
-        if self._closed:
-            raise RuntimeError("Client already closed")
-        return self._next_response()
-
-    def _next_response(self):
-        queue = FakeAsyncClient._shared_queue
-        if not queue:
-            raise RuntimeError("Unexpected request: response queue empty")
-        return queue.pop(0)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self._closed = True
 
 
 def _make_response(status_code, json_data=None, text=""):
@@ -424,28 +369,14 @@ async def run() -> None:
 
 
 def main() -> int:
-    print("Verification script for M13 — Amazon/Tesco DCA polling fix")
-    print("(offline, mocked httpx.AsyncClient, no real API calls)")
-
-    try:
-        asyncio.run(run())
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
-
-    print()
-    print("=" * 70)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 70)
-    if FAILED:
-        for name, detail in FAILED:
-            print(f"  FAILED: {name}  ({detail})")
-
-    # Cleanup test DB
-    if DB_PATH.exists():
-        DB_PATH.unlink()
-
-    return 1 if FAILED else 0
+    return run_main(
+        run,
+        title=(
+            "Verification script for M13 — Amazon/Tesco DCA polling fix\n"
+            "(offline, mocked httpx.AsyncClient, no real API calls)"
+        ),
+        width=70,
+    )
 
 
 if __name__ == "__main__":

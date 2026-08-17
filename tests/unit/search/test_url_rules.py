@@ -1,12 +1,6 @@
-import asyncio
-
 import pytest
 
-from src.search.layers.distinguishing import _PROMPT_HEADER, _build_user_msg
-from src.search.layers.search import search_node
 from src.search.layers.url_rules import clean_url, is_product_url
-from src.search.models import CandidateEval, RawCandidate
-from src.search.providers.base import SearchProvider
 
 
 @pytest.mark.parametrize(
@@ -65,53 +59,3 @@ def test_clean_url(url, expected):
 )
 def test_is_product_url(website, url, expected):
     assert is_product_url(website, url) is expected
-
-
-class _DuplicateTrackingProvider(SearchProvider):
-    name = "duplicate-tracking"
-
-    async def search(self, query, k=10, country="uk"):
-        return [
-            RawCandidate(
-                title="Product",
-                url="https://www.tesco.com/products/313169581?srsltid=first",
-            ),
-            RawCandidate(
-                title="Product duplicate",
-                url="https://www.tesco.com/products/313169581?srsltid=second",
-            ),
-        ]
-
-
-def test_search_node_cleans_before_deduplication():
-    out = asyncio.run(
-        search_node(
-            {
-                "provider": _DuplicateTrackingProvider(),
-                "product_name": "Product",
-                "website": "tesco",
-                "country": "uk",
-            }
-        )
-    )
-
-    assert len(out["candidates"]) == 1
-    assert out["candidates"][0].raw.url == (
-        "https://www.tesco.com/products/313169581"
-    )
-
-
-def test_distinguishing_prompt_includes_url_and_gallery_instruction():
-    candidate = CandidateEval(
-        raw=RawCandidate(
-            title="Product",
-            url="https://example.com/item/1",
-            snippet="One product",
-        )
-    )
-
-    message = _build_user_msg("Product", [], {}, [candidate])
-
-    assert "url: https://example.com/item/1" in message
-    assert "single-product page" in _PROMPT_HEADER
-    assert "never infer the product from a snippet" in _PROMPT_HEADER

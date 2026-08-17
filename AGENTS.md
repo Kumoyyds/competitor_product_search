@@ -116,7 +116,7 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `src/search/maintain/search_config.yaml` | Pipeline tuning: `search.provider` (string or ordered list for chain), per-provider `query_mode`, `strip_parens`, thresholds, domain map, LLM model, cache path |
+| `src/search/maintain/search_config.yaml` | Pipeline tuning: `search.provider` (string or ordered list for chain), per-provider `query_mode`, `strip_parens`, thresholds, domain map, LLM model |
 | `src/search/maintain/llm_router_config.yaml` | Keyword → `(base_url, key_name)` routing table so switching LLM vendor/model is a single-line edit to `llm.model` |
 | `src/scraping/config.py` (`ScrapingConfig`) | Repair/cold-start model + temperature ladders, sandbox limits, BrightData poll budget, DB path — see `src/scraping/CLAUDE.md` §Key Config |
 | `src/scraping/hosts.yaml`, `sites.yaml` | Host→site mapping and per-site scraper order |
@@ -126,9 +126,8 @@ Key files:
 
 - search input: any `.xlsx` path passed to `match_product_batch()` / `--input`
 - search brand list: `src/search/maintain/brand.xlsx` (needs manual maintenance for new brands)
-- search cache: `.cache/base_extraction.sqlite` (auto-managed; keyed on extractor version + country + title)
 - search output: optional `.xlsx` path passed to `match_product_batch()` / `--output`
-- search trace DB: `search_db.sqlite` by default (single calls use `mode=single`; batches use `mode=batch`)
+- search trace DB: `search.db` by default (single calls use `mode=single`; batches use `mode=batch`)
 - scraping DB: `scraping.db` by default (`SCRAPING_DB_PATH`) — parsers, goldens, results, escalations
 - scraping cold-start workbooks: `src/scraping/data/cold_start/*.xlsx` (require `page_type` + `url`)
 
@@ -139,6 +138,7 @@ Key files:
 - Imports within a module use relative paths (e.g., `from .providers import make_provider_chain`)
 - Cross-module imports use absolute paths (e.g., `from src.search.pipeline import match_product`)
 - Dependencies managed via `requirements.txt` (pip freeze format)
+- **SQLite database files use the `.db` suffix** — never `.sqlite` or `.sqlite3`. Name each database after its module (`scraping.db`, `search.db`); SQLite creates WAL/SHM sidecars as `<name>.db-wal` / `<name>.db-shm`. When adding a database, decide whether it is tracked or ignored in `.gitignore`.
 - **New search providers** must include a `_COUNTRY_TO_*` mapping (see `SerperProvider._COUNTRY_TO_GL` and `DuckDuckGoProvider._COUNTRY_TO_REGION`) to translate general country-code arguments to the format the API expects
 - **New scraping sites** are registered in `hosts.yaml` / `sites.yaml` and brought online via `python -m src.scraping.coldstart`; new LLM vendors go in `src/scraping/providers.py`
 

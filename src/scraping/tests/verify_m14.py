@@ -17,30 +17,13 @@ from typing import Any, Optional
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "html_sample"
 
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
-SKIPPED: list[tuple[str, str]] = []
+from ._harness import FAILED, PASSED, SKIPPED, check, section, skip, run_main
 
 
-def check(name: str, cond: bool, detail: str = "") -> None:
-    if cond:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def skip(name: str, reason: str = "") -> None:
-    SKIPPED.append((name, reason))
-    print(f"  [SKIP] {name}  ({reason})")
 
 
-def section(title: str) -> None:
-    print()
-    print("=" * 70)
-    print(title)
-    print("=" * 70)
 
 
 def load_fixture(name: str) -> str:
@@ -364,33 +347,23 @@ async def run_tier3() -> None:
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
-    print("M14 — Price-aware pre-pass + prompt rewrite + membership golden bucket")
-    print(f"DATA_DIR={DATA_DIR}")
+def main() -> int:
+    async def run_tier3_best_effort() -> None:
+        try:
+            await run_tier3()
+        except Exception as exc:
+            print(f"\n  Tier 3 error: {type(exc).__name__}: {exc}")
 
-    run_tier1()
-    run_tier2()
-
-    # Tier 3 — async
-    try:
-        import asyncio
-        asyncio.run(run_tier3())
-    except Exception as e:
-        print(f"\n  Tier 3 error: {type(e).__name__}: {e}")
-
-    # Summary
-    total = len(PASSED) + len(FAILED) + len(SKIPPED)
-    print()
-    print("=" * 70)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed, {len(SKIPPED)} skipped ({total} checks)")
-    print("=" * 70)
-    for name, detail in FAILED:
-        print(f"  FAILED: {name}  ({detail})")
-    for name, reason in SKIPPED:
-        print(f"  SKIPPED: {name}  ({reason})")
-
-    if FAILED:
-        sys.exit(1)
+    return run_main(
+        run_tier1,
+        run_tier2,
+        run_tier3_best_effort,
+        title=(
+            "M14 — Price-aware pre-pass + prompt rewrite + membership golden bucket\n"
+            f"DATA_DIR={DATA_DIR}"
+        ),
+        width=70,
+    )
 
 
 if __name__ == "__main__":

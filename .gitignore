@@ -5,6 +5,10 @@ __pycache__/
 .env
 .DS_Store
 .ipynb_checkpoints/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
 
 # Spreadsheet / JSON data (tracked data files stay tracked)
 *.xlsx
@@ -13,9 +17,8 @@ output/
 input/
 
 # search module runtime
-search_db.sqlite*
+search.db*
 .searxng/
-.cache/
 
 # SQLite runtime journals (the .db itself stays tracked)
 *.db-shm

@@ -10,35 +10,24 @@ import asyncio
 import contextlib
 import io
 import json
-import shutil
-import tempfile
 import traceback
-from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
+from tests._support.factories import product_data
 
 from src.scraping import config as config_module
 from src.scraping.config import ScrapingConfig
 
 
-TMP_DIR = Path(tempfile.mkdtemp(prefix="verify_m21_"))
+from ._harness import FAILED, PASSED, check, run_main, section, temp_workdir
+
+TMP_DIR = temp_workdir("verify_m21")
 DB_PATH = TMP_DIR / "m21.db"
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
 
 
-def check(name: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print(); print("=" * 76); print(title); print("=" * 76)
 
 
 def set_cfg(*, ladder, temperatures, max_rounds=10) -> None:
@@ -80,13 +69,9 @@ def db_counts() -> tuple[int, int]:
 
 
 def product(url: str, *, title="Product", price="12.34"):
-    from src.scraping.models import ProductData
-
-    return ProductData(
+    return product_data(
         url=url,
         website="tesco",
-        scraped_at=datetime.now(timezone.utc),
-        source_type="html",
         parser_version="coldstart_v1",
         title=title,
         brand="Brand",
@@ -296,20 +281,7 @@ async def run() -> None:
 
 
 def main() -> int:
-    try:
-        asyncio.run(run())
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
-    finally:
-        shutil.rmtree(TMP_DIR, ignore_errors=True)
-
-    print(); print("=" * 76)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 76)
-    for name, detail in FAILED:
-        print(f"  FAILED: {name}  ({detail})")
-    return 1 if FAILED else 0
+    return run_main(run, width=76)
 
 
 if __name__ == "__main__":

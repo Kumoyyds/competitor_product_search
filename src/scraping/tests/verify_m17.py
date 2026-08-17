@@ -12,36 +12,26 @@ import json
 import os
 import sqlite3
 import sys
-import tempfile
 import traceback
-from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
 from openpyxl import Workbook
+from tests._support.factories import product_data
 
 from src.scraping import config as config_module
 from src.scraping.config import ScrapingConfig
 
 
-TMP_DIR = Path(tempfile.mkdtemp(prefix="verify_m17_"))
+from ._harness import FAILED, PASSED, check, run_main, section, temp_workdir
+
+TMP_DIR = temp_workdir("verify_m17")
 DB_PATH = TMP_DIR / "m17.db"
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
 
 
-def check(name: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print(); print("=" * 72); print(title); print("=" * 72)
 
 
 def set_test_config(**overrides) -> ScrapingConfig:
@@ -73,21 +63,9 @@ def reset_site(site: str = "tesco") -> None:
 
 
 def make_product(url: str, **kwargs):
-    from src.scraping.models import ProductData
-
-    values = {
-        "url": url,
-        "website": "tesco",
-        "scraped_at": datetime.now(timezone.utc),
-        "source_type": "html",
-        "title": "Test Product",
-        "price": Decimal("12.34"),
-        "currency": "GBP",
-        "image_urls": [],
-        "in_stock": True,
-    }
+    values = {"url": url, "website": "tesco", "price": Decimal("12.34")}
     values.update(kwargs)
-    return ProductData(**values)
+    return product_data(**values)
 
 
 def verify_config_and_input() -> None:
@@ -412,17 +390,7 @@ async def run() -> None:
 
 
 def main() -> int:
-    try:
-        asyncio.run(run())
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
-    print(); print("=" * 72)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 72)
-    for name, detail in FAILED:
-        print(f"  FAILED: {name}  ({detail})")
-    return 1 if FAILED else 0
+    return run_main(run)
 
 
 if __name__ == "__main__":

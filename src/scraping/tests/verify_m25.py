@@ -18,24 +18,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
+from ._harness import FAILED, PASSED, SKIPPED, check, section, skip, run_main
 
 
-def check(name: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print()
-    print("=" * 72)
-    print(title)
-    print("=" * 72)
 
 
 def configure(db_path: Path, node_count: int = 2) -> None:
@@ -363,22 +350,11 @@ async def run(db_path: Path) -> None:
 
 
 def main() -> int:
-    try:
+    async def run_in_temp_dir() -> None:
         with tempfile.TemporaryDirectory(prefix="verify_m25_") as tmp:
-            asyncio.run(run(Path(tmp) / "scraping.db"))
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
+            await run(Path(tmp) / "scraping.db")
 
-    print()
-    print("=" * 72)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 72)
-    if FAILED:
-        for name, detail in FAILED:
-            print(f"  FAILED: {name}  ({detail})")
-        return 1
-    return 0
+    return run_main(run_in_temp_dir)
 
 
 if __name__ == "__main__":

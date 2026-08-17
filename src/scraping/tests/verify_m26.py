@@ -12,24 +12,11 @@ from unittest.mock import AsyncMock, patch
 
 from src.scraping.config import ScrapingConfig, set_config
 
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
+from ._harness import FAILED, PASSED, SKIPPED, check, section, skip, run_main
 
 
-def check(name: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print()
-    print("=" * 72)
-    print(title)
-    print("=" * 72)
 
 
 def configure(db_path: Path, **overrides) -> ScrapingConfig:
@@ -423,30 +410,18 @@ def verify_config_guards() -> None:
 
 
 def main() -> int:
-    try:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            db_path = Path(temp_dir) / "m26.db"
-            asyncio.run(verify_sandbox_lifecycle(db_path))
-            asyncio.run(verify_spawn_retry(db_path))
-            asyncio.run(verify_sandbox_gate(db_path))
-            asyncio.run(verify_html_and_router_fallback(db_path))
-            verify_db_finally(db_path)
-            verify_client_cache(db_path)
-            asyncio.run(verify_coldstart_limit(db_path))
-            verify_config_guards()
-    except Exception:
-        FAILED.append(("EXCEPTION", traceback.format_exc()))
-        traceback.print_exc()
-
-    print()
-    print("=" * 72)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 72)
-    if FAILED:
-        for name, detail in FAILED:
-            print(f"  FAILED: {name}: {detail}")
-        return 1
-    return 0
+    with tempfile.TemporaryDirectory(prefix="verify_m26_") as temp_dir:
+        db_path = Path(temp_dir) / "m26.db"
+        return run_main(
+            lambda: verify_sandbox_lifecycle(db_path),
+            lambda: verify_spawn_retry(db_path),
+            lambda: verify_sandbox_gate(db_path),
+            lambda: verify_html_and_router_fallback(db_path),
+            lambda: verify_db_finally(db_path),
+            lambda: verify_client_cache(db_path),
+            lambda: verify_coldstart_limit(db_path),
+            verify_config_guards,
+        )
 
 
 if __name__ == "__main__":

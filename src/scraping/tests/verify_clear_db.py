@@ -19,24 +19,11 @@ if str(_REPO) not in sys.path:
 
 from src.scraping.storage.database import ScrapeDB
 
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
+from ._harness import FAILED, PASSED, SKIPPED, check, section, skip, run_main
 
 
-def check(name: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print()
-    print("=" * 72)
-    print(title)
-    print("=" * 72)
 
 
 def count_rows(db: ScrapeDB, table: str, site: str) -> int:
@@ -310,23 +297,13 @@ def verify_bare_conn_no_fk() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    try:
-        verify_clear_site()
-        verify_idempotent()
-        verify_unknown_site_noop()
-        verify_schema_unchanged()
-        verify_bare_conn_no_fk()
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
-
-    print()
-    print("=" * 72)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 72)
-    for name, detail in FAILED:
-        print(f"  FAILED: {name}  ({detail})")
-    return 1 if FAILED else 0
+    return run_main(
+        verify_clear_site,
+        verify_idempotent,
+        verify_unknown_site_noop,
+        verify_schema_unchanged,
+        verify_bare_conn_no_fk,
+    )
 
 
 if __name__ == "__main__":

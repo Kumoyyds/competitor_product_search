@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from ..cache import BaseExtractionCache, get_cache
 from ..models import BaseAttributes, CandidateEval, Verdict
 from .brand import compare_brands, extract_brands
 from .numeric import compare_numerics, extract_numerics
@@ -12,31 +11,20 @@ from .numeric import compare_numerics, extract_numerics
 def _extract(
     text: str,
     supplied_brand: str | None,
-    cache: BaseExtractionCache | None,
     country: str | None = None,
 ) -> BaseAttributes:
-    if cache:
-        hit = cache.get(text, country)
-        if hit is not None:
-            return hit
-    attrs = BaseAttributes(
+    return BaseAttributes(
         brands=extract_brands(text, supplied=supplied_brand),
         numerics=extract_numerics(text, country=country),
     )
-    if cache:
-        cache.set(text, attrs, country)
-    return attrs
 
 
 def _evaluate_one(
     cand: CandidateEval,
     query: BaseAttributes,
-    cache: BaseExtractionCache | None,
     country: str | None = None,
 ) -> CandidateEval:
-    cand.base = _extract(
-        cand.raw.title, supplied_brand=None, cache=cache, country=country
-    )
+    cand.base = _extract(cand.raw.title, supplied_brand=None, country=country)
 
     bv = compare_brands(query.brands, cand.base.brands)
     cand.trace.brand = bv
@@ -53,7 +41,6 @@ def _evaluate_one(
 
 async def base_match_node(state: dict[str, Any]) -> dict[str, Any]:
     candidates: list[CandidateEval] = state.get("candidates", [])
-    cache = get_cache()
     country = state.get("country")
 
     query_attrs = state.get("query_attrs")
@@ -69,7 +56,7 @@ async def base_match_node(state: dict[str, Any]) -> dict[str, Any]:
 
     results = await asyncio.gather(
         *(
-            asyncio.to_thread(_evaluate_one, c, query_attrs, cache, country)
+            asyncio.to_thread(_evaluate_one, c, query_attrs, country)
             for c in alive
         )
     )

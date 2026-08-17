@@ -1,9 +1,8 @@
 import pytest
 
-from src.search.cache import BaseExtractionCache
 from src.search.layers import numeric
 from src.search.layers.numeric import compare_numerics, extract_numerics
-from src.search.models import BaseAttributes, Verdict
+from src.search.models import Verdict
 
 
 def test_extract_count_x_volume():
@@ -278,20 +277,6 @@ def test_cross_locale_numeric_comparison_passes(query, candidate):
     assert compare_numerics(
         extract_numerics(query), extract_numerics(candidate)
     ) == Verdict.PASS
-
-
-def test_base_extraction_cache_is_partitioned_by_country(tmp_path):
-    cache = BaseExtractionCache(str(tmp_path / "base.sqlite"))
-    de_attrs = BaseAttributes(numerics={"weight_g": 1000.0})
-    uk_attrs = BaseAttributes(numerics={"weight_g": 1.0})
-
-    cache.set("Bag 1.000 g", de_attrs, country="DE")
-    assert cache.get("Bag 1.000 g", country="de") == de_attrs
-    assert cache.get("Bag 1.000 g", country="uk") is None
-
-    cache.set("Bag 1.000 g", uk_attrs, country="uk")
-    assert cache.get("Bag 1.000 g", country="de") == de_attrs
-    assert cache.get("Bag 1.000 g", country="UK") == uk_attrs
 
 
 def test_compare_discrete_conflict():

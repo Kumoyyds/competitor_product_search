@@ -32,7 +32,7 @@ class SearchDB:
         store_candidates: bool | None = None,
         store_llm_payload: bool | None = None,
     ):
-        self.path = path or config.get("db", "sqlite_path", default="search_db.sqlite")
+        self.path = path or config.get("db", "sqlite_path", default="search.db")
         self.store_candidates = (
             bool(config.get("db", "store_candidates", default=True))
             if store_candidates is None
@@ -54,8 +54,8 @@ class SearchDB:
         return conn
 
     def _init_schema(self) -> None:
-        # Unlike cache.py, every connection in this writer is explicitly closed:
-        # sqlite3's context manager commits/rolls back but does not close it.
+        # Every connection in this writer is explicitly closed: sqlite3's context
+        # manager commits/rolls back but does not close the connection.
         with self._lock:
             conn = self._connect()
             try:

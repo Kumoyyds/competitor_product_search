@@ -14,50 +14,30 @@ Offline; no LLM.
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
-import tempfile
 import traceback
-from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from ._harness import FAILED, PASSED, check, run_main, section, use_temp_scrape_db
+from tests._support.factories import product_data
 
-_DB_PATH = os.path.join(tempfile.gettempdir(), "verify_m9.db")
-if os.path.exists(_DB_PATH):
-    os.remove(_DB_PATH)
-os.environ["SCRAPING_DB_PATH"] = _DB_PATH
+_DB_PATH = use_temp_scrape_db("verify_m9")
 
 from src.scraping import config as _config
 _config._config = None
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
 
 
-def check(name: str, cond: bool, detail: str = "") -> None:
-    if cond:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print(); print("=" * 70); print(title); print("=" * 70)
 
 
 def make_product(**kwargs):
-    from src.scraping.models import ProductData
-    defaults = dict(
-        url="http://x/1", website="argos", scraped_at=datetime.now(timezone.utc),
-        source_type="html", title="Test Product", in_stock=True,
-        price=Decimal("19.99"), currency="GBP", image_urls=[],
-    )
+    defaults = {"url": "http://x/1", "website": "argos"}
     defaults.update(kwargs)
-    return ProductData(**defaults)
+    return product_data(**defaults)
 
 
 async def run() -> None:
@@ -242,23 +222,7 @@ def parse(html, url):
 
 
 def main() -> int:
-    try:
-        asyncio.run(run())
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
-    finally:
-        if os.path.exists(_DB_PATH):
-            os.remove(_DB_PATH)
-
-    print(); print("=" * 70)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 70)
-    if FAILED:
-        for name, detail in FAILED:
-            print(f"  FAILED: {name}  ({detail})")
-        return 1
-    return 0
+    return run_main(run, width=70)
 
 
 if __name__ == "__main__":

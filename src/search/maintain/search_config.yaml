@@ -242,15 +242,9 @@ llm:
   # HTTP timeout in seconds for LLM calls
   timeout_s: 60
 
-cache:
-  # Path to the SQLite file caching base extraction results (brand + numeric).
-  # Keyed on md5(extractor version + country + title) — the same title/country
-  # pair is never re-extracted until the extractor version changes.
-  sqlite_path: .cache/base_extraction.sqlite
-
 db:
   # Persistent run/task trace database. Relative paths resolve from the process cwd.
-  sqlite_path: search_db.sqlite
+  sqlite_path: search.db
   enabled: true
   # Disable either payload class for high-volume batches while retaining summaries.
   store_candidates: true

@@ -24,24 +24,11 @@ from src.scraping.config import ScrapingConfig, set_config
 
 ROOT = Path(__file__).resolve().parents[3]
 DB_PATH = ROOT / "scraping.db"
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
+from ._harness import FAILED, PASSED, SKIPPED, check, section, skip, run_main
 
 
-def check(name: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print()
-    print("=" * 74)
-    print(title)
-    print("=" * 74)
 
 
 def _open_readonly() -> sqlite3.Connection:
@@ -269,19 +256,12 @@ async def run() -> None:
 
 
 def main() -> int:
-    try:
-        asyncio.run(run())
-    except Exception:
-        FAILED.append(("EXCEPTION", ""))
-        traceback.print_exc()
-
-    print()
-    print("=" * 74)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 74)
-    for name, detail in FAILED:
-        print(f"  FAILED: {name}  ({detail})")
-    return 1 if FAILED else 0
+    if not DB_PATH.exists():
+        return run_main(
+            lambda: skip("M23 database checks", f"{DB_PATH} is absent"),
+            width=74,
+        )
+    return run_main(run, width=74)
 
 
 if __name__ == "__main__":

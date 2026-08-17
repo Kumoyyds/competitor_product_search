@@ -13,24 +13,11 @@ import traceback
 from datetime import datetime
 from decimal import Decimal
 
-PASSED: list[str] = []
-FAILED: list[tuple[str, str]] = []
+from ._harness import FAILED, PASSED, SKIPPED, check, section, skip, run_main
 
 
-def check(name: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        PASSED.append(name)
-        print(f"  [PASS] {name}" + (f"  ({detail})" if detail else ""))
-    else:
-        FAILED.append((name, detail))
-        print(f"  [FAIL] {name}  ({detail})")
 
 
-def section(title: str) -> None:
-    print()
-    print("=" * 70)
-    print(title)
-    print("=" * 70)
 
 
 # ---------------------------------------------------------------------------
@@ -262,25 +249,13 @@ def verify_m3() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    print("Verification script for M1 + M2 + M3")
-
-    for fn in (verify_m1, verify_m2, verify_m3):
-        try:
-            fn()
-        except Exception:
-            FAILED.append((fn.__name__, "EXCEPTION"))
-            print(f"  [EXCEPTION] {fn.__name__}")
-            traceback.print_exc()
-
-    print()
-    print("=" * 70)
-    print(f"SUMMARY: {len(PASSED)} passed, {len(FAILED)} failed")
-    print("=" * 70)
-    if FAILED:
-        for name, detail in FAILED:
-            print(f"  FAILED: {name}  ({detail})")
-        return 1
-    return 0
+    return run_main(
+        verify_m1,
+        verify_m2,
+        verify_m3,
+        title="Verification script for M1 + M2 + M3",
+        width=70,
+    )
 
 
 if __name__ == "__main__":
