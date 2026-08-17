@@ -26,3 +26,4 @@ search.db*
 scraping.db
 scraping.db-shm
 scraping.db-wal
+*.html
