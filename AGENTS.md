@@ -2,53 +2,95 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Purpose
+## Project Overview
 
-Batch-find the product-page URL on a competitor marketplace (e.g. `amazon.de`, `tesco.com`) for a list of SKU names supplied in an Excel file. Each SKU goes through: Google search (via Serper) → URL/brand filtering → LLM agent picks the best matching URL.
+PriceScope — a tool that helps online retailers find competitor product URLs on marketplaces (e.g., amazon.de, tesco.com). Takes a spreadsheet of SKU names, searches via configurable search engines (DuckDuckGo, Serper), then uses a 5-layer LangGraph pipeline with a routed LLM to select the best matching product URL.
 
-## Run
+## Setup & Run
 
 ```bash
+# Use Python 3.12 (not 3.14 — many dependencies lack pre-built wheels for 3.14)
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp .env.sample .env          # fill in QWEN_KEY and SERPER_KEY
-# edit config.yaml (see below), put input .xlsx in input/
-python main.py               # result lands in output/<output_file>
+
+# Copy and fill the key for the configured LLM; SERPER_KEY only if you use Serper
+cp .env.sample .env
+
+# Run a batch (all per-run settings are flags)
+python -m src.search.batch --input input/products.xlsx --sku-col product_name \
+    --web-col web --country-col country --output output/results.xlsx
 ```
-
-There is no test suite, linter, or build step — this is a one-shot script.
-
-## Config
-
-[config.yaml](config.yaml) is mandatory. All five keys must be present or `main.py` raises:
-
-- `input_file` — filename inside `input/` (must be `.xlsx`)
-- `input_sku_name_col` — column in the input sheet holding the SKU name. Match the language to the target marketplace's region (French names for `amazon.fr`, etc.) — search quality depends on this.
-- `country` — Serper country code (`uk`, `fr`, `de`, `nl`, ...)
-- `web` — target marketplace domain, e.g. `amazon.de`. Used both as the Serper `site:` filter and as the substring [check_url](llm_tools/other_func.py) requires in returned URLs.
-- `output_file` — filename written into `output/`
 
 ## Architecture
 
-Pipeline lives in [main.py](main.py) and orchestrates two modules under [llm_tools/](llm_tools/):
+### Data Flow
 
-1. **Chunking** ([main.py](main.py) + [get_split_num](llm_tools/other_func.py)) — the input dataframe is split into `get_split_num(n)` chunks. `get_split_num` rounds `n` down to (leading-digit × power-of-10), so 537 rows → 500 chunks of ~1 row each. Chunks are then grouped into rounds of ≤500, and each round runs a `ThreadPoolExecutor(max_workers=16)` over [find_url_llm](llm_tools/llm_func.py). Per-round partitions land in `output/output_partitions/result_{i}.xlsx` and are concatenated at the end.
+`src.search.batch.match_product_batch()` → reads the supplied Excel path → async pipeline per row (asyncio Semaphore, default 16) → LangGraph 5-layer pipeline → returns a DataFrame and optionally writes the supplied output path. Per-run settings are function arguments/CLI flags; pipeline tuning remains in `src/search/maintain/search_config.yaml`.
 
-2. **Per-SKU search** ([do_product_searching](llm_tools/llm_func.py)) — for each SKU:
-   - Build query `"{product_name}, site: {marketplace}"` and call [GoogleSerperAPIWrapper](llm_tools/llm_func.py) (`k=5`).
-   - Format each hit as a Markdown link: `**N. [title](url)**\nsnippet`. Downstream parsing in [check_url](llm_tools/other_func.py) / [get_pro_name](llm_tools/other_func.py) depends on this exact format — changing it breaks filtering.
-   - **URL filter**: drop hits whose URL doesn't contain the `web` substring.
-   - **Brand filter**: extract brands from the SKU name via [get_brand](llm_tools/other_func.py) (regex word-boundary match against `brands_set` loaded from [llm_tools/brand.xlsx](llm_tools/brand.xlsx)). Keep a hit only if its title OR snippet matches one of those brands (after [remove_accents](llm_tools/other_func.py)). If the SKU has no known brand, all hits pass.
-   - Wrap the filtered results into a LangChain `ZERO_SHOT_REACT_DESCRIPTION` agent with two tools: `initial_search` (returns the pre-filtered list) and `search_refine` (re-runs Serper with a refined query). The agent is prompted by [gen_prompt](llm_tools/prompt.py) to return the single best URL or `not found`.
-   - Up to 3 retries on exception, else returns `'failed'`. `'not found'` is a valid (non-error) outcome.
+### Pipeline Layers (LangGraph)
 
-3. **LLM** — Qwen `qwen-plus-latest` via DashScope's OpenAI-compatible endpoint (`langchain_openai.ChatOpenAI`, `temperature=0.1`). Swapping models means changing [llm_tools/llm_func.py:20](llm_tools/llm_func.py#L20).
+```
+search  →  domain_filter  →  base_match (brand + numeric)  →  distinguishing (LLM)  →  aggregate
+```
 
-## Maintenance notes (from README)
+Short-circuits when every candidate dies at a layer — LLM is never called when cheap rules already settled the question.
 
-- **[llm_tools/brand.xlsx](llm_tools/brand.xlsx)** must be kept current — it's the source of truth for brand filtering. Add new brands here when they appear in SKU lists. Columns used: `brandname_en`, `brandname_cn`, `brandname_full`.
-- **Every Serper search costs credits** (≈50,000 / $50 on the cheapest tier). Always dry-run on ~50–100 rows before processing a full file, especially after changing `web`, `country`, or the SKU language.
-- The `output/output_partitions/` directory must exist before `main.py` runs — it isn't created automatically.
+### Module Responsibility
 
-## Working directory caveat
+| Module | Path | Status | Description |
+|--------|------|--------|-------------|
+| **search** | `src/search/` | Implemented | Product URL matching pipeline |
+| **api** | `src/api/` | Skeleton | REST API endpoints |
+| **orchestrator** | `src/orchestrator/` | Skeleton | Pipeline coordination and dispatch |
+| **scraping** | `src/scraping/` | Skeleton | Product page data extraction |
+| **matching** | `src/matching/` | Skeleton | Attribute-level product match scoring |
+| **storage** | `src/storage/` | Skeleton | Data persistence (temp, main, archive) |
+| **models** | `src/models/` | Skeleton | Shared data models (SKU, Product, MatchResult) |
+| **common** | `src/common/` | Skeleton | Shared utilities (LLM client, config, logging) |
 
-[other_func.py:59](llm_tools/other_func.py#L59) loads `brand.xlsx` via `os.getcwd()`, and [main.py](main.py) uses `os.getcwd()` for `input/` and `output/` paths. The script must be invoked from the project root — running it from elsewhere will fail to find these files.
+### Key Files in Search Module
+
+- `src/search/pipeline.py` — Public entry point `match_product()` with provider-chain fallback loop
+- `src/search/graph.py` — LangGraph StateGraph wiring + conditional short-circuit edges
+- `src/search/batch.py` — Parameterized Excel batch API + flag-only CLI.
+- `src/search/db.py` / `src/search/trace.py` — SQLite run/task tracing shared by single and batch calls.
+- `src/search/layers/search.py` — Search node: fans query variants across the provider
+- `src/search/layers/base_match.py` — Brand + numeric extraction per candidate
+- `src/search/layers/distinguishing.py` — Single batched routed-LLM call for final selection
+- `src/search/maintain/brand.xlsx` — Brand name lookup table (manual maintenance required)
+- `src/search/maintain/search_config.yaml` — Pipeline tuning: provider chain, thresholds, domain map, LLM config
+- `src/search/providers/` — Search engine implementations (DuckDuckGo, Serper) with internal country mappings
+
+### External Dependencies
+
+- **LLM**: Configurable OpenAI-compatible provider selected by `llm.model` and the router table
+- **Search**: DuckDuckGo (free, via `ddgs` lib) and/or Serper (paid, via `aiohttp`)
+- **Pipeline framework**: LangGraph (StateGraph)
+- **Numeric extraction**: quantulum3 + regex pre-pass
+- **Brand matching**: rapidfuzz
+
+### Config files
+
+| File | Purpose |
+|------|---------|
+| `src/search/maintain/search_config.yaml` | Pipeline tuning: `search.provider` (string or ordered list for chain), per-provider `query_mode`, `strip_parens`, thresholds, domain map, LLM model, cache path |
+| `src/search/maintain/llm_router_config.yaml` | Keyword → `(base_url, key_name)` routing table so switching LLM vendor/model is a single-line edit to `llm.model` |
+| `.env` (repo root) | API keys: `QWEN_KEY` or `DEEPSEEK_KEY` as selected by `llm.model`; `SERPER_KEY` only if Serper is in the provider chain |
+
+### Data Files
+
+- Input: any `.xlsx` path passed to `match_product_batch()` / `--input`
+- Brand list: `src/search/maintain/brand.xlsx` (needs manual maintenance for new brands)
+- Cache: `.cache/base_extraction.sqlite` (auto-managed; keyed on extractor version + country + title)
+- Final output: optional `.xlsx` path passed to `match_product_batch()` / `--output`
+- Trace DB: `search_db.sqlite` by default (single calls use `mode=single`; batches use `mode=batch`)
+
+## Code Conventions
+
+- `src/` uses implicit namespace package (no `src/__init__.py`)
+- Each module under `src/` has its own `CLAUDE.md` with module-specific details
+- Imports within a module use relative paths (e.g., `from .providers import make_provider_chain`)
+- Cross-module imports use absolute paths (e.g., `from src.search.pipeline import match_product`)
+- Dependencies managed via `requirements.txt` (pip freeze format)
+- **New search providers** must include a `_COUNTRY_TO_*` mapping (see `SerperProvider._COUNTRY_TO_GL` and `DuckDuckGoProvider._COUNTRY_TO_REGION`) to translate general country-code arguments to the format the API expects

@@ -1,0 +1,257 @@
+# ============================================================
+# Pipeline configuration for the product-URL matching system.
+# Edit for tuning — not per-run. Per-run settings are function
+# arguments (or flags to python -m src.search.batch).
+# ============================================================
+
+search:
+  # Search engine strategy.
+  # A single name = use only that provider for every row (no escalation):
+  #     provider: serper          # Google via Serper API; needs SERPER_KEY
+  #     provider: duckduckgo      # free; no API key; ~1s rate limit between calls
+  # A list = ordered chain; if the prior yields NO_MATCH for a row,
+  # escalate to the next provider for that row:
+  #     provider: [duckduckgo, serper]   # cheap-first, paid fallback
+  #     provider: [serper, duckduckgo]   # paid-first
+  # Adding a third engine later (e.g. tavily) just extends the list:
+  #     provider: [duckduckgo, serper, tavily]
+  provider: [duckduckgo, serper]
+  # Max number of results to request per search query
+  k: 10
+  # Query construction strategy per provider:
+  #   keyword  – "{product_name} {domain_map key}"
+  #   sitename – "{product_name} site:{domain_map value}"
+  #   both     – issue both forms concurrently and merge the candidate pools
+  query_mode:
+    duckduckgo: both
+    serper: keyword
+  # Also issue each configured form with parenthesised text removed.
+  strip_parens: true
+
+# Maps website codes to expected host domains.
+# The domain_filter layer kills candidates whose URL host doesn't match.
+# A value ending in "." is a registrable-name prefix: it matches that name
+# under any TLD (amazon. → amazon.de / amazon.fr / amazon.co.uk).
+# A value without the trailing dot matches that exact host and its subdomains.
+domain_map:
+  tesco:  tesco.com
+  argos:  argos.co.uk
+  amazon.co.uk: amazon.co.uk
+  amazon.nl: amazon.nl
+
+url_rules:
+  # Tracking parameters stripped from every candidate URL at ingest. A trailing
+  # "*" means prefix matching; other entries match the whole parameter name.
+  strip_query_params:
+    [srsltid, gclid, gbraid, wbraid, dclid, fbclid, msclkid, ttclid,
+     igshid, mc_cid, mc_eid, "utm_*", ref, ref_]
+  # Path regex a URL must match to count as one product page. Websites absent
+  # here retain the previous host-only filtering behaviour.
+  product_path:
+    tesco:        '/products/\d+'
+    argos:        '/product/\d+'
+    amazon:       '/(dp|gp/product)/[A-Z0-9]{10}'
+    amazon.co.uk: '/(dp|gp/product)/[A-Z0-9]{10}'
+    amazon.nl:    '/(dp|gp/product)/[A-Z0-9]{10}'
+
+brand:
+  # RapidFuzz score >= this → brands considered the same (pass)
+  fuzzy_same_threshold: 88
+  # RapidFuzz score <= this → brands considered different (fail)
+  # Scores between the two thresholds → unknown
+  fuzzy_differ_threshold: 40
+
+numeric:
+  # Allowed relative difference for continuous attributes (e.g. weight, volume).
+  # 0.10 = ±10%. Values outside this range → fail.
+  continuous_tolerance: 0.10
+  # Locale-aware syntax used by the numeric regex pre-pass. Keyword lists are
+  # deliberately combined across languages because result titles can use a
+  # different language from the requested market.
+  locale:
+    decimal_comma_countries: [de, fr, nl, es, it, pt, se, pl, br]
+    pack_keywords:
+      # Phrases following the number: "4 pack", "24er Pack", "4 stuks".
+      after_count:
+        - pack
+        - pk
+        - pcs
+        - count
+        - er pack
+        - stück
+        - stueck
+        - stk
+        - stuks
+        - stuk
+        - st
+      # Phrases preceding the number: "Pack of 4", "Doos van 12".
+      before_count:
+        - pack of
+        - pk of
+        - packung mit
+        - set mit
+        - doos van
+        - set van
+        - pak van
+        - lot de
+        - paquet de
+        - pack de
+        - boîte de
+        - boite de
+    inch_keywords:
+      en: [inch, inches, in]
+      de: [zoll]
+      fr: [pouces, pouce]
+    abv_keywords: [abv, vol, vol., alc, alc., alk, alk., alcohol, alkoholgehalt]
+    # quantulum3 resolves these case variants to the wrong entity. Keys are
+    # case-folded and rewritten to the canonical symbol before parsing.
+    unit_case_overrides:
+      g: g
+      gb: GB
+      mb: MB
+      mm: mm
+      tb: TB
+    # These values followed by uppercase G are mobile network generations,
+    # not grams (for example, "Galaxy A25 5G").
+    network_generation_values: [2, 3, 4, 5]
+    # In device listings, uppercase G may also be a network or lens label.
+    # Keep 4g/5g out: word boundaries would match the tail of 1.4G/2.5G.
+    device_context_keywords:
+      - phone
+      - smartphone
+      - mobile
+      - sim
+      - lte
+      - android
+      - galaxy
+      - iphone
+      - смартфон
+      - lens
+      - camera
+      - af-s
+      - nikkor
+      - dslr
+  # Maps quantulum3 entity names to canonical attribute names used internally.
+  entity_to_attr:
+    volume: volume_ml
+    mass: weight_g
+    "data storage": storage_gb
+    length: length_mm
+    power: power_w
+    "electric potential": voltage_v
+    charge: charge_mah
+  # Conversion factors to normalise parsed values into the canonical unit.
+  # Each sub-key is a recognised unit string; value is the multiplier
+  # to convert to the canonical unit (e.g. "kg: 1000" → 1 kg = 1000 g).
+  unit_conversions:
+    volume_ml:
+      l: 1000
+      litre: 1000
+      litres: 1000
+      ml: 1
+      millilitre: 1
+      millilitres: 1
+      "cubic centimetre": 1
+      cl: 10
+      centilitre: 10
+      "fluid ounce": 29.5735
+      "fl oz": 29.5735
+    weight_g:
+      kg: 1000
+      kilogram: 1000
+      kilograms: 1000
+      g: 1
+      gram: 1
+      grams: 1
+      mg: 0.001
+      milligram: 0.001
+      milligrams: 0.001
+      ounce: 28.3495
+      oz: 28.3495
+      pound: 453.592
+      "pound-mass": 453.592
+      lb: 453.592
+    storage_gb:
+      gb: 1
+      gigabyte: 1
+      gigabytes: 1
+      tb: 1000
+      terabyte: 1000
+      terabytes: 1000
+      mb: 0.001
+      megabyte: 0.001
+      megabytes: 0.001
+    ram_gb:
+      gb: 1
+      gigabyte: 1
+      gigabytes: 1
+      tb: 1000
+      terabyte: 1000
+      terabytes: 1000
+      mb: 0.001
+      megabyte: 0.001
+      megabytes: 0.001
+    length_mm:
+      mm: 1
+      millimetre: 1
+      millimetres: 1
+      cm: 10
+      centimetre: 10
+      centimetres: 10
+      m: 1000
+      metre: 1000
+      metres: 1000
+    screen_inch:
+      inch: 1
+    power_w:
+      watt: 1
+      kilowatt: 1000
+    voltage_v:
+      volt: 1
+      millivolt: 0.001
+    charge_mah:
+      "milliampere-hour": 1
+      "ampere-hour": 1000
+  # Attributes compared with exact equality (not ±tolerance).
+  discrete_attrs: [storage_gb, ram_gb, count, screen_inch, voltage_v, abv_percent, power_w]
+  # When a numeric entity is ambiguous (e.g. "256GB" could be RAM or storage),
+  # look this many chars around the number for a disambiguating keyword.
+  ambiguity_window_chars: 20
+  # Disambiguation rules: if a keyword is found near an ambiguous entity,
+  # assign the value to the specified attribute instead of the default.
+  ambiguity_rules:
+    "data storage":
+      ram: ram_gb
+      memory: ram_gb
+      "memory card": storage_gb
+      storage: storage_gb
+      rom: storage_gb
+      ssd: storage_gb
+      hdd: storage_gb
+      card: storage_gb
+      sd: storage_gb
+      microsd: storage_gb
+      "flash drive": storage_gb
+
+llm:
+  # Model identifier — routed to a base_url/API key via maintain/llm_router_config.yaml.
+  # Change this line alone to switch vendor/model.
+  model: deepseek-v4-flash
+  # Sampling temperature — lower = more deterministic
+  temperature: 0.1
+  # HTTP timeout in seconds for LLM calls
+  timeout_s: 60
+
+cache:
+  # Path to the SQLite file caching base extraction results (brand + numeric).
+  # Keyed on md5(extractor version + country + title) — the same title/country
+  # pair is never re-extracted until the extractor version changes.
+  sqlite_path: .cache/base_extraction.sqlite
+
+db:
+  # Persistent run/task trace database. Relative paths resolve from the process cwd.
+  sqlite_path: search_db.sqlite
+  enabled: true
+  # Disable either payload class for high-volume batches while retaining summaries.
+  store_candidates: true
+  store_llm_payload: true
