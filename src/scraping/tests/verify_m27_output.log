@@ -1,0 +1,69 @@
+Verification script for M27 — shape-tolerant Bright Data polling
+(offline, mocked httpx.AsyncClient, no real API calls)
+
+========================================================================
+M27.1 - Single-line Tesco DCA JSONL is terminal
+========================================================================
+  [PASS] Tesco JSONL record returned on first poll  ({'product_name': 'Tesco test', 'current_price': 3.75, 'in_stock': True})
+  [PASS] No poll interval elapsed  (0.0)
+
+========================================================================
+M27.2 - Argos JSONL maps through both gates
+========================================================================
+  [PASS] Argos mapped result passes both gates  ([])
+  [PASS] Argos current/list prices preserved  (price=140, list_price=176)
+
+========================================================================
+M27.3 - Multi-line JSONL returns first record
+========================================================================
+  [PASS] First valid JSONL record returned  ({'product_name': 'first', 'current_price': 1})
+
+========================================================================
+M27.4 - HTTP 202 remains pending
+========================================================================
+  [PASS] 202 followed by ready body succeeds  ({'product_name': 'ready'})
+  [PASS] Exactly one interval elapsed  (1.0)
+
+========================================================================
+M27.5 - HTTP 200 status envelope remains pending
+========================================================================
+  [PASS] 200 building envelope followed by record succeeds  ({'product_name': 'ready'})
+  [PASS] Pending status is case-insensitive  (1)
+
+========================================================================
+M27.6 - Failed status raises immediately
+========================================================================
+  [PASS] Failed envelope raises BrightDataInfraError  (DCA collection failed (id=failed-job): {'status': 'failed', 'error': 'collector'})
+  [PASS] Failure did not sleep  (0)
+
+========================================================================
+M27.7 - Empty and undecodable bodies are not terminal
+========================================================================
+  [PASS] empty body keeps polling  ({'product_name': 'empty body'})
+  [PASS] empty list keeps polling  ({'product_name': 'empty list'})
+  [PASS] undecodable body keeps polling  ({'product_name': 'undecodable body'})
+
+========================================================================
+M27.8 - Timeout diagnostics and one-trigger invariant
+========================================================================
+  [PASS] Genuine timeout raises BrightDataInfraError  (DCA collection polling timed out after 2s (id=timeout-job, polls=3, last_status=202, last_body='{"status":"building","message":"wait"}'))
+  [PASS] Timeout includes status and body preview  (DCA collection polling timed out after 2s (id=timeout-job, polls=3, last_status=202, last_body='{"status":"building","message":"wait"}'))
+  [PASS] Timeout path triggers exactly once  (1)
+
+========================================================================
+M27.9 - Permanent auth failure raises immediately
+========================================================================
+  [PASS] 401 raises BrightDataInfraError  (DCA collection polling authorization failed: HTTP 401 (id=auth-job, body='{"error":"unauthorized"}'))
+  [PASS] 401 consumes no poll interval  (0)
+
+========================================================================
+M27.10 - Datasets array and status-bearing records
+========================================================================
+  [PASS] Datasets JSON array still returns first record  ({'title': 'Amazon array', 'price': 10})
+  [PASS] Datasets ready array is immediate  (0)
+  [PASS] Unknown status value belongs to a ready record  ({'title': 'Product', 'status': 'available', 'price': 12})
+  [PASS] Unknown status record is immediate  (0)
+
+========================================================================
+SUMMARY: 23 passed, 0 failed
+========================================================================

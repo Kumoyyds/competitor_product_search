@@ -1,0 +1,600 @@
+verify_m12: End-to-End Live Scraping Verification
+Started:    2026-07-18T15:22:21.084883+00:00
+Log file:   E:\programming\competitor_product_search\src\scraping\tests\verify_m12_output.log
+Temp DB:    C:\Users\12161\AppData\Local\Temp\verify_m12.db
+  Labels: {'membership': 2, 'normal': 12, 'error': 3, 'unavailable': 2, 'discount': 3}
+  Hosts:  {'tesco.com': 8, 'argos.co.uk': 8, 'amazon.co.uk': 6}
+
+------------------------------------------------------------------------------
+  [21/22] [normal]
+  URL:   https://www.amazon.co.uk/DWVO-Storage-Sandbags-Waterproof-Weddings/dp/B0GT4SPPSY
+  Host:  amazon.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  amazon
+  Scraper chain:  AmazonUKScraper(API,o1)
+  Started:        2026-07-18T15:22:24+00:00
+  Latency:        21,328 ms  (21.3s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         DWVO Pop Up Gazebo 3x3M,Canopy with UV protect 50+ for camping,Black | Waterproof with carry bag,hei
+    price:         59.99 GPB
+    list_price:    59.99 GPB
+    brand:         DWVO
+    in_stock:      True
+    availability:  In stock
+    image_urls:    7 images
+    gtin:          197839336773
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [06/22] [normal]
+  URL:   https://www.tesco.com/shop/en-GB/products/303350818
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-18T15:22:21+00:00
+  Latency:        77,797 ms  (77.8s)
+  DB path:        agent_repaired
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Magic Rock Saucery Session Ipa 330Ml Can
+    price:         2 GBP
+    brand:         OTHER
+    in_stock:      False
+    image_urls:    1 images
+    gtin:          05060265860745
+    unit_price:    6.06 per litre
+    parser_version: agent_attempt_1
+    source_type:   html
+  -- Mechanisms Triggered --
+    * agent repair ladder TRIGGERED: Turn C (parser_gen) succeeded -&gt; promoted
+    *   repair model: agent_attempt_1
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [13/22] [discount]
+  URL:   https://www.argos.co.uk/product/3284476
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1) -&gt; ArgosDCAScraper(API,o2)
+  Started:        2026-07-18T15:22:25+00:00
+  Latency:        75,359 ms  (75.4s)
+  DB path:        agent_repaired
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Forest Pressure Treated Wooden Shed Base - 6 x 3ft
+    price:         52.20 GBP
+    brand:         Forest Garden
+    in_stock:      True
+    availability:  pre-order
+    image_urls:    4 images
+    gtin:          5013050000000
+    parser_version: agent_attempt_0
+    source_type:   html
+  -- Mechanisms Triggered --
+    * agent repair ladder TRIGGERED: Turn C (parser_gen) succeeded -&gt; promoted
+    *   repair model: agent_attempt_0
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [05/22] [normal]
+  URL:   https://www.tesco.com/shop/en-GB/products/297568023
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-18T15:23:41+00:00
+  Latency:        4,593 ms  (4.6s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         The F&F Edit Pure Cotton Embroidered Blouse in Cream
+    price:         19.5 GBP
+    brand:         F&F
+    in_stock:      True
+    image_urls:    4 images
+    gtin:          05063638005606
+    parser_version: v1
+    source_type:   html
+  -- Mechanisms Triggered --
+    * fast path (parser): parser list succeeded on first usable parser
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [22/22] [discount]
+  URL:   https://www.amazon.co.uk/BEEWAY-Parasol-Waterproof-Cantilever-Umbrella/dp/B0DQTSQ42Z
+  Host:  amazon.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  amazon
+  Scraper chain:  AmazonUKScraper(API,o1)
+  Started:        2026-07-18T15:23:39+00:00
+  Latency:        18,343 ms  (18.3s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         BEEWAY Garden Parasol Cover Waterproof, Outdoor Cantilever Parasol Cover with Zipper and Rod Fit for
+    price:         10.98 GPB
+    list_price:    12.99 GPB
+    brand:         BEEWAY
+    in_stock:      True
+    availability:  In stock
+    image_urls:    7 images
+    variant:       {"color": "Black", "size": "205x45/75/32cm"}
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [02/22] [membership]
+  URL:   https://www.tesco.com/groceries/en-GB/products/312841117
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-18T15:23:57+00:00
+  Latency:        12,375 ms  (12.4s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Sure Men Invisible Ice Fresh 48h Antiperspirant Deodorant 200ml
+    price:         2 GBP
+    brand:         Sure
+    in_stock:      True
+    image_urls:    5 images
+    gtin:          08720181334955
+    unit_price:    11.25 per litre
+    parser_version: v1
+    source_type:   html
+  -- Mechanisms Triggered --
+    * fast path (parser): parser list succeeded on first usable parser
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [15/22] [error]
+  URL:   https://www.argos.co.uk/product/7123351
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1) -&gt; ArgosDCAScraper(API,o2)
+  Started:        2026-07-18T15:23:45+00:00
+  Latency:        32,016 ms  (32.0s)
+  DB path:        invalid_target
+  Outcome:        [X] INVALID TARGET  (InvalidTargetResult)
+  Reason signal:  agent_no_product: Product not found
+  -- Mechanisms Triggered --
+    * invalid-target detection TRIGGERED: agent_no_product: Product not found
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [08/22] [unavailable]
+  URL:   https://www.tesco.com/shop/en-GB/products/320797857
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-18T15:24:10+00:00
+  Latency:        8,577 ms  (8.6s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Tesco Salted Caramel Churro Flavour Popcorn 100g
+    price:         1.25 GBP
+    brand:         TESCO
+    in_stock:      False
+    image_urls:    1 images
+    gtin:          05063445797411
+    unit_price:    12.50 per kg
+    parser_version: v1
+    source_type:   html
+  -- Mechanisms Triggered --
+    * fast path (parser): parser list succeeded on first usable parser
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [04/22] [error]
+  URL:   https://www.tesco.com/shop/en-GB/products/325602141
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-18T15:24:18+00:00
+  Latency:        2,687 ms  (2.7s)
+  DB path:        invalid_target
+  Outcome:        [X] INVALID TARGET  (InvalidTargetResult)
+  Reason signal:  multi_absence: Missing: title, price, add_to_cart
+  -- Mechanisms Triggered --
+    * invalid-target detection TRIGGERED: multi_absence: Missing: title, price, add_to_cart
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [14/22] [normal]
+  URL:   https://www.argos.co.uk/product/8343893
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1) -&gt; ArgosDCAScraper(API,o2)
+  Started:        2026-07-18T15:22:46+00:00
+  Latency:        95,812 ms  (95.8s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         GARDENA 13mm Basic Hose Set
+    price:         30.00 GBP
+    brand:         GARDENA
+    in_stock:      True
+    availability:  pre-order
+    image_urls:    5 images
+    gtin:          4066407001725
+    parser_version: v1
+    source_type:   html
+  -- Mechanisms Triggered --
+    * fast path (parser): parser list succeeded on first usable parser
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [17/22] [unavailable]
+  URL:   https://www.amazon.co.uk/Kids-Bike-Handwoven-Streamers-Detachable/dp/B0B1QJ42KN
+  Host:  amazon.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  amazon
+  Scraper chain:  AmazonUKScraper(API,o1)
+  Started:        2026-07-18T15:24:21+00:00
+  Latency:        6,062 ms  (6.1s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Kids Bike Basket Set, Girl Bike Basket Pink Handwoven, Children Cycling Baskets with Leather Straps,
+    currency:      GPB
+    brand:         JIUAI
+    in_stock:      False
+    availability:  Currently unavailable. We don't know when or if this item will be back in stock.
+    image_urls:    6 images
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [07/22] [normal]
+  URL:   https://www.tesco.com/shop/en-GB/products/325296757
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-18T15:24:21+00:00
+  Latency:        7,750 ms  (7.8s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Tile Rite DIY Grouting Sponge - Yellow - 55mm x 150mm x 95mm
+    price:         6 GBP
+    brand:         Tile Rite
+    in_stock:      True
+    image_urls:    1 images
+    gtin:          05059958551459
+    parser_version: v1
+    source_type:   html
+  -- Mechanisms Triggered --
+    * fast path (parser): parser list succeeded on first usable parser
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [16/22] [error]
+  URL:   https://www.argos.co.uk/browse/garden-and-diy/plant-and-lawn-care/grass-seed-and-feed/c:1040915
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1) -&gt; ArgosDCAScraper(API,o2)
+  Started:        2026-07-18T15:24:17+00:00
+  Latency:        33,827 ms  (33.8s)
+  DB path:        invalid_target
+  Outcome:        [X] INVALID TARGET  (InvalidTargetResult)
+  Reason signal:  agent_no_product: Sorry, we couldn't find any products matching your filters
+  -- Mechanisms Triggered --
+    * invalid-target detection TRIGGERED: agent_no_product: Sorry, we couldn't find any products matching your filters
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [18/22] [normal]
+  URL:   https://www.amazon.co.uk/MIETONG-Pair-Bicycle-Handlebar-Streamers/dp/B0DYHJCM5Q
+  Host:  amazon.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  amazon
+  Scraper chain:  AmazonUKScraper(API,o1)
+  Started:        2026-07-18T15:24:51+00:00
+  Latency:        10,062 ms  (10.1s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         1 Pair Bicycle Handlebar Streamers - Kids Bike Streamers Childrens Colorful Bicycle Handlebar Grips 
+    price:         4.49 GPB
+    list_price:    4.49 GPB
+    brand:         MIETONG
+    in_stock:      True
+    availability:  In stock
+    image_urls:    6 images
+    variant:       {"color": "Multicolour"}
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [01/22] [membership]
+  URL:   https://www.tesco.com/groceries/en-GB/products/276797313
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-18T15:24:29+00:00
+  Latency:        42,656 ms  (42.7s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Dove Men+Care Refreshing 3-in-1 Hair, Face and Body Wash Extra Fresh 400 ml
+    price:         2.5 GBP
+    brand:         Dove
+    in_stock:      True
+    image_urls:    5 images
+    gtin:          08717644682944
+    unit_price:    9.38 per litre
+    parser_version: v1
+    source_type:   html
+  -- Mechanisms Triggered --
+    * fast path (parser): parser list succeeded on first usable parser
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [10/22] [discount]
+  URL:   https://www.argos.co.uk/product/4490582
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1) -&gt; ArgosDCAScraper(API,o2)
+  Started:        2026-07-18T15:25:01+00:00
+  Latency:        26,406 ms  (26.4s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         McGregor 30cm Electric Hover Collect Lawnmower - 1700W
+    price:         85.00 GBP
+    brand:         McGregor
+    in_stock:      True
+    availability:  pre-order
+    image_urls:    4 images
+    parser_version: v1
+    source_type:   html
+  -- Mechanisms Triggered --
+    * fast path (parser): parser list succeeded on first usable parser
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [19/22] [normal]
+  URL:   https://www.amazon.co.uk/Included-Accessories-Propellers-Motorcycle-Decoration/dp/B0DY727FDV
+  Host:  amazon.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  amazon
+  Scraper chain:  AmazonUKScraper(API,o1)
+  Started:        2026-07-18T15:25:28+00:00
+  Latency:        5,921 ms  (5.9s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Xerteam 2 Set Small Rubber Ducks Bike Bell Kids, Included 2 Yellow Duck Bike Accessories Kids with L
+    price:         9.99 GPB
+    list_price:    9.99 GPB
+    brand:         Xerteam
+    in_stock:      True
+    availability:  In stock
+    image_urls:    8 images
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [03/22] [normal]
+  URL:   https://www.tesco.com/shop/en-GB/products/326405420
+  Host:  tesco.com
+------------------------------------------------------------------------------
+  Site resolved:  tesco
+  Scraper chain:  TescoScraper(HTML,o1) -&gt; TescoDCAScraper(API,o2)
+  Started:        2026-07-18T15:24:27+00:00
+  Latency:        73,500 ms  (73.5s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Ninja FrostVault 30QT/28L Hard Cooler with Dry Zone FB131UKWH White
+    price:         199.99 GBP
+    brand:         Ninja
+    in_stock:      True
+    image_urls:    9 images
+    gtin:          00622356289573
+    parser_version: v1
+    source_type:   html
+  -- Mechanisms Triggered --
+    * fast path (parser): parser list succeeded on first usable parser
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [20/22] [normal]
+  URL:   https://www.amazon.co.uk/Samsung-Features-Speakers-Extended-Warranty/dp/B0FQDX2XGZ
+  Host:  amazon.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  amazon
+  Scraper chain:  AmazonUKScraper(API,o1)
+  Started:        2026-07-18T15:25:41+00:00
+  Latency:        18,375 ms  (18.4s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Samsung Galaxy Tab A11+, Android Tablet, AI Features, Sleek and Modern Design, 11 Inch 90Hz Display,
+    price:         309 GPB
+    list_price:    309 GPB
+    brand:         Samsung
+    in_stock:      True
+    availability:  In stock
+    image_urls:    10 images
+    variant:       {"color": "Silver", "size": "256GB"}
+    source_type:   api
+  -- Mechanisms Triggered --
+    * fast path (API): field mapping passed gates directly
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [12/22] [normal]
+  URL:   https://www.argos.co.uk/product/7726844
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1) -&gt; ArgosDCAScraper(API,o2)
+  Started:        2026-07-18T15:25:11+00:00
+  Latency:        58,875 ms  (58.9s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         PlayStation 5 Console Disc - Slim Console
+    price:         569.99 GBP
+    brand:         PlayStation
+    in_stock:      True
+    availability:  pre-order
+    image_urls:    10 images
+    parser_version: v1
+    source_type:   html
+  -- Mechanisms Triggered --
+    * fast path (parser): parser list succeeded on first usable parser
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [11/22] [normal]
+  URL:   https://www.argos.co.uk/product/8747437
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1) -&gt; ArgosDCAScraper(API,o2)
+  Started:        2026-07-18T15:25:34+00:00
+  Latency:        155,531 ms  (155.5s)
+  DB path:        fast
+  Outcome:        [OK] SUCCESS  (ProductData)
+  -- Extracted Fields --
+    title:         Grand Theft Auto VI Xbox Series X & S Game Pre-Order
+    price:         67.99 GBP
+    brand:         Grand Theft Auto VI
+    in_stock:      True
+    availability:  Pre-Order
+    image_urls:    11 images
+    gtin:          5026555370073
+    parser_version: v1
+    source_type:   html
+  -- Mechanisms Triggered --
+    * fast path (parser): parser list succeeded on first usable parser
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+  [09/22] [normal]
+  URL:   https://www.argos.co.uk/product/8189978
+  Host:  argos.co.uk
+------------------------------------------------------------------------------
+  Site resolved:  argos
+  Scraper chain:  ArgosScraper(HTML,o1) -&gt; ArgosDCAScraper(API,o2)
+  Started:        2026-07-18T15:22:23+00:00
+  Latency:        380,375 ms  (380.4s)
+  Outcome:        [FAIL] ESCALATED  (ScrapeFailed)
+  Failed stage:   scraper_fallback_exhausted
+  Failed scraper: all_exhausted
+  Errors (2):
+    ScrapeFailed(site=argos, scraper=ArgosScraper, stage=parser_broken,
+      url=https://www.argos.co.uk/product/8189978)
+    ScrapeFailed(site=argos, scraper=ArgosDCAScraper, stage=api_malformed,
+      url=https://www.argos.co.uk/product/8189978)
+  -- Mechanisms Triggered --
+    * terminal failure: stage=scraper_fallback_exhausted
+    *   escalation: api_malformed (argos|gate_validation|)
+    *   last error: ScrapeFailed(site=argos, scraper=ArgosDCAScraper, stage=api_malformed, url=https://www.argos.co.uk/product/8189978)
+    * no scrape_runs record (failure before DB write)
+  Escalation:     api_malformed
+  Signature:      argos|gate_validation|
+------------------------------------------------------------------------------
+  Total URLs:          22
+  Success:             18  (82%)
+  Invalid Target:      3  (14%)
+  Scrape Failed:       1  (5%)
+  Infra Error:         0  (0%)
+  Label            Total     OK   Invalid   Failed   Infra   Other
+  ----------------------------------------------------------------
+  discount             3      3         0        0       0       0
+  error                3      0         3        0       0       0
+  membership           2      2         0        0       0       0
+  normal              12     11         0        1       0       0
+  unavailable          2      2         0        0       0       0
+  ----------------------------------------------------------------
+  TOTAL               22     18         3        1       0       0
+  Site             Total     OK   Invalid   Failed   Infra   Other
+  ----------------------------------------------------------------
+  amazon               6      6         0        0       0       0
+  argos                8      5         2        1       0       0
+  tesco                8      7         1        0       0       0
+  fast                                  16
+  invalid_target                         3
+  agent_repaired                         2
+  (no run record)                        1
+  fast path (parser)                                            10
+  fast path (API)                                                6
+  invalid-target detection TRIGGERED                             3
+  agent repair ladder TRIGGERED                                  2
+  repair model                                                   2
+  terminal failure                                               1
+  escalation                                                     1
+  last error                                                     1
+  no scrape_runs record (failure before DB write)                1
+  signature: argos|gate_validation|
+  reason:    api_malformed
+  affected:  1 URL(s)
+    - [normal] https://www.argos.co.uk/product/8189978
+
+  Total wall time:    382,562 ms  (382.6 s)
+  Per-URL average:    53,101 ms
+  Per-URL median:     26,406 ms
+  Per-URL p95:        155,531 ms
+  Per-URL min:        2,687 ms
+  Per-URL max:        380,375 ms
+  Per-URL sum:        1,168,227 ms
+    #  label          outcome            site      latency  db_path               
+  --------------------------------------------------------------------------------
+    1  membership     success            tesco       42.7s  fast                  
+    2  membership     success            tesco       12.4s  fast                  
+    3  normal         success            tesco       73.5s  fast                  
+    4  error          invalid_target     tesco        2.7s  invalid_target        
+    5  normal         success            tesco        4.6s  fast                  
+    6  normal         success            tesco       77.8s  agent_repaired        
+    7  normal         success            tesco        7.8s  fast                  
+    8  unavailable    success            tesco        8.6s  fast                  
+    9  normal         scrape_failed      argos      380.4s  (none)                
+   10  discount       success            argos       26.4s  fast                  
+   11  normal         success            argos      155.5s  fast                  
+   12  normal         success            argos       58.9s  fast                  
+   13  discount       success            argos       75.4s  agent_repaired        
+   14  normal         success            argos       95.8s  fast                  
+   15  error          invalid_target     argos       32.0s  invalid_target        
+   16  error          invalid_target     argos       33.8s  invalid_target        
+   17  unavailable    success            amazon       6.1s  fast                  
+   18  normal         success            amazon      10.1s  fast                  
+   19  normal         success            amazon       5.9s  fast                  
+   20  normal         success            amazon      18.4s  fast                  
+   21  normal         success            amazon      21.3s  fast                  
+   22  discount       success            amazon      18.3s  fast                  
+
+======================================================================
+FINAL: 5 checks passed, 2 failed, 0 skipped
+Finished: 2026-07-18T15:28:44.248330+00:00
+Output log: E:\programming\competitor_product_search\src\scraping\tests\verify_m12_output.log
+======================================================================
+  FAILED: Normal URLs succeeded (11/12)  (unexpected failures: ['https://www.argos.co.uk/product/8189978'])
+  FAILED: Unavailable URL handled (success)  (url=https://www.tesco.com/shop/en-GB/products/320797857)

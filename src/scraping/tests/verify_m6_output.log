@@ -1,0 +1,42 @@
+
+======================================================================
+M6.1 - get_active_ordered_by_hits sorts correctly
+======================================================================
+  [PASS] 3 parsers returned
+  [PASS] p2 (5 hits) is first  (got id=2)
+  [PASS] p1 (2 hits) is second  (got id=1)
+  [PASS] p3 (0 hits) is last  (got id=3)
+
+======================================================================
+M6.2 - Tiebreak: 0-hit parsers sort by id DESC (fresh first)
+======================================================================
+  [PASS] newer 0-hit parser sorts first  ([6, 5, 4])
+
+======================================================================
+M6.3 - HTMLScraper picks first-passing parser
+======================================================================
+  [PASS] scrape returned ProductData  (got ProductData)
+  [PASS] parser_version reflects winning parser  (working_v1)
+
+======================================================================
+M6.4 - winning_parser_id recorded to scrape_runs
+======================================================================
+  [PASS] scrape_run written  ([<sqlite3.Row object at 0x000001F2C5BFB760>])
+  [PASS] winning_parser_id = working parser  (got 8, expected 8)
+  [PASS] outcome=success  (success)
+  [PASS] path=fast  (fast)
+
+======================================================================
+M6.5 - results table receives ProductData
+======================================================================
+  [PASS] result stored
+  [PASS] title extracted  (Forest Pressure Treated Wooden Shed Base)
+
+======================================================================
+M6.6 - No parsers => _run_parsers returns None
+======================================================================
+  [PASS] empty parsers returns None  (None)
+
+======================================================================
+SUMMARY: 14 passed, 0 failed
+======================================================================

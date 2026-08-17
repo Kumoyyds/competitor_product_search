@@ -4,8 +4,22 @@ __pycache__/
 *.pyo
 .env
 .DS_Store
+.ipynb_checkpoints/
+
+# Spreadsheet / JSON data (tracked data files stay tracked)
 *.xlsx
 *.json
+output/
+input/
+
+# search module runtime
 search_db.sqlite*
 .searxng/
 .cache/
+
+# SQLite runtime journals (the .db itself stays tracked)
+*.db-shm
+*.db-wal
+scraping.db
+scraping.db-shm
+scraping.db-wal

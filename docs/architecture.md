@@ -75,6 +75,10 @@ Cross-cutting:
 
 ## Module Status
 
+> The scraping module has since been built out to Phase 0 (M1–M23). Its mechanism-level
+> design — repair ladder, golden set, parser promotion/retirement, cold start — is documented
+> in [scraping_design.md](scraping_design.md).
+
 | Module | Status | MVP Required |
 |--------|--------|-------------|
 | search | Implemented | Yes |

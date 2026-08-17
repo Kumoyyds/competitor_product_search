@@ -1,0 +1,64 @@
+
+========================================================================
+M26.1 - cancellation and timeout reap child processes
+========================================================================
+  [PASS] cancelled sandbox registered a child  ((36459,))
+  [PASS] cancelled sandbox leaves no owned child
+  [PASS] cancelled child is waitpid-reaped before return  ((36459,))
+  [PASS] timeout contract remains SandboxTimeout
+  [PASS] timeout path leaves no owned child
+
+========================================================================
+M26.2 - transient spawn exhaustion retries with a typed failure
+========================================================================
+  [PASS] EAGAIN succeeds after configured retries
+  [PASS] spawn retry count is initial plus two retries  (3)
+  [PASS] exhausted spawn raises SandboxSpawnError  ([Errno 35] cannot start sandbox subprocess: [Errno 35] offline exhausted fixture; live_sandboxes=0, asyncio_tasks=1, threads=1, rlimit_nproc_soft=2666)
+  [PASS] exhausted spawn attempts exactly retries + 1
+  [PASS] failed spawn never enters live-child registry
+
+========================================================================
+M26.3 - sandbox subprocess concurrency is bounded
+========================================================================
+  [PASS] all gated sandbox calls complete
+  [PASS] live subprocess peak does not exceed limit  (3)
+  [PASS] gated batch leaves no child
+
+========================================================================
+M26.4 - sandbox spawn failures become observable router fallbacks
+========================================================================
+  [PASS] raw parser-list OSError becomes sandbox_spawn ScrapeFailed  (ScrapeFailed(site=m26_html, scraper=BrokenHTML, stage=parser_list, url=https://m26.example/product, rule=sandbox_spawn, error=BlockingIOError: [Errno 35] offline parser spawn fixture))
+  [PASS] sandbox spawn failure writes an escalated scrape_run  ([{'id': 1, 'url': 'https://m26.example/product', 'host': 'm26.example', 'site': 'm26_html', 'scraper': 'BrokenHTML', 'scraped_at': '2026-08-11T02:34:45.703Z', 'outcome': 'escalated', 'path': 'escalated', 'winning_parser_id': None, 'attempts': 1, 'model_used': None, 'latency_ms': 10, 'cost': None, 'signature': 'm26_html|sandbox_spawn|', 'error': 'BlockingIOError: [Errno 35] offline parser spawn fixture'}])
+  [PASS] router tries the backup after sandbox spawn failure
+  [PASS] backup scraper can recover the request
+  [PASS] all-exhausted fallback writes aggregate escalation  ([{'id': 1, 'signature': 'm26_router|api_malformed|', 'reason': 'api_malformed', 'affected_count': 1, 'snapshot': '{"site": "m26_router", "url": "https://router.example/exhausted", "attempts": [{"scraper": "First", "failed_stage": "parser_list", "errors": []}, {"scraper": "AlsoFails", "failed_stage": "api_malformed", "errors": []}], "snapshot_preview": null}', 'status': 'open', 'created_at': '2026-08-11T02:34:45.706Z'}])
+
+========================================================================
+M26.5 - database connections close on exceptional paths
+========================================================================
+  [PASS] parser-store exception still closes ScrapeDB  (1)
+
+========================================================================
+M26.6 - LLM clients reuse and close connection pools
+========================================================================
+  [PASS] same effective LLM parameters reuse one client
+  [PASS] different LLM parameters use another client
+  [PASS] only two clients were constructed
+  [PASS] cached sync and async HTTP roots are closed
+  [PASS] atexit still closes loop-independent synchronous HTTP roots
+  [PASS] atexit skips async HTTP roots whose owning loop may be closed
+
+========================================================================
+M26.7 - cold-start fetch fan-out respects site concurrency
+========================================================================
+  [PASS] cold-start returns every requested URL
+  [PASS] cold-start network peak respects configured limit  (3)
+
+========================================================================
+M26.8 - resource limits reject deadlocking values
+========================================================================
+  [PASS] all invalid resource-limit settings are rejected  (4)
+
+========================================================================
+SUMMARY: 28 passed, 0 failed
+========================================================================

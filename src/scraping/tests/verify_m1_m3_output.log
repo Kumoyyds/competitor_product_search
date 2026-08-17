@@ -1,0 +1,55 @@
+Verification script for M1 + M2 + M3
+
+======================================================================
+M1 - ProductData schema + two gates (validation)
+======================================================================
+  [PASS] in_stock=True + price present -> passes both gates  ([])
+  [PASS] price stays as Decimal after validation  (Decimal)
+  [PASS] in_stock=True + price=None -> Gate 2 catches fault  (['in_stock=True but price must be a positive ordinary customer price'])
+  [PASS] Gate 2 error message mentions price  (['in_stock=True but price must be a positive ordinary customer price'])
+  [PASS] in_stock=True + only membership_price -> Gate 2 requires price  (['in_stock=True but price must be a positive ordinary customer price'])
+  [PASS] in_stock=False + only membership_price -> passes (product signal present)  ([])
+  [PASS] in_stock=False + price=None + image -> legal (product signal present)  ([])
+  [PASS] in_stock=False + price present -> legal  ([])
+  [PASS] image_urls=[] accepted
+  [PASS] InvalidTargetResult constructed
+
+======================================================================
+M2 - BaseScraper + Router two-hop + registry
+======================================================================
+  [PASS] amazon registered
+  [PASS] tesco registered
+  [PASS] argos registered
+  [PASS] tesco has 2 scrapers (HTML primary + DCA backup)  (['TescoScraper', 'TescoDCAScraper'])
+  [PASS] Tesco order: HTMLScraper first
+  [PASS] Tesco order: DCA second (backup)
+  [PASS] argos has 2 scrapers (HTML primary + DCA backup)  (['ArgosScraper', 'ArgosDCAScraper'])
+  [PASS] Argos order: HTMLScraper first
+  [PASS] Argos order: DCA second (backup)
+  [PASS] resolve_site(https://www.tesco.com/shop/en-GB/products/123) -> tesco  (got tesco)
+  [PASS] resolve_site(https://tesco.com/x) -> tesco  (got tesco)
+  [PASS] resolve_site(https://www.argos.co.uk/product/3284476) -> argos  (got argos)
+  [PASS] resolve_site(https://www.amazon.co.uk/dp/XYZ) -> amazon  (got amazon)
+  [PASS] resolve_site(https://www.amazon.de/dp/ABC) -> amazon  (got amazon)
+  [PASS] resolve_site(https://www.amazon.fr/dp/DEF) -> amazon  (got amazon)
+  [PASS] resolve_site(https://WWW.TESCO.COM/x) -> tesco  (got tesco)
+  [PASS] unknown host raises ValueError with hint  (Unknown host: unknown-site.example.com (url=https://unknown-site.example.com/x).)
+
+======================================================================
+M3 - SQLite 6 tables + stores
+======================================================================
+  [PASS] All 6 tables created  (found: ['escalations', 'golden_samples', 'invalid_target_phrases', 'parsers', 'results', 'scrape_runs'])
+  [PASS] Parser insert + lookup
+  [PASS] Parser status defaults to active
+  [PASS] Parser retire flips status
+  [PASS] Recent URL flagged as duplicate
+  [PASS] Unseen URL NOT duplicate
+  [PASS] Results append-only (2 rows for same URL)
+  [PASS] Signature dedup: 3 upserts -> 1 row  (got 1 rows)
+  [PASS] affected_count increments to 3  (3)
+  [PASS] Phrase stored and retrievable
+  [PASS] page_type coverage counts correct  ({'out_of_stock': 1, 'standard': 1})
+
+======================================================================
+SUMMARY: 38 passed, 0 failed
+======================================================================

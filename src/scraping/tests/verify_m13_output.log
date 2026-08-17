@@ -1,0 +1,64 @@
+Verification script for M13 — Amazon/Tesco DCA polling fix
+(offline, mocked httpx.AsyncClient, no real API calls)
+
+======================================================================
+M13.1 - Datasets happy path: ready on 3rd poll
+======================================================================
+  [PASS] Response queue depleted (4 items consumed)  (0 remaining)
+  [PASS] Returned data has title  (Test Product)
+
+======================================================================
+M13.2 - Datasets poll timeout: infinite 202s (core bug proof)
+======================================================================
+  [PASS] Raised BrightDataInfraError on timeout  (Snapshot polling timed out after 1s (id=snap456, polls=11, last_status=202, last_body=''))
+  [PASS] Error message mentions timeout  (Snapshot polling timed out after 1s (id=snap456, polls=11, last_status=202, last_body=''))
+  [PASS] Exactly 1 POST (no re-trigger)  (got 1 POSTs)
+  [PASS] Multiple GETs before timeout  (got 11 GETs)
+
+======================================================================
+M13.3 - Datasets snapshot status=failed
+======================================================================
+  [PASS] Raised BrightDataInfraError on status=failed  (Snapshot failed (id=snap789): {'status': 'failed', 'error': 'bot detected'})
+  [PASS] Response queue depleted (2 items consumed)  (0 remaining)
+
+======================================================================
+M13.4 - Datasets trigger retry then success (regression)
+======================================================================
+  [PASS] 3 POSTs (trigger retry preserved)  (got 3 POSTs)
+  [PASS] 1 GET (poll after successful trigger)  (got 1 GETs)
+  [PASS] Returned data has title  (Retried Success)
+
+======================================================================
+M13.5 - Datasets trigger all-fail
+======================================================================
+  [PASS] Raised BrightDataInfraError after all trigger failures  (Bright Data infra error: HTTP 502 — Bad Gateway)
+  [PASS] 3 POSTs (all trigger attempts)  (got 3 POSTs)
+  [PASS] 0 GETs (no successful trigger to poll)  (got 0 GETs)
+
+======================================================================
+M13.6 - DCA happy path
+======================================================================
+  [PASS] Returned data has product_name  (DCA Product)
+  [PASS] Response queue depleted (4 items consumed)  (0 remaining)
+
+======================================================================
+M13.7 - DCA poll timeout
+======================================================================
+  [PASS] Raised BrightDataInfraError on timeout  (DCA collection polling timed out after 1s (id=coll456, polls=11, last_status=202, last_body=''))
+  [PASS] Exactly 1 POST (no re-trigger)  (got 1 POSTs)
+
+======================================================================
+M13.8 - HTML route regression: with_extraction_retry unchanged
+======================================================================
+  [PASS] with_extraction_retry calls fn 3 times  (3)
+  [PASS] with_extraction_retry returns final result  (ok)
+
+======================================================================
+M13.9 - First poll is immediate (no sleep before first GET)
+======================================================================
+  [PASS] Returned data has title  (Immediate)
+  [PASS] First poll was immediate (no sleep before first GET, elapsed 0.000s)  (0.000s)
+
+======================================================================
+SUMMARY: 22 passed, 0 failed
+======================================================================

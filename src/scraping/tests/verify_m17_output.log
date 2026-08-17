@@ -1,0 +1,68 @@
+
+========================================================================
+M17.1 - config policy
+========================================================================
+  [PASS] default mandatory page types  (('standard', 'out_of_stock', 'discounted', 'membership'))
+  [PASS] multipack optional
+  [PASS] mandatory minimum is 1
+  [PASS] optional minimum is 0
+  [PASS] missing policy key fails safe to mandatory
+  [PASS] unknown policy key rejected
+  [PASS] zero cap rejected
+
+========================================================================
+M17.2 - workbook validation
+========================================================================
+  [PASS] valid workbook parsed  ([ColdStartRow(page_type='standard', url='https://example/1', row_no=2), ColdStartRow(page_type='out_of_stock', url='https://example/2', row_no=3), ColdStartRow(page_type='discounted', url='https://example/3', row_no=4), ColdStartRow(page_type='membership', url='https://example/4', row_no=5)])
+  [PASS] page type normalized
+  [PASS] sheet row retained
+  [PASS] all invalid rows reported  (invalid row value(s) in invalid.xlsx:
+  row 2: page_type='stand'
+  row 3: page_type='out'
+  row 4: page_type=''
+  row 5: url='' (empty)
+Legal page_type values: standard, out_of_stock, discounted, multipack, membership)
+  [PASS] legal values reported
+  [PASS] missing page_type header rejected
+  [PASS] text input rejected with Excel contract
+  [PASS] missing mandatory type rejected
+  [PASS] optional multipack may be omitted
+  [PASS] config can make membership optional
+
+========================================================================
+M17.3 - cold-start caps, declared buckets, and shortfalls
+========================================================================
+  [PASS] cold start uses configured first cold-start model  (configured-coldstart-model)
+  [PASS] cap seeds only three goldens  ({'parser_id': 1, 'seeded_goldens': 3, 'accepted': 3, 'aborted': False, 'partial': False, 'coverage_shortfall': ['out_of_stock', 'discounted', 'membership']})
+  [PASS] spares skipped without prompting  (3)
+  [PASS] spare message emitted
+  [PASS] declared bucket wins
+  [PASS] mismatch warning shown
+  [PASS] cold-start provenance stored
+  [PASS] blocked persistence leaves all mandatory buckets short  ({'parser_id': None, 'seeded_goldens': 0, 'accepted': 3, 'aborted': True, 'partial': False, 'coverage_shortfall': ['standard', 'out_of_stock', 'discounted', 'membership']})
+  [PASS] rejection blocks all seeding
+  [PASS] rejection returns exit code 1
+  [PASS] failure block emitted
+
+========================================================================
+M17.4 - runtime cap and URL dedup
+========================================================================
+  [PASS] three distinct runtime URLs seeded  ([5, 6, 7, None])
+  [PASS] fourth URL blocked by cap
+  [PASS] repeat URL blocked before cap
+
+========================================================================
+M17.5 - prune ordering and schema guard
+========================================================================
+  [PASS] dry run chooses stale then oldest auto
+  [PASS] dry run deletes nothing
+  [PASS] apply deletes planned rows
+  [PASS] human and newest auto survive  ({11, 12})
+  [PASS] schema guard adds provenance column
+  [PASS] legacy rows backfilled as auto
+  [PASS] schema guard is idempotent
+  [PASS] prune works after automatic schema repair
+
+========================================================================
+SUMMARY: 39 passed, 0 failed
+========================================================================

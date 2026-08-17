@@ -1,0 +1,65 @@
+
+======================================================================
+M7.1 - Valid parser: returns dict
+======================================================================
+  [PASS] valid parser returns dict  ({'title': 'Hello'})
+
+======================================================================
+M7.2 - AST rejects forbidden imports
+======================================================================
+  [PASS] import os rejected  (SandboxViolation(reason='forbidden_import: os'))
+  [PASS] import subprocess rejected  (SandboxViolation(reason='forbidden_import: subprocess'))
+  [PASS] import urllib.request rejected  (SandboxViolation(reason='forbidden_import: urllib.request'))
+  [PASS] import socket rejected  (SandboxViolation(reason='forbidden_import: socket'))
+  [PASS] import requests rejected  (SandboxViolation(reason='forbidden_import: requests'))
+
+======================================================================
+M7.3 - AST rejects forbidden names
+======================================================================
+  [PASS] forbidden name 'open' rejected  (SandboxViolation(reason='forbidden_name: open'))
+  [PASS] forbidden name 'eval' rejected  (SandboxViolation(reason='forbidden_name: eval'))
+  [PASS] forbidden name 'exec' rejected  (SandboxViolation(reason='forbidden_name: exec'))
+  [PASS] forbidden name '__import__' rejected  (SandboxViolation(reason='forbidden_name: __import__'))
+
+======================================================================
+M7.4 - AST rejects dunder attribute escape ladder
+======================================================================
+  [PASS] __class__.__mro__ rejected  (SandboxViolation(reason='forbidden_dunder: __mro__'))
+
+======================================================================
+M7.5 - Runtime exception caught
+======================================================================
+  [PASS] ZeroDivisionError caught  (SandboxException(type_name='ZeroDivisionError', message='division by zero', traceback='Traceback (most recent call last):\n  File "C:\\Users\\Yuding.Duan\\OneDrive - Ipsos\\3. self_projects\\competitor_product_search\\src\\scraping\\repair\\sandbox.py", line 243, in _run_child\n    result = parse_fn(html, url)\n             ^^^^^^^^^^^^^^^^^^^\n  File "<candidate>", line 1, in parse\nZeroDivisionError: division by zero\n'))
+
+======================================================================
+M7.6 - Infinite loop hits timeout
+======================================================================
+  [PASS] infinite loop -> SandboxTimeout  (SandboxTimeout(timeout=2))
+
+======================================================================
+M7.7 - Non-dict return caught
+======================================================================
+  [PASS] non-dict return -> SandboxException (TypeError)  (SandboxException(type_name='TypeError', message='parse() must return dict, got int', traceback=''))
+
+======================================================================
+M7.8 - Whitelisted imports allowed
+======================================================================
+  [PASS] import bs4 allowed  ({'ok': True})
+  [PASS] import lxml allowed  ({'ok': True})
+  [PASS] import re allowed  ({'ok': True})
+  [PASS] import json allowed  ({'ok': True})
+
+======================================================================
+M7.9 - Missing 'parse' function
+======================================================================
+  [PASS] code without parse() detected  (SandboxException(type_name='AttributeError', message="candidate code has no callable 'parse'", traceback=''))
+
+======================================================================
+M7.10 - Windows compatibility check
+======================================================================
+  [PASS] platform detected  (running on Windows)
+  [PASS] sandbox still works on Windows (no setrlimit)  ({'ok': True})
+
+======================================================================
+SUMMARY: 21 passed, 0 failed
+======================================================================

@@ -1,0 +1,48 @@
+
+========================================================================
+M24.1 - API price-contract normalizer
+========================================================================
+  [PASS] equal list_price is dropped  (['list_price=19.99 (== price)'])
+  [PASS] higher list_price is retained  (({'price': Decimal('19.99'), 'list_price': Decimal('29.99')}, []))
+  [PASS] price=None preserves positive qualifier signals  (({'price': None, 'list_price': Decimal('29.99'), 'membership_price': Decimal('9.99')}, []))
+  [PASS] membership_price equal to price is dropped  (['membership_price=10 (== price)'])
+  [PASS] non-positive membership_price is always dropped  (['membership_price=0 (<= 0)'])
+  [PASS] Amazon initial_price == final_price passes both gates  (['list_price=19.99 (== price)'])
+
+========================================================================
+M24.2 - API terminal paths write escalated runs
+========================================================================
+  [PASS] API infra writes one diagnosable failure row  ([{'id': 1, 'url': 'https://api.example/infra', 'host': 'api.example', 'site': 'm24_api', 'scraper': 'FakeAPI', 'scraped_at': '2026-08-08T13:51:44.955Z', 'outcome': 'escalated', 'path': 'escalated', 'winning_parser_id': None, 'attempts': 1, 'model_used': None, 'latency_ms': 0, 'cost': None, 'signature': 'm24_api|api_infra|', 'error': 'BrightDataInfraError: offline infra fixture'}])
+  [PASS] API fetch writes one diagnosable failure row  ([{'id': 2, 'url': 'https://api.example/fetch', 'host': 'api.example', 'site': 'm24_api', 'scraper': 'FakeAPI', 'scraped_at': '2026-08-08T13:51:44.958Z', 'outcome': 'escalated', 'path': 'escalated', 'winning_parser_id': None, 'attempts': 1, 'model_used': None, 'latency_ms': 0, 'cost': None, 'signature': 'm24_api|api_fetch|', 'error': 'offline fetch fixture'}])
+  [PASS] API malformed writes one diagnosable failure row  ([{'id': 3, 'url': 'https://api.example/malformed', 'host': 'api.example', 'site': 'm24_api', 'scraper': 'FakeAPI', 'scraped_at': '2026-08-08T13:51:44.959Z', 'outcome': 'escalated', 'path': 'escalated', 'winning_parser_id': None, 'attempts': 1, 'model_used': None, 'latency_ms': 0, 'cost': None, 'signature': 'm24_api|gate_validation|', 'error': "('scraped_at',): Field required"}])
+
+========================================================================
+M24.3 - HTML terminal paths write escalated runs
+========================================================================
+  [PASS] HTML infra writes one diagnosable failure row  ([{'id': 1, 'url': 'https://html.example/infra', 'host': 'html.example', 'site': 'm24_html', 'scraper': 'FakeHTML', 'scraped_at': '2026-08-08T13:51:44.964Z', 'outcome': 'escalated', 'path': 'escalated', 'winning_parser_id': None, 'attempts': 1, 'model_used': None, 'latency_ms': 0, 'cost': None, 'signature': 'm24_html|extraction_infra|', 'error': 'BrightDataInfraError: offline HTML infra fixture'}])
+  [PASS] HTML fetch writes one diagnosable failure row  ([{'id': 2, 'url': 'https://html.example/fetch', 'host': 'html.example', 'site': 'm24_html', 'scraper': 'FakeHTML', 'scraped_at': '2026-08-08T13:51:44.966Z', 'outcome': 'escalated', 'path': 'escalated', 'winning_parser_id': None, 'attempts': 1, 'model_used': None, 'latency_ms': 0, 'cost': None, 'signature': 'm24_html|extraction|', 'error': 'offline HTML fetch fixture'}])
+  [PASS] HTML repair terminal writes one diagnosable failure row  ([{'id': 3, 'url': 'https://html.example/repair', 'host': 'html.example', 'site': 'm24_html', 'scraper': 'FakeHTML', 'scraped_at': '2026-08-08T13:51:44.978Z', 'outcome': 'escalated', 'path': 'escalated', 'winning_parser_id': None, 'attempts': 1, 'model_used': None, 'latency_ms': 0, 'cost': None, 'signature': 'm24_html|repair_budget_exhausted|v2', 'error': 'offline repair terminal fixture'}])
+
+========================================================================
+M24.4 - failure incidents bypass success dedup
+========================================================================
+  [PASS] two same-window failures produce two rows
+  [PASS] two same-window successes produce one row
+  [PASS] a prior failure does not suppress the recovered success  ([{'id': 4, 'url': 'https://dedup.example/recovery', 'host': 'dedup.example', 'site': 'm24_dedup', 'scraper': 'ProbeScraper', 'scraped_at': '2026-08-08T13:51:44.988Z', 'outcome': 'escalated', 'path': 'escalated', 'winning_parser_id': None, 'attempts': 1, 'model_used': None, 'latency_ms': None, 'cost': None, 'signature': 'm24_dedup|temporary_failure|', 'error': 'temporary failure'}, {'id': 5, 'url': 'https://dedup.example/recovery', 'host': 'dedup.example', 'site': 'm24_dedup', 'scraper': 'ProbeScraper', 'scraped_at': '2026-08-08T13:51:44.989Z', 'outcome': 'success', 'path': 'fast', 'winning_parser_id': None, 'attempts': 1, 'model_used': None, 'latency_ms': None, 'cost': None, 'signature': None, 'error': None}])
+  [PASS] count_total_runs includes escalated attempts  (expected 5 (3 escalated + 2 success), got 5)
+
+========================================================================
+M24.5 - historical scrape_runs migration
+========================================================================
+  [PASS] migration adds signature and error without data loss  ({'scraped_at', 'site', 'outcome', 'cost', 'host', 'model_used', 'path', 'signature', 'url', 'winning_parser_id', 'attempts', 'scraper', 'latency_ms', 'id', 'error'})
+  [PASS] site/outcome query index exists  ({'idx_scrape_runs_site', 'idx_scrape_runs_site_outcome', 'idx_scrape_runs_url_scraped'})
+
+========================================================================
+M24.6 - API payload escalation preview and traceback detail
+========================================================================
+  [PASS] api_malformed escalation retains raw payload preview  ({'site': 'm24_snapshot', 'url': 'https://snapshot.example/item', 'attempts': [{'scraper': 'MalformedAPI', 'failed_stage': 'api_malformed', 'errors': ['in_stock=True but price must be a positive ordinary customer price']}], 'snapshot_preview': '{"raw_marker": "persist-me", "nested": {"value": 7}}'})
+  [PASS] ScrapeFailed text includes first underlying error  (ScrapeFailed(site=m24_snapshot, scraper=all_exhausted, stage=scraper_fallback_exhausted, url=https://snapshot.example/item, rule=api_malformed, error=ScrapeFailed(site=m24_snapshot, scraper=MalformedAPI, stage=api_malformed, url=https://snapshot.example/item, rule=gate_validation, error=in_stock=True but price must be a positive ordinary customer p))
+
+========================================================================
+SUMMARY: 20 passed, 0 failed
+========================================================================

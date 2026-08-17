@@ -1,0 +1,20 @@
+# Host -> site mapping (Router 第一跳)
+#
+# 日后新增站点/域名：在此文件添加一行即可，无需改代码。
+# 同一个 site 可对应多个 host（如 Amazon 多国站点）。
+#
+# 格式:
+#   <hostname>: <site_identifier>
+
+tesco.com: tesco
+www.tesco.com: tesco
+
+argos.co.uk: argos
+www.argos.co.uk: argos
+
+amazon.co.uk: amazon
+www.amazon.co.uk: amazon
+amazon.de: amazon
+www.amazon.de: amazon
+amazon.fr: amazon
+www.amazon.fr: amazon

@@ -1,0 +1,109 @@
+Verification script for M4 + M5
+Data directory: C:\Users\Yuding.Duan\OneDrive - Ipsos\3. self_projects\competitor_product_search\src\scraping\data
+
+======================================================================
+M4.1 - AmazonUKScraper._map_fields on data/amazon_response.json
+======================================================================
+  Sample: Amazon.de ASIN B0C62DWSDL (Enzymedica Lypo Gold)
+  Mapped fields:
+    title       = Enzymedica - Lypo Gold, Enzym-Formel, reduziert Gase und Blä...
+    brand       = Enzymedica
+    gtin (upc)  = 670480600016
+    price       = 23.79 EUR  (Decimal)
+    list_price  = 27.99 EUR
+    unit_price  = 668.26 per kg
+    in_stock    = True
+    avail_raw   = Auf Lager
+    image_urls  = 6 URLs
+    variant     = {'size': '60 Count'}
+
+  [PASS] brand extracted  (Enzymedica)
+  [PASS] gtin extracted (from upc)  (670480600016)
+  [PASS] price is Decimal  (Decimal)
+  [PASS] price value correct  (23.79)
+  [PASS] list_price is Decimal
+  [PASS] list_price value correct  (27.99)
+  [PASS] currency EUR  (EUR)
+  [PASS] unit_price parsed  (668.26)
+  [PASS] unit parsed (kg)  (kg)
+  [PASS] in_stock True
+  [PASS] 6 image URLs  (6)
+  [PASS] variant size captured  ({'size': '60 Count'})
+  [PASS] Gate 1 + Gate 2 pass  ([])
+
+  Final ProductData: url=https://www.amazon.de/Enzymedica-Enzym-Formel-Keto...
+                     price=23.79 EUR, in_stock=True
+
+======================================================================
+M4.2 - TescoDCAScraper._map_fields on DCA sample payload
+======================================================================
+  Sample: Tesco DCA payload for basketball hoop
+  Mapped fields:
+    title      = Yaheetech 2.19-2.79M Height-Adjustable Basketball Hoop Syste...
+    price      = 54.99 GBP
+    list_price = 80.99 (was on sale)
+    in_stock   = True
+
+  [PASS] title extracted
+  [PASS] price is Decimal 54.99  (54.99)
+  [PASS] list_price 80.99 (from dict)  (80.99)
+  [PASS] currency GBP
+  [PASS] in_stock True
+  [PASS] image_urls populated
+  [PASS] Gate 1 + Gate 2 pass  ([])
+
+======================================================================
+M4.3 - DirectAPIScraper._is_not_found detection
+======================================================================
+  [PASS] Amazon: real product NOT flagged
+  [PASS] Amazon: empty dict flagged as not_found
+  [PASS] Amazon: error key flagged as not_found
+  [PASS] Amazon: missing title flagged
+  [PASS] TescoDCA: product_name present NOT flagged
+  [PASS] TescoDCA: missing product_name flagged
+
+======================================================================
+M5.1 - detect_invalid_page on real sample HTML files
+======================================================================
+  argos_response_1.html  (1,633,052 chars)  - Argos product 3284476 (shed base)
+    has JSON-LD Product schema: True
+    detect_invalid_page result: None
+  [PASS] argos_response_1.html: JSON-LD Product schema present
+  [PASS] argos_response_1.html: valid product page NOT flagged
+
+  argos_response_2.html  (1,653,363 chars)  - Argos product 8747437 (GTA VI)
+    has JSON-LD Product schema: True
+    detect_invalid_page result: None
+  [PASS] argos_response_2.html: JSON-LD Product schema present
+  [PASS] argos_response_2.html: valid product page NOT flagged
+
+  tesco_response.html  (461,314 chars)  - Tesco product 297568023 (blouse)
+    has JSON-LD Product schema: True
+    detect_invalid_page result: None
+  [PASS] tesco_response.html: JSON-LD Product schema present
+  [PASS] tesco_response.html: valid product page NOT flagged
+
+
+======================================================================
+M5.2 - detect_invalid_page signal layers (isolated)
+======================================================================
+  [PASS] HTTP 404 triggers http_status signal  (InvalidPageSignal(signal_type='http_status', detail='HTTP 404'))
+  [PASS] HTTP 410 triggers http_status signal  (InvalidPageSignal(signal_type='http_status', detail='HTTP 410'))
+  [PASS] HTTP 403 triggers http_status signal  (InvalidPageSignal(signal_type='http_status', detail='HTTP 403'))
+  [PASS] HTTP 451 triggers http_status signal  (InvalidPageSignal(signal_type='http_status', detail='HTTP 451'))
+  [PASS] Short page (<5000 chars) triggers page_length signal  (InvalidPageSignal(signal_type='page_length', detail='Page only 30 chars (min 5000)'))
+  [PASS] Long page missing 2+ signals triggers multi_absence  (InvalidPageSignal(signal_type='multi_absence', detail='Missing: title, price, add_to_cart'))
+  [PASS] Long page with title+price+cart passes (no JSON-LD needed)  (None)
+  [PASS] Known invalid-target phrase triggers keyword_match  (InvalidPageSignal(signal_type='keyword_match', detail="Matched phrase: Oops, that didn't go to plan"))
+  [PASS] Without phrase list, keyword layer doesn't fire  (None)
+
+======================================================================
+M5.3 - HTMLScraper end-to-end with stubbed extraction
+======================================================================
+  [PASS] Valid HTML passes detection (does not become InvalidTargetResult)  (got ScrapeFailed)
+  [PASS] 404 URL -> InvalidTargetResult (not exception)  (InvalidTargetResult)
+  [PASS] InvalidTargetResult carries http_status signal  (http_status: HTTP 404)
+
+======================================================================
+SUMMARY: 44 passed, 0 failed
+======================================================================

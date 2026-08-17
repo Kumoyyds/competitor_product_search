@@ -1,0 +1,31 @@
+
+========================================================================
+M25.1 - Turn B evidence matrix on the final two-node rung
+========================================================================
+  [PASS] gate failure with missing required fields asks Turn B  (asks=1, parser_gen=1, outcome=CandidateFailed)
+  [PASS] sandbox failure does not ask Turn B  (asks=0)
+  [PASS] golden rejection does not ask Turn B  (asks=0)
+  [PASS] optional-only gate failure does not ask Turn B  (asks=0)
+
+========================================================================
+M25.2 - Source-absence short-circuit and fail-open behavior
+========================================================================
+  [PASS] source_absent stops before final parser generation  (stage=source_absent, parser_gen_calls=1)
+  [PASS] solvable verdict continues to parser generation  (asks=1, parser_gen=1)
+  [PASS] source-absence LLM error fails open to parser generation  (parser_gen=1)
+
+========================================================================
+M25.3 - One-node and three-node ladder positions
+========================================================================
+  [PASS] one-node ladder never asks Turn B  (asks=0)
+  [PASS] three-node ladder asks Turn B only at index 1  (asks=1)
+
+========================================================================
+M25.4 - Source-absence observability and router fallback
+========================================================================
+  [PASS] source_absent is queryable in scrape_runs.signature  ({'outcome': 'escalated', 'signature': 'm25|source_absent|'})
+  [PASS] router tries backup after source_absent  (calls=['primary', 'backup'], result=InvalidTargetResult)
+
+========================================================================
+SUMMARY: 11 passed, 0 failed
+========================================================================
