@@ -49,17 +49,17 @@ class ScrapingConfig(BaseSettings):
     # model name here plus that provider's key in .env. Edit both ladder lists
     # together to change attempt count (their lengths are checked at runtime).
     repair_model_ladder: list[str] = Field(
-        default=["deepseek-v4-flash", "deepseek-v4-flash"]
+        default=["deepseek-v4-flash", "deepseek-v4-pro"]
     )
     repair_temperature_ladder: list[float] = Field(
-        default=[0.1, 0.4]
+        default=[0.1, 0.3]
     )
 
     # --- cold start (independent from the runtime repair ladder) ---
     # Node 0 generates the initial parser; later rounds repair it. The last
     # model/temperature rung repeats until review succeeds or the human stops.
     cold_start_model_ladder: list[str] = Field(
-        default=["deepseek-v4-flash", "deepseek-v4-flash"]
+        default=["deepseek-v4-flash", "deepseek-v4-pro"]
     )
     cold_start_temperature_ladder: list[float] = Field(
         default=[0.1, 0.4]
