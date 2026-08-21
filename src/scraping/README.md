@@ -2,7 +2,7 @@
 
 Extracts structured product data from marketplace pages. Given a `(url, site)` pair, it returns a validated `ProductData` object with title, price, list_price, membership_price, stock, images, brand, etc. — or explains cleanly why it couldn't.
 
-> **Status**: Phase 0 complete. M1–M24 implemented. M23 adds declarative per-site profiles ([sites.yaml](sites.yaml)), fixes Argos runtime promotion detection, and separates DeepSeek thinking output budgets; M24 normalizes API price qualifiers and records diagnosable failed runs. See [tests/](tests/).
+> **Status**: Phase 0 complete. M1–M28 implemented. M28 adds exact result/run/escalation correlation and records the promoted parser on repaired successes. See [tests/](tests/).
 
 ## What it does
 
@@ -75,7 +75,7 @@ Under the hood:
 - **Self-healing** — when all parsers fail, a provider-configured LLM generates a candidate, sandboxes it, tests against golden samples, and promotes it if it passes. API routes use JSON remapping only (D25 red line — never fabricates).
 - **Fallback ladder** — a site can register multiple scrapers (e.g. Tesco = HTML primary + DCA backup). Terminal failure → next scraper; all exhausted → escalation ticket (`parser_broken / api_malformed / infra_failure / mass_invalid_target`).
 - **API price normalization (M24)** — hand-written API mappings pass through one canonical choke point before validation. Equal/lower `list_price` and equal/higher or non-positive `membership_price` values are omitted; HTML parsers remain gate-driven so bad generated mappings still trigger repair.
-- **Failure observability (M24)** — every terminal scraper attempt writes `outcome='escalated'` to `scrape_runs` with a joinable signature and truncated error. Failures never deduplicate, and a prior failure cannot suppress a recovered success; repeated successes still share the configured dedup window. `scrape_runs` is the per-execution log; `escalations` remains the signature-deduplicated alarm aggregate.
+- **Execution observability (M24/M28)** — every scraper execution, including Direct API routes such as Amazon, writes one `scrape_runs` row; successes are no longer collapsed by a time window. Qualified `results` point to their producing run, failed runs point to their aggregate escalation ticket, repaired HTML successes record the promoted parser in `winning_parser_id`, and repair paths record the actual LLM in `repair_model`.
 - **Golden set** — successful scrapes grow each page-type bucket to the config-driven cap (3 by default), with duplicate-URL protection. Five buckets (precedence order): `out_of_stock` > `membership` > `discounted` > `multipack` > `standard`. Future promotions must reproduce all goldens exactly.
 - **Site profiles (M23)** — [sites.yaml](sites.yaml) declares, per site, which page types can exist at all and which are mandatory for cold start. These are *constraints*, not detectors: a site that has no gated member pricing (Argos — Nectar points accrue rewards, they are not a member price) vetoes `membership` classification outright, and an unavailable type can never become mandatory. Undeclared sites and undeclared types fail open to the global `config.py` defaults. See [Site profiles](#site-profiles-sitesyaml).
 - **Cold start** — a validated Excel sheet declares each URL's page type; required coverage is checked before paid work. The dedicated cold-start model ladder generates and repairs one parser from sandbox failures plus structured human corrections. The parser and confirmed goldens are written only when every fetched, in-scope case passes; fetch failures remain non-blocking and are reported separately.
@@ -147,6 +147,10 @@ The CLI validates coverage before paid calls, reuses matching non-stale golden H
 
 After a failing review round, `c` (or legacy alias `y`) repairs again, `s` saves the current parser plus that round's accepted goldens as a partial result, and `q` abandons without writes. The model ladder is a warm-up schedule: its final model/temperature repeats with thinking enabled until review succeeds, the human stops, or the safety cap is reached. Every round reruns every URL so a repair cannot silently regress an accepted case; unchanged accepted outputs are reused without prompting. Repair prompts contain only the preceding round's failures plus a compact resolved/regression ledger. Fetch failures do not block persistence because the parser had no opportunity to prove itself, but can leave a coverage shortfall. A declared/extracted type disagreement is shown as `MISMATCH`; accepting still stores the declared type. Exit codes are `0` for complete coverage, `1` for input/abort/no seed, and `2` for incomplete coverage or a partial save.
 
+### Re-cold-starting an existing site
+
+Before re-cold-starting, open `scripts/check_database.ipynb`, set `SITE` and `TABLES`, and run the preview cell. The default table selection clears only `parsers` and `golden_samples`; add `results`, `escalations`, and `invalid_target_phrases` for a fully clean parser/data reset. Add `scrape_runs` only when the site's execution history should also be permanently deleted. Clearing `scrape_runs` detaches retained `results.run_id` values; clearing `escalations` detaches retained `scrape_runs.escalation_id` values. After reviewing the counts, set `CONFIRM = True` and run the clear cell, then run the cold-start command again.
+
 ## Module structure
 
 ```
@@ -180,6 +184,7 @@ src/scraping/
 ├── storage/                        6 SQLite tables (parsers, golden_samples, scrape_runs,
 │                                   results, escalations, invalid_target_phrases)
 ├── data/                           Sample HTMLs / JSON for tests
+├── scripts/check_database.ipynb    Database inspection + selective per-site clearing
 ├── scripts/live_batch_report.py    Paid end-to-end batch report tool
 └── tests/                          Legacy verify scripts pending pytest migration;
                                     historical logs live in tests/logs/archive/
@@ -281,8 +286,8 @@ Single SQLite database at `scraping.db` (path configurable via `SCRAPING_DB_PATH
 |-------|---------|
 | `parsers` | Parser code text + status (active/retired) |
 | `golden_samples` | HTML snapshots + expected ProductData for promote gate |
-| `scrape_runs` | Per-execution log for success/failure/invalid_target; failed rows carry `signature` + `error` |
-| `results` | Append-only history of qualified ProductData outputs |
+| `scrape_runs` | Per-execution log for success/failure/invalid_target; repair paths set `repair_model`, failed rows carry `signature` + `error`, and `escalation_id` links to the aggregate ticket |
+| `results` | Append-only history of qualified ProductData outputs; `run_id` links to the producing execution |
 | `escalations` | Failure tickets with signature dedup (4 reason types) |
 | `invalid_target_phrases` | Learned phrases from Agent backfill for future invalid-target detection |
 
@@ -292,6 +297,13 @@ Common queries:
 -- Price history for a URL
 SELECT scraped_at, product_data FROM results WHERE url = ? ORDER BY scraped_at DESC;
 
+-- Qualified result → exact producing run and parser
+SELECT r.id, r.scraped_at, s.path, s.scraper, s.winning_parser_id, p.version
+FROM results r
+LEFT JOIN scrape_runs s ON s.id = r.run_id
+LEFT JOIN parsers p ON p.id = s.winning_parser_id
+WHERE r.url = ? ORDER BY r.id DESC;
+
 -- Parser hit rates for a site
 SELECT winning_parser_id, COUNT(*) hits FROM scrape_runs
 WHERE site = ? AND outcome = 'success' GROUP BY winning_parser_id ORDER BY hits DESC;
@@ -299,12 +311,17 @@ WHERE site = ? AND outcome = 'success' GROUP BY winning_parser_id ORDER BY hits 
 -- Open escalations needing human attention
 SELECT * FROM escalations WHERE status = 'open' ORDER BY affected_count DESC;
 
+-- Aggregate ticket → every affected execution/URL
+SELECT s.id, s.url, s.scraper, s.outcome, s.path, s.signature, s.error
+FROM scrape_runs s
+WHERE s.escalation_id = ? ORDER BY s.id DESC;
+
 -- Recent diagnosable Amazon attempts, including failures
 SELECT scraped_at, site, scraper, outcome, path, signature, substr(error,1,120)
 FROM scrape_runs WHERE site='amazon' ORDER BY scraped_at DESC LIMIT 10;
 ```
 
-`init_db()` automatically adds the M24 `scrape_runs.signature` and `scrape_runs.error` columns to existing databases. No manual migration or data rewrite is required.
+`init_db()` automatically adds the M24 `scrape_runs.signature` / `scrape_runs.error` columns and the M28 `results.run_id` / `scrape_runs.escalation_id` columns and indexes to existing databases. It also renames the former `scrape_runs.model_used` column to `repair_model` and removes the unused `cost` column. No manual migration or data rewrite is required. Historical rows keep `NULL` correlation keys because their exact relationships cannot be reconstructed safely.
 
 ## Configuration
 
@@ -334,7 +351,6 @@ All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (s
 | `cold_start_page_require_mandatory` | standard/discounted/out_of_stock/membership = true; multipack = false | **Fallback only** — the per-site `cold_start_required` in [sites.yaml](sites.yaml) wins for declared sites/types. Unknown page-type keys are rejected at startup |
 | `golden_max_samples_per_page_type` | 3 | Maximum non-stale goldens per site/page type |
 | `invalid_target_absence_threshold` | 2 | Missing structural signals before a page counts as invalid |
-| `scrape_runs_dedup_window_seconds` | 3600 | Window for collapsing duplicate scrape-run rows |
 | `mass_invalid_target_ratio` | 0.3 | Alert if >30% of a site's 24h runs are invalid_target |
 | `mass_invalid_target_absolute` | 20 | Or if absolute count exceeds this |
 | `db_path` | `scraping.db` | SQLite path; override with `SCRAPING_DB_PATH` |

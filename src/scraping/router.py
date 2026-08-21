@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 import logging
 from pathlib import Path
 from urllib.parse import urlparse
@@ -10,7 +11,7 @@ from .config import get_config
 from .exceptions import BrightDataInfraError, ScrapeFailed, format_scrape_signature
 from .models.results import ScrapeOutcome
 from .registry import get_scrapers
-from .storage import EscalationStore, ScrapeDB
+from .storage import EscalationStore, RunStore, ScrapeDB
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,7 @@ async def scrape(url: str) -> ScrapeOutcome:
             ],
             "snapshot_preview": (last.snapshot[:2000] if last and last.snapshot else None),
         },
+        run_ids=[failure.run_id for failure in failures if failure.run_id is not None],
     )
     raise ScrapeFailed(
         site=site,
@@ -115,6 +117,7 @@ async def scrape(url: str) -> ScrapeOutcome:
         signature=(site, reason, ""),
         errors=[str(f) for f in failures],
         snapshot=last.snapshot if last else None,
+        run_id=last.run_id if last else None,
     )
 
 
@@ -147,14 +150,24 @@ def _derive_signature(site: str, failures: list[ScrapeFailed]) -> str:
     return format_scrape_signature(site, last.signature, last.failed_stage)
 
 
-def _write_escalation(signature: str, reason: str, snapshot: dict) -> None:
+def _write_escalation(
+    signature: str,
+    reason: str,
+    snapshot: dict,
+    run_ids: Sequence[int] = (),
+) -> None:
     """Best-effort escalation write."""
     db: ScrapeDB | None = None
     try:
         cfg = get_config()
         db = ScrapeDB(cfg.db_path)
         db.init_db()
-        EscalationStore(db).upsert(signature=signature, reason=reason, snapshot=snapshot)
+        escalation_id = EscalationStore(db).upsert(
+            signature=signature,
+            reason=reason,
+            snapshot=snapshot,
+        )
+        RunStore(db).attach_escalation(run_ids, escalation_id)
         logger.info("escalation written: signature=%s reason=%s", signature, reason)
     except Exception:
         logger.exception("failed to write escalation (non-fatal)")

@@ -413,9 +413,8 @@ match → candidate → promote → prune,规则与 v1.1 一致。**唯一新增
 | path | fast / retried / agent_repaired / fallback_scraper / escalated / **invalid_target**(v1.2 新增) |
 | winning_parser_id | invalid_target 时为 null |
 | attempts | |
-| model_used | |
+| repair_model | 仅 repair 路径记录实际配置的模型；未触发 repair 时为 null |
 | latency_ms | |
-| cost | |
 
 **results(快)** —— 同 v1.1,未变。invalid_target 不产出 ProductData,自然不写此表(D27)。
 

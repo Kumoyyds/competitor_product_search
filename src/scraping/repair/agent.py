@@ -90,6 +90,7 @@ class CandidateSucceeded:
     product: ProductData
     parser_id: int
     parser_source: str
+    repair_model: str
 
 
 RepairOutcome = Union[NoProductVerdict, SourceAbsent, CandidateFailed, CandidateSucceeded]
@@ -136,8 +137,8 @@ async def run_repair_ladder(
     url: str,
     html: str,
     initial_errors: list[str],
-) -> Union[ProductData, InvalidTargetResult, ScrapeFailed]:
-    """Run the repair ladder. Returns the final outcome: product, invalid-target, or failure.
+) -> Union[CandidateSucceeded, InvalidTargetResult, ScrapeFailed]:
+    """Return the successful candidate metadata, invalid-target, or failure.
 
     Node count = len(cfg.repair_model_ladder).  Edit the config lists to add/remove
     nodes — Turn A/B/thinking adapt via semantic positions (first/second/last).
@@ -176,7 +177,7 @@ async def run_repair_ladder(
             )
 
         if isinstance(outcome, CandidateSucceeded):
-            return outcome.product
+            return outcome
 
         # CandidateFailed — record already in ctx.attempts, continue
 
@@ -296,6 +297,7 @@ async def _try_repair(
         product=product,
         parser_id=result,             # result is int (parser id) when not GoldenRejection
         parser_source=parser_source,
+        repair_model=model,
     )
 
 

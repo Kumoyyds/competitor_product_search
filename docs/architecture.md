@@ -84,7 +84,7 @@ Cross-cutting:
 | search | Implemented | Yes |
 | api | Skeleton | No (Phase 2) |
 | orchestrator | Skeleton | No (Phase 2) |
-| scraping | Skeleton | No (Phase 2) |
+| scraping | Implemented | No (Phase 2) |
 | matching | Skeleton | No (Phase 3) |
 | storage | Skeleton | No (Phase 2) |
 | models | Skeleton | No (Phase 2) |
@@ -96,4 +96,4 @@ Cross-cutting:
 
 **Phase 2**: Move higher-level orchestration into `orchestrator/`. Add `api/` endpoints. Introduce `storage/` beyond the current search trace database and define cross-module models.
 
-**Phase 3**: Add `scraping/` for product page data extraction. Add `matching/` for attribute-level comparison beyond URL matching. This enables the full pipeline: find URL → scrape product data → match against SKU attributes.
+**Phase 3**: Add `matching/` for attribute-level comparison beyond URL matching. Together with the implemented scraping module, this enables the full pipeline: find URL → scrape product data → match against SKU attributes.

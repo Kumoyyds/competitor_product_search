@@ -44,34 +44,33 @@ class BaseScraper(ABC):
         outcome: str,
         path: str,
         winning_parser_id: Optional[int] = None,
-        model_used: Optional[str] = None,
+        repair_model: Optional[str] = None,
         latency: Optional[int] = None,
         signature: Optional[str] = None,
         error: Optional[str] = None,
-    ) -> None:
-        """Best-effort execution logging; failures intentionally bypass dedup."""
+    ) -> Optional[int]:
+        """Best-effort execution logging; return the canonical run id."""
         db: ScrapeDB | None = None
         try:
             cfg = get_config()
             db = ScrapeDB(cfg.db_path)
             db.init_db()
-            store = RunStore(db, cfg.scrape_runs_dedup_window_seconds)
-            if outcome != "success" or not store.is_duplicate(url):
-                store.record(
-                    url=url,
-                    host=host,
-                    site=self.site,
-                    scraper=self.__class__.__name__,
-                    outcome=outcome,
-                    path=path,
-                    winning_parser_id=winning_parser_id,
-                    model_used=model_used,
-                    latency_ms=latency,
-                    signature=signature,
-                    error=error,
-                )
+            return RunStore(db).record(
+                url=url,
+                host=host,
+                site=self.site,
+                scraper=self.__class__.__name__,
+                outcome=outcome,
+                path=path,
+                winning_parser_id=winning_parser_id,
+                repair_model=repair_model,
+                latency_ms=latency,
+                signature=signature,
+                error=error,
+            )
         except Exception:
             logger.exception("Failed to record scrape run")
+            return None
         finally:
             if db is not None:
                 db.close()
@@ -82,9 +81,9 @@ class BaseScraper(ABC):
         host: str,
         failure: ScrapeFailed,
         latency: Optional[int] = None,
-    ) -> None:
+    ) -> Optional[int]:
         error = " | ".join(str(item) for item in failure.errors)[:2000]
-        self._record_run(
+        run_id = self._record_run(
             url,
             host,
             "escalated",
@@ -95,14 +94,20 @@ class BaseScraper(ABC):
             ),
             error=error or failure.failed_stage,
         )
+        failure.run_id = run_id
+        return run_id
 
-    def _store_result(self, product: ProductData) -> None:
+    def _store_result(
+        self,
+        product: ProductData,
+        run_id: Optional[int] = None,
+    ) -> None:
         db: ScrapeDB | None = None
         try:
             cfg = get_config()
             db = ScrapeDB(cfg.db_path)
             db.init_db()
-            ResultStore(db).append(product)
+            ResultStore(db).append(product, run_id=run_id)
         except Exception:
             logger.exception("Failed to store result")
         finally:

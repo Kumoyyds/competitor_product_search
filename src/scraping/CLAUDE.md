@@ -1,6 +1,6 @@
 # Scraping Module
 
-**Status**: M1–M27 complete. Full Phase 0 lifecycle. M27 makes Datasets/DCA polling shape-tolerant and diagnostic. See `src/scraping/tests/`.
+**Status**: M1–M28 complete. Full Phase 0 lifecycle. M28 adds exact run/result/escalation correlation and repaired-parser attribution. See `tests/unit/scraping/`.
 
 ## Responsibility
 
@@ -189,6 +189,7 @@ src/scraping/
 | M25 | Evidence-gated source-absence pre-screen on repair attempt 1 | ✔ verify_m25.py |
 | M26 | Cancellation-safe sandbox lifecycle + bounded process/network/client resources | ✔ verify_m26.py |
 | M27 | Shape-tolerant JSON/JSONL polling + status/auth/timeout diagnostics | ✔ verify_m27.py |
+| M28 | Run/result/escalation correlation + repaired-parser attribution | ✔ test_run_correlation.py |
 
 ## Public API
 
@@ -312,11 +313,11 @@ when explicitly needed with `python -m src.scraping.scripts.live_batch_report`.
 ## M24 — API price normalization and execution observability
 
 - Every hand-written API mapping passes through `scrapers/price_fields.py` before validation. The normalizer drops qualifiers that violate the M20 ordering contract while retaining positive qualifier-only signals when ordinary `price` is absent. HTML output is deliberately not normalized so gate failures continue to drive parser repair.
-- `_record_run` and `_store_result` live on `BaseScraper`. Each API/HTML terminal raise site writes an `outcome='escalated'` run with a canonical signature and truncated error; failures bypass the success dedup window.
+- `_record_run` and `_store_result` live on `BaseScraper`. Each API/HTML terminal raise site writes an `outcome='escalated'` run with a canonical signature and truncated error.
 - `scrape_runs` is the per-execution log. `escalations` remains the `UNIQUE(signature)` aggregate/alarm defined by D24. API gate failures attach a raw-payload preview to the aggregate for diagnosis.
 - Existing databases gain `scrape_runs.signature` and `scrape_runs.error` automatically through the serialized incremental migration in `ScrapeDB.init_db()`.
 
-**Verification**: `verify_m24.py` — 20 offline checks covering price normalization, the Amazon equal-price regression, all six terminal raise sites, failure/success/recovery dedup behavior, historical schema migration, payload preview persistence, exception detail, and the mass-invalid denominator change.
+**Verification**: `verify_m24.py` — offline checks covering price normalization, the Amazon equal-price regression, all six terminal raise sites, per-execution logging, historical schema migration, payload preview persistence, exception detail, and the mass-invalid denominator change.
 
 ## M25 — Evidence-gated repair source-absence pre-screen
 
@@ -343,13 +344,23 @@ when explicitly needed with `python -m src.scraping.scripts.live_batch_report`.
 
 **Verification**: `verify_m27.py` — 23 offline checks covering the two observed single-record JSONL shapes, Argos gate-valid mapping, multi-line JSONL, 200/202 status envelopes, failure/auth handling, malformed/empty bodies, timeout diagnostics, one-trigger preservation, and Datasets regressions.
 
+## M28 — Run correlation keys and repaired-parser attribution
+
+- `results.run_id → scrape_runs.id` identifies the exact execution that produced every new qualified result. `scrape_runs.escalation_id → escalations.id` links every failed execution in a router fallback chain to its signature-deduplicated ticket; historical rows retain `NULL` because they cannot be backfilled safely.
+- `scrape_runs` is strictly one row per execution. The old success dedup window and its configuration key were removed so each result can have a distinct producing run.
+- HTML repair returns `CandidateSucceeded` to the scraper, preserving the promoted parser id. Repaired successes now populate `winning_parser_id`, so hit-rate ordering and pruning credit the parser's first successful scrape.
+- Both HTML parser repair and API JSON healing record the actual configured LLM in `scrape_runs.repair_model`; non-repair runs leave it `NULL`. The former `model_used` column is renamed during migration and the unused `cost` column is removed.
+- `ScrapeDB.init_db()` migrates both nullable foreign-key columns and the run-log schema before creating indexes. `clear_site()` explicitly detaches retained references even when SQLite foreign-key enforcement is disabled.
+
+**Verification**: `tests/unit/scraping/test_run_correlation.py` and `test_clear_site.py` cover fast-path, repaired, and API result links; repeated executions; router and invalid-target escalation links; legacy migration/idempotence; and FK-on/FK-off clear behavior.
+
 ## Observations from M12 Qwen Live Run (2026-07-19)
 
 Analysis of `verify_m12_qwen_output.log` (16 URLs, Tesco + Argos, Qwen 3.7 Plus):
 
 ### #2 — Most repairs need `agent_attempt_1`
 
-4 of 6 agent-repaired URLs won on `agent_attempt_1` (the second attempt), only 2 on `agent_attempt_0`. This is expected: with the default 2-node ladder (`["qwen-3.7-plus", "qwen-3.7-plus"]`), attempt 0 runs at temp 0.1 with the "first" strategy, while attempt 1 runs at temp 0.4 with thinking mode enabled and the "last" strategy (step-by-step, all prior records visible). The thinking/temperature boost carrying most wins is not a bug. The attempt index is already observable via `parser_version` / `model_used` (`agent_attempt_N`). No action needed.
+4 of 6 agent-repaired URLs won on `agent_attempt_1` (the second attempt), only 2 on `agent_attempt_0`. This is expected: with the default 2-node ladder (`["qwen-3.7-plus", "qwen-3.7-plus"]`), attempt 0 runs at temp 0.1 with the "first" strategy, while attempt 1 runs at temp 0.4 with thinking mode enabled and the "last" strategy (step-by-step, all prior records visible). The thinking/temperature boost carrying most wins is not a bug. The attempt index is observable via `ProductData.parser_version` (`agent_attempt_N`), while the actual LLM is recorded separately in `scrape_runs.repair_model`. No action needed.
 
 ### #3 — Argos never reused a stored parser
 

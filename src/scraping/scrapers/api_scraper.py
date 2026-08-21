@@ -100,8 +100,10 @@ class DirectAPIScraper(BaseScraper):
 
         if product is not None:
             latency = int((time.monotonic() - start) * 1000)
-            self._record_run(url, host, "success", self._success_path(), latency=latency)
-            self._store_result(product)
+            run_id = self._record_run(
+                url, host, "success", self._success_path(), latency=latency
+            )
+            self._store_result(product, run_id)
             return product
 
         # Gate failure -> attempt restricted JSON self-healing (M8, spec §5.14)
@@ -114,15 +116,15 @@ class DirectAPIScraper(BaseScraper):
                 self._cache_heal(json_data, mapped, healed)
                 latency = int((time.monotonic() - start) * 1000)
                 cfg = get_config()
-                self._record_run(
+                run_id = self._record_run(
                     url,
                     host,
                     "success",
                     "agent_repaired",
-                    model_used=cfg.repair_model_ladder[0],
+                    repair_model=cfg.repair_model_ladder[0],
                     latency=latency,
                 )
-                self._store_result(product)
+                self._store_result(product, run_id)
                 return product
             errors.extend(errors2)
 

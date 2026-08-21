@@ -194,7 +194,7 @@ class PerURLReport:
 
     # DB details
     attempts: int = 0
-    model_used: str = ""
+    repair_model: str = ""
 
 
 # ====================================================================
@@ -221,8 +221,8 @@ def infer_mechanisms(report: PerURLReport) -> None:
             mech.append("fast path (parser): parser list succeeded on first usable parser")
     elif report.db_path == "agent_repaired":
         mech.append("agent repair ladder TRIGGERED: Turn C (parser_gen) succeeded -&gt; promoted")
-        if report.model_used:
-            mech.append(f"  repair model: {report.model_used}")
+        if report.repair_model:
+            mech.append(f"  repair model: {report.repair_model}")
     elif report.db_path == "retried":
         mech.append("extraction retry TRIGGERED (D7): transient fetch failure -&gt; retried and succeeded")
     elif report.db_path and report.db_path.startswith("backup_"):
@@ -365,31 +365,53 @@ async def scrape_one_url(
     # -- Post-scrape: query scrape_runs and escalations --
     try:
         from src.scraping.config import get_config
-        from src.scraping.storage import EscalationStore, ScrapeDB
+        from src.scraping.storage import ScrapeDB
 
         cfg = get_config()
         db = ScrapeDB(cfg.db_path)
         db.init_db()
 
-        # Get the scrape_runs record for this URL
-        run_row = db.conn.execute(
-            "SELECT path, model_used, winning_parser_id, attempts "
-            "FROM scrape_runs WHERE url = ? ORDER BY id DESC LIMIT 1",
-            (url,),
-        ).fetchone()
+        # Qualified results carry the exact producing run id. Terminal failures
+        # carry their last attempted run id on ScrapeFailed. Invalid-target
+        # results have no ProductData/results row, so only that path falls back
+        # to the latest run for the URL.
+        if isinstance(result, ProductData):
+            run_row = db.conn.execute(
+                "SELECT s.path, s.repair_model, s.winning_parser_id, s.attempts, "
+                "e.reason AS escalation_reason, e.signature AS escalation_signature "
+                "FROM results r JOIN scrape_runs s ON s.id = r.run_id "
+                "LEFT JOIN escalations e ON e.id = s.escalation_id "
+                "WHERE r.site = ? AND r.scraped_at = ? "
+                "ORDER BY r.id DESC LIMIT 1",
+                (result.website, result.scraped_at.isoformat()),
+            ).fetchone()
+        elif isinstance(exc, ScrapeFailed) and exc.run_id is not None:
+            run_row = db.conn.execute(
+                "SELECT s.path, s.repair_model, s.winning_parser_id, s.attempts, "
+                "e.reason AS escalation_reason, e.signature AS escalation_signature "
+                "FROM scrape_runs s "
+                "LEFT JOIN escalations e ON e.id = s.escalation_id "
+                "WHERE s.id = ?",
+                (exc.run_id,),
+            ).fetchone()
+        else:
+            run_row = None
+
+        if run_row is None:
+            run_row = db.conn.execute(
+                "SELECT s.path, s.repair_model, s.winning_parser_id, s.attempts, "
+                "e.reason AS escalation_reason, e.signature AS escalation_signature "
+                "FROM scrape_runs s "
+                "LEFT JOIN escalations e ON e.id = s.escalation_id "
+                "WHERE s.url = ? ORDER BY s.id DESC LIMIT 1",
+                (url,),
+            ).fetchone()
         if run_row:
             report.db_path = run_row["path"] or ""
             report.attempts = run_row["attempts"] or 1
-            report.model_used = run_row["model_used"] or ""
-
-        # Get new escalations involving our site
-        esc_rows = EscalationStore(db).get_open()
-        for esc in esc_rows:
-            sig = esc.get("signature", "")
-            if report.site and report.site in sig:
-                report.escalation_reason = esc["reason"]
-                report.escalation_signature = sig
-                break
+            report.repair_model = run_row["repair_model"] or ""
+            report.escalation_reason = run_row["escalation_reason"] or ""
+            report.escalation_signature = run_row["escalation_signature"] or ""
 
         db.close()
     except Exception:

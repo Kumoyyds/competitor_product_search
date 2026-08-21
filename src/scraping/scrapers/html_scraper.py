@@ -93,8 +93,10 @@ class HTMLScraper(BaseScraper):
         signal = detect_invalid_page(html, status_code, self.site, phrases)
         if signal is not None:
             latency = int((time.monotonic() - start) * 1000)
-            self._record_run(url, host, "invalid_target", "invalid_target", latency=latency)
-            self._check_mass_invalid_target(host, url)
+            run_id = self._record_run(
+                url, host, "invalid_target", "invalid_target", latency=latency
+            )
+            self._check_mass_invalid_target(host, url, run_id)
             return InvalidTargetResult(
                 url=url,
                 site=self.site,
@@ -117,12 +119,12 @@ class HTMLScraper(BaseScraper):
             product, errors = validate(parsed_dict)
             if product is not None:
                 latency = int((time.monotonic() - start) * 1000)
-                self._record_run(
+                run_id = self._record_run(
                     url, host, "success", self._success_path(),
                     winning_parser_id=parser_id,
                     latency=latency,
                 )
-                self._store_result(product)
+                self._store_result(product, run_id)
                 self._on_success(html, product)
                 return product
             parser_errors.extend(errors)
@@ -130,7 +132,7 @@ class HTMLScraper(BaseScraper):
             parser_errors = ["no active parsers or none succeeded"]
 
         # Step 5: Repair ladder (M8) — imported lazily to avoid circular import
-        from ..repair.agent import run_repair_ladder
+        from ..repair.agent import CandidateSucceeded, run_repair_ladder
 
         try:
             outcome = await run_repair_ladder(
@@ -146,21 +148,25 @@ class HTMLScraper(BaseScraper):
             )
             raise failure from exc
 
-        if isinstance(outcome, ProductData):
+        if isinstance(outcome, CandidateSucceeded):
+            product = outcome.product
             latency = int((time.monotonic() - start) * 1000)
-            self._record_run(
+            run_id = self._record_run(
                 url, host, "success", "agent_repaired",
-                model_used=outcome.parser_version,
+                winning_parser_id=outcome.parser_id,
+                repair_model=outcome.repair_model,
                 latency=latency,
             )
-            self._store_result(outcome)
-            self._on_success(html, outcome)
-            return outcome
+            self._store_result(product, run_id)
+            self._on_success(html, product)
+            return product
 
         if isinstance(outcome, InvalidTargetResult):
             latency = int((time.monotonic() - start) * 1000)
-            self._record_run(url, host, "invalid_target", "invalid_target", latency=latency)
-            self._check_mass_invalid_target(host, url)
+            run_id = self._record_run(
+                url, host, "invalid_target", "invalid_target", latency=latency
+            )
+            self._check_mass_invalid_target(host, url, run_id)
             return outcome
 
         # outcome is ScrapeFailed
@@ -284,13 +290,18 @@ class HTMLScraper(BaseScraper):
     # M10 — Mass invalid_target detection
     # ------------------------------------------------------------------
 
-    def _check_mass_invalid_target(self, host: str, url: str) -> None:
+    def _check_mass_invalid_target(
+        self,
+        host: str,
+        url: str,
+        run_id: Optional[int] = None,
+    ) -> None:
         db: ScrapeDB | None = None
         try:
             cfg = get_config()
             db = ScrapeDB(cfg.db_path)
             db.init_db()
-            runs = RunStore(db, cfg.scrape_runs_dedup_window_seconds)
+            runs = RunStore(db)
             count = runs.count_invalid_targets(self.site, window_hours=24)
             total = runs.count_total_runs(self.site, window_hours=24)
 
@@ -303,7 +314,7 @@ class HTMLScraper(BaseScraper):
                     trigger = True
 
             if trigger:
-                EscalationStore(db).upsert(
+                escalation_id = EscalationStore(db).upsert(
                     signature=f"{self.site}|invalid_target_surge|",
                     reason="mass_invalid_target",
                     snapshot={
@@ -314,6 +325,8 @@ class HTMLScraper(BaseScraper):
                         "sample_url": url,
                     },
                 )
+                if run_id is not None:
+                    runs.attach_escalation([run_id], escalation_id)
                 logger.warning(
                     "mass_invalid_target: site=%s count=%d total=%d",
                     self.site, count, total,

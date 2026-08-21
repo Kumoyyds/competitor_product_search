@@ -15,6 +15,7 @@ class ScrapeFailed(Exception):
     signature: tuple[str, str, str] = ("", "", "")
     snapshot: Optional[str] = None
     errors: list[str] = field(default_factory=list)
+    run_id: Optional[int] = None
 
     def __str__(self) -> str:
         detail = ""

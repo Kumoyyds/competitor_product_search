@@ -165,16 +165,16 @@ async def run() -> None:
         html=argos_html,
         initial_errors=["hand-forced initial fail"],
     )
-    from src.scraping.models import ProductData
     from src.scraping.exceptions import ScrapeFailed
     print(f"    ladder outcome type: {type(outcome).__name__}")
-    if isinstance(outcome, ProductData):
-        print(f"    extracted title:  {outcome.title[:60]}")
-        print(f"    extracted price:  {outcome.price} {outcome.currency}")
-        print(f"    extracted brand:  {outcome.brand}")
+    if isinstance(outcome, CandidateSucceeded):
+        product = outcome.product
+        print(f"    extracted title:  {product.title[:60]}")
+        print(f"    extracted price:  {product.price} {product.currency}")
+        print(f"    extracted brand:  {product.brand}")
         check("ladder produced ProductData", True)
-        check("title extracted", outcome.title and len(outcome.title) > 5)
-        check("price extracted", outcome.price is not None)
+        check("title extracted", product.title and len(product.title) > 5)
+        check("price extracted", product.price is not None)
     elif isinstance(outcome, ScrapeFailed):
         print(f"    ScrapeFailed: {outcome}")
         print(f"    errors: {outcome.errors[-3:]}")

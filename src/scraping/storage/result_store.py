@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 from ..models.product_data import ProductData
 from .database import ScrapeDB
@@ -11,15 +11,18 @@ class ResultStore:
     def __init__(self, db: ScrapeDB):
         self._db = db
 
-    def append(self, product: ProductData) -> int:
+    def append(self, product: ProductData, run_id: Optional[int] = None) -> int:
         """Append-only write for qualified results (D24)."""
         cur = self._db.conn.execute(
-            "INSERT INTO results (url, site, scraped_at, product_data) VALUES (?, ?, ?, ?)",
+            "INSERT INTO results "
+            "(url, site, scraped_at, product_data, run_id) "
+            "VALUES (?, ?, ?, ?, ?)",
             (
                 product.url,
                 product.website,
                 product.scraped_at.isoformat(),
                 product.model_dump_json(),
+                run_id,
             ),
         )
         self._db.conn.commit()

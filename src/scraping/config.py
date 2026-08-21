@@ -96,9 +96,6 @@ class ScrapingConfig(BaseSettings):
     )
     golden_max_samples_per_page_type: int = 3
 
-    # --- dedup ---
-    scrape_runs_dedup_window_seconds: int = 3600
-
     # --- invalid target detection ---
     invalid_target_absence_threshold: int = 2
     mass_invalid_target_ratio: float = 0.3

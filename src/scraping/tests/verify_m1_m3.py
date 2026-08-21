@@ -197,11 +197,20 @@ def verify_m3() -> None:
         ps.retire(pid)
         check("Parser retire flips status", len(ps.get_active("tesco")) == 0)
 
-        # RunStore + dedup window
-        rs = RunStore(db, dedup_window_seconds=3600)
-        rs.record("https://tesco.com/p/1", "tesco.com", "tesco", "TescoScraper", "success", "fast")
-        check("Recent URL flagged as duplicate", rs.is_duplicate("https://tesco.com/p/1"))
-        check("Unseen URL NOT duplicate", not rs.is_duplicate("https://tesco.com/p/2"))
+        # RunStore is a per-execution log: repeated successes remain distinct.
+        rs = RunStore(db)
+        first_run_id = rs.record(
+            "https://tesco.com/p/1", "tesco.com", "tesco",
+            "TescoScraper", "success", "fast",
+        )
+        second_run_id = rs.record(
+            "https://tesco.com/p/1", "tesco.com", "tesco",
+            "TescoScraper", "success", "fast",
+        )
+        check(
+            "Repeated executions receive distinct run ids",
+            first_run_id != second_run_id,
+        )
 
         # ResultStore append-only
         pd = ProductData(
@@ -210,8 +219,8 @@ def verify_m3() -> None:
             title="Test", in_stock=True, price=Decimal("9.99"),
         )
         rts = ResultStore(db)
-        rts.append(pd)
-        rts.append(pd)  # append again (time series preserved, D24)
+        rts.append(pd, run_id=first_run_id)
+        rts.append(pd, run_id=second_run_id)  # append again (time series preserved, D24)
         check("Results append-only (2 rows for same URL)",
               len(rts.get_by_url("https://tesco.com/p/1")) == 2)
 

@@ -289,11 +289,11 @@ async def verify_html_failures(db_path: Path) -> None:
     )
 
 
-def verify_dedup_and_counts(db_path: Path) -> None:
+def verify_execution_log_and_counts(db_path: Path) -> None:
     from src.scraping.scrapers.base import BaseScraper
     from src.scraping.storage import RunStore, ScrapeDB
 
-    section("M24.4 - failure incidents bypass success dedup")
+    section("M24.4 - every execution remains observable")
     configure(db_path)
 
     class ProbeScraper(BaseScraper):
@@ -321,7 +321,7 @@ def verify_dedup_and_counts(db_path: Path) -> None:
     failure_rows = [row for row in recorded if row["url"] == failure_url]
     success_rows = [row for row in recorded if row["url"] == success_url]
     check("two same-window failures produce two rows", len(failure_rows) == 2)
-    check("two same-window successes produce one row", len(success_rows) == 1)
+    check("two same-window successes produce two rows", len(success_rows) == 2)
 
     recovery_url = "https://dedup.example/recovery"
     probe._record_run(
@@ -337,9 +337,9 @@ def verify_dedup_and_counts(db_path: Path) -> None:
     recovery_rows = [row for row in rows(db_path) if row["url"] == recovery_url]
     check(
         "a prior failure does not suppress the recovered success",
-        len(recovery_rows) == 2
+        len(recovery_rows) == 3
         and [row["outcome"] for row in recovery_rows]
-        == ["escalated", "success"],
+        == ["escalated", "success", "success"],
         str(recovery_rows),
     )
 
@@ -349,8 +349,8 @@ def verify_dedup_and_counts(db_path: Path) -> None:
     db.close()
     check(
         "count_total_runs includes escalated attempts",
-        total == 5,
-        f"expected 5 (3 escalated + 2 success), got {total}",
+        total == 7,
+        f"expected 7 (3 escalated + 4 success), got {total}",
     )
 
 
@@ -380,9 +380,19 @@ def verify_migration(tmp_dir: Path) -> None:
         """
     )
     conn.execute(
-        "INSERT INTO scrape_runs (url, host, site, scraper, outcome, path) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        ("https://old.example/item", "old.example", "old", "Old", "success", "fast"),
+        "INSERT INTO scrape_runs "
+        "(url, host, site, scraper, outcome, path, model_used, cost) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "https://old.example/item",
+            "old.example",
+            "old",
+            "Old",
+            "success",
+            "agent_repaired",
+            "legacy-repair-model",
+            1.25,
+        ),
     )
     conn.commit()
     conn.close()
@@ -396,13 +406,21 @@ def verify_migration(tmp_dir: Path) -> None:
         "SELECT COUNT(*) AS count FROM scrape_runs WHERE url = ?",
         ("https://old.example/item",),
     ).fetchone()["count"]
+    migrated_model = db.conn.execute(
+        "SELECT repair_model FROM scrape_runs WHERE url = ?",
+        ("https://old.example/item",),
+    ).fetchone()["repair_model"]
     indexes = {
         row["name"] for row in db.conn.execute("PRAGMA index_list(scrape_runs)")
     }
     db.close()
     check(
-        "migration adds signature and error without data loss",
-        {"signature", "error"} <= columns and surviving == 1,
+        "migration updates run schema without data loss",
+        {"signature", "error", "repair_model"} <= columns
+        and "model_used" not in columns
+        and "cost" not in columns
+        and surviving == 1
+        and migrated_model == "legacy-repair-model",
         str(columns),
     )
     check(
@@ -471,7 +489,7 @@ async def run_all(tmp_dir: Path) -> None:
     verify_normalizer_and_amazon()
     await verify_api_failures(tmp_dir / "api-failures.db")
     await verify_html_failures(tmp_dir / "html-failures.db")
-    verify_dedup_and_counts(tmp_dir / "dedup.db")
+    verify_execution_log_and_counts(tmp_dir / "execution-log.db")
     verify_migration(tmp_dir)
     await verify_snapshot_and_exception(tmp_dir / "snapshot.db")
 
