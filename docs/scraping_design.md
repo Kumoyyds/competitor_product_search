@@ -5,13 +5,14 @@ state it owns, why it is shaped that way, and where its known seams are.
 
 ## 0. How to read this document
 
-Four documents cover the scraping module. They do different jobs — pick the right one:
+Five documents cover the scraping module. They do different jobs — pick the right one:
 
 | Document | Job | Read it when |
 |---|---|---|
 | [`src/scraping/README.md`](../src/scraping/README.md) | Operator manual — install, run, add a site, config table, exit codes | You are *using* the module |
 | [`src/scraping/CLAUDE.md`](../src/scraping/CLAUDE.md) (= `AGENTS.md`) | Milestone log M1–M23, newest behavior first | You need to know *what changed and when* |
 | [`src/scraping/scraping_module_spec_v1_2.md`](../src/scraping/scraping_module_spec_v1_2.md) | The original Phase-0 spec (Chinese) with decisions **D1–D29** and their rationale | You are about to overturn a decision and need the original reasoning |
+| [`docs/scraping_storage.md`](scraping_storage.md) | Generated SQLite tables, columns, constraints, relationships, migrations, and queries | You need the exact persisted schema |
 | **This document** | Mechanism-level design reference, written from the code as it stands | You are *analyzing or evolving* the design |
 
 Two rules for this document: it describes the code as it is today (M23), and it does not
@@ -963,5 +964,6 @@ than *what a valid product looks like*.
 - [`src/scraping/README.md`](../src/scraping/README.md) — operator manual, config table, adding a site
 - [`src/scraping/CLAUDE.md`](../src/scraping/CLAUDE.md) — milestone log M1–M23
 - [`src/scraping/scraping_module_spec_v1_2.md`](../src/scraping/scraping_module_spec_v1_2.md) — original spec, decisions D1–D29
+- [`docs/scraping_storage.md`](scraping_storage.md) — generated SQLite schema and migration reference
 - [`src/scraping/tests/README.md`](../src/scraping/tests/README.md) — verification inventory
 - [`docs/architecture.md`](architecture.md) — project-level module map

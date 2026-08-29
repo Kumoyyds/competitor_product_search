@@ -29,17 +29,15 @@ Each candidate carries a `LayerTrace` showing exactly where the decision happene
 ### Batch mode (full input file)
 
 ```powershell
-# 1. activate venv & install deps (first run only)
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+# 1. create the Python 3.12 environment and install locked deps (first run)
+uv sync --group dev --group notebook
 
 # 2. set API keys in .env at repo root
 #    DEEPSEEK_KEY=... or QWEN_KEY=..., depending on llm.model
 #    SERPER_KEY=...
 
 # 3. run with explicit per-run arguments
-python -m src.search.batch --input input/products.xlsx --sku-col product_name `
+uv run python -m src.search.batch --input input/products.xlsx --sku-col product_name `
     --web-col web --country-col country --output output/results.xlsx
 ```
 
@@ -71,7 +69,7 @@ asyncio.run(demo())
 ### Validation (budget-capped sanity check)
 
 ```powershell
-python scripts/validate_search.py --sample 20 --budget 50
+uv run python scripts/validate_search.py --sample 20 --budget 50
 ```
 
 Stratified sample from `src/0_Data/tesco_algo.xlsx`, capped at 50 Serper calls. Writes `output/validation_report.xlsx` + prints per-layer verdict mix and agreement-rate vs the legacy URL column.
@@ -215,7 +213,7 @@ Per-run job settings are passed directly to `match_product_batch()` or its CLI; 
 ### Validating after a maintenance edit
 
 ```powershell
-python -m pytest
+uv run pytest
 ```
 Tests skip cleanly if a referenced brand was removed from `brand.xlsx` — so brand-list edits won't break the suite.
 
@@ -257,6 +255,12 @@ Key: `──→` = imports/calls. `graph.py` wires the 5 layers via LangGraph co
 
 ---
 
+## Storage
+
+Search run/task tracing is stored in `search.db` by default. See [Search storage reference](../../docs/search_storage.md) for the authoritative column definitions, constraints, relationships, JSON shapes, views, compatibility behavior, and example queries. The generated schema regions are rebuilt from `db.py`; do not edit them by hand.
+
+---
+
 ## File map (quick)
 
 | Path | Purpose |
@@ -274,4 +278,4 @@ Key: `──→` = imports/calls. `graph.py` wires the 5 layers via LangGraph co
 | [search_link_algorithm_spec.md](search_link_algorithm_spec.md) | Full design rationale |
 | [CLAUDE.md](CLAUDE.md) | Code-internals reference for AI assistants / developers |
 
-Unit tests live at [tests/unit/search/](../../tests/unit/search/). Run `python -m pytest` for the default offline, zero-cost suite. Use `python -m pytest -m live` only when API-backed tests are intended; they require keys and may incur cost.
+Unit tests live at [tests/unit/search/](../../tests/unit/search/). Run `uv run pytest` for the default offline, zero-cost suite. Use `uv run pytest -m live` only when API-backed tests are intended; they require keys and may incur cost.

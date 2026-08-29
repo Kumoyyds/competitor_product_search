@@ -33,7 +33,7 @@ search  →  domain_filter  →  base_match  →  distinguishing  →  aggregate
 | **Pipeline config** | [maintain/search_config.yaml](maintain/search_config.yaml) | Thresholds, domain map, unit conversions, LLM model. **Edit for tuning, not per-run.** |
 | **LLM router config** | [maintain/llm_router_config.yaml](maintain/llm_router_config.yaml) | Keyword → `(base_url, key_name)` table. Switching LLM vendor/model is a single-line edit to `llm.model` above; add a vendor entry here only when introducing a brand-new vendor. |
 
-Per-run settings are arguments to `match_product()` / `match_product_batch()` or flags to `python -m src.search.batch`. There is no per-run YAML. Pipeline internals read `maintain/search_config.yaml` via `config.py`.
+Per-run settings are arguments to `match_product()` / `match_product_batch()` or flags to `uv run python -m src.search.batch`. There is no per-run YAML. Pipeline internals read `maintain/search_config.yaml` via `config.py`.
 
 ## File map
 
@@ -87,19 +87,19 @@ Per-run settings are arguments to `match_product()` / `match_product_batch()` or
 
 End-to-end batch:
 ```
-python -m src.search.batch --input input/products.xlsx --sku-col product_name \
+uv run python -m src.search.batch --input input/products.xlsx --sku-col product_name \
     --web-col web --country-col country --output output/results.xlsx
 ```
 The input path is passed unchanged. Blank website/country cells become row-level errors without stopping the batch. Omit `--output` when calling the Python API to return the enriched DataFrame without writing Excel.
 
 Unit tests (offline, mocks Serper + LLM — zero API cost):
 ```
-python -m pytest tests/unit/search/ -v
+uv run pytest tests/unit/search/ -v
 ```
 
 Budget-capped validation against `src/0_Data/tesco_algo.xlsx`:
 ```
-python scripts/validate_search.py --sample 20 --budget 50
+uv run python scripts/validate_search.py --sample 20 --budget 50
 ```
 Writes `output/validation_report.xlsx`. Prints numeric pre-pass, then runs pipeline within the call budget, then per-layer verdict counts and agreement vs legacy `url_search_1`.
 
@@ -110,7 +110,7 @@ Required env vars in `.env` at repo root:
 - `SERPER_KEY` — google.serper.dev key, only needed if Serper is in the provider chain
 - `DEEPSEEK_KEY` — only needed if `llm.model` is switched to route to `deepseek`
 
-Python 3.12. Deps beyond the old code: `quantulum3`, `rapidfuzz`, `langgraph`, `aiohttp` — all in `requirements.txt`.
+Python 3.12. Direct dependencies are declared in the root `pyproject.toml`, with resolved versions locked in `uv.lock`.
 
 ## Adding things
 

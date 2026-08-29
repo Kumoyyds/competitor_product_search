@@ -43,7 +43,7 @@ Sections to write:
 3. **Architecture** — ASCII diagram of modules and data flow
 4. **Modules** — table: module path / what it does
 5. **Input & Output** — one line each
-6. **Setup & Run** — commands from pyproject.toml / requirements.txt / Makefile
+6. **Setup & Run** — commands from `pyproject.toml` / `uv.lock` / Makefile
 7. **Files to maintain** — same as above (omit if none)
 
 ---

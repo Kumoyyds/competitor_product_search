@@ -14,23 +14,21 @@ The two modules are independent (no cross-imports); the `orchestrator` module th
 ## Setup & Run
 
 ```bash
-# Use Python 3.12 (not 3.14 — many dependencies lack pre-built wheels for 3.14)
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+# Install uv first; .python-version pins Python 3.12 and uv manages .venv
+uv sync --group dev --group notebook
 
 # Copy and fill the keys you need (see "Config files" below)
 cp .env.sample .env
 
-# Enable the CLAUDE.md <-> AGENTS.md auto-sync hook (once per clone)
+# Enable documentation sync/generation and encoding checks (once per clone)
 git config core.hooksPath .githooks
 
 # search — run a batch (all per-run settings are flags)
-python -m src.search.batch --input input/products.xlsx --sku-col product_name \
+uv run python -m src.search.batch --input input/products.xlsx --sku-col product_name \
     --web-col web --country-col country --output output/results.xlsx
 
 # scraping — cold start a new site
-python -m src.scraping.coldstart --site tesco --input src/scraping/data/cold_start/tesco.xlsx
+uv run python -m src.scraping.coldstart --site tesco --input src/scraping/data/cold_start/tesco.xlsx
 ```
 
 Both modules resolve paths relative to the repo root — run them from there.
@@ -137,10 +135,11 @@ Key files:
 - Modules under `src/` may carry their own `CLAUDE.md` with module-specific details; every `CLAUDE.md` has a byte-identical `AGENTS.md` sibling maintained by the pre-commit hook (`scripts/sync_agent_docs.py`), so edit either file freely — the other follows
 - Imports within a module use relative paths (e.g., `from .providers import make_provider_chain`)
 - Cross-module imports use absolute paths (e.g., `from src.search.pipeline import match_product`)
-- Dependencies managed via `requirements.txt` (pip freeze format)
+- Direct dependencies are declared in `pyproject.toml`; `uv.lock` locks the resolved environment. Add dependencies with `uv add` (use `--group dev` or `--group notebook` when appropriate).
 - **SQLite database files use the `.db` suffix** — never `.sqlite` or `.sqlite3`. Name each database after its module (`scraping.db`, `search.db`); SQLite creates WAL/SHM sidecars as `<name>.db-wal` / `<name>.db-shm`. When adding a database, decide whether it is tracked or ignored in `.gitignore`.
+- **Every column in the search or scraping DDL needs a `--` meaning comment** on its definition line or immediately above it. Tables, indexes, and views also need a preceding purpose comment. `scripts/gen_storage_docs.py` builds `docs/search_storage.md` and `docs/scraping_storage.md` from an in-memory SQLite database, and the pre-commit hook rejects undocumented columns or stale generated regions.
 - **New search providers** must include a `_COUNTRY_TO_*` mapping (see `SerperProvider._COUNTRY_TO_GL` and `DuckDuckGoProvider._COUNTRY_TO_REGION`) to translate general country-code arguments to the format the API expects
-- **New scraping sites** are registered in `hosts.yaml` / `sites.yaml` and brought online via `python -m src.scraping.coldstart`; new LLM vendors go in `src/scraping/providers.py`
+- **New scraping sites** are registered in `hosts.yaml` / `sites.yaml` and brought online via `uv run python -m src.scraping.coldstart`; new LLM vendors go in `src/scraping/providers.py`
 
 ## Documentation Discipline (mandatory)
 
@@ -158,6 +157,6 @@ All text files (markdown, Python, YAML, …) are **UTF-8 without BOM**.
 - Read and write every file as UTF-8. Never transcode, convert, or "repair" a file's encoding.
 - When editing a file that contains non-ASCII characters (`— – → § ✓ ├ └ │` etc.), preserve the existing bytes exactly. Do not open/re-save through another codepage.
 - The classic failure: opening a UTF-8 file and re-saving it as GBK/CP936 (Chinese-Windows default) mangles every non-ASCII char into mojibake and prepends a UTF-8 BOM. Corrupted files show rare CJK glyphs where ASCII symbols should be, a leading BOM, or the Unicode replacement character (U+FFFD).
-- If a file you are about to edit looks mojibake'd (or `python3 scripts/check_encoding.py --all` flags it), STOP and report it to the user — do not edit around it or silently rewrite the file. The authoritative mojibake marker list lives in `scripts/check_encoding.py` (`MOJIBAKE`).
+- If a file you are about to edit looks mojibake'd (or `uv run python scripts/check_encoding.py --all` flags it), STOP and report it to the user — do not edit around it or silently rewrite the file. The authoritative mojibake marker list lives in `scripts/check_encoding.py` (`MOJIBAKE`).
 - Never add a UTF-8 BOM (`EF BB BF`).
 - The pre-commit hook (`scripts/check_encoding.py`) rejects staged files with a BOM, invalid UTF-8, or mojibake. If your commit is blocked, fix the file's encoding — do not bypass the hook.

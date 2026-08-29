@@ -87,9 +87,7 @@ Under the hood:
 From the repo root:
 
 ```bash
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1     # or source .venv/bin/activate on POSIX
-pip install -r requirements.txt
+uv sync --group dev --group notebook
 ```
 
 ### 2. Set API keys
@@ -130,9 +128,9 @@ If you want to add a site that isn't yet in the parser table:
 # 1. Add the site's hostnames to hosts.yaml
 # 2. Register an HTMLScraper subclass in scrapers/sites/
 # 3. Run cold start with a representative Excel input
-python -m src.scraping.coldstart --site newsite --input newsite.xlsx
+uv run python -m src.scraping.coldstart --site newsite --input newsite.xlsx
 # Ignore reusable non-stale golden snapshots when a fresh fetch is required:
-python -m src.scraping.coldstart --site newsite --input newsite.xlsx --force-fetch
+uv run python -m src.scraping.coldstart --site newsite --input newsite.xlsx --force-fetch
 ```
 
 The first row must contain `page_type` and `url` (case-insensitive; extra columns are ignored). Legal page types are `standard`, `discounted`, `out_of_stock`, `membership`, and `multipack`. Multiple rows per type are useful as spares: once a bucket reaches its cap, remaining rows are skipped without another prompt.
@@ -214,7 +212,7 @@ src/scraping/
    - `available: false` **vetoes** the type. `membership: {available: false}` is the Argos case: "Collect N Nectar points" accrues rewards, it is not a gated member price, and without the veto the promotion detector classifies those pages as `membership` and mis-assigns `membership_price`. An unavailable type can also never be mandatory, and cold-start input rows declaring it are rejected up front.
    - `cold_start_required` overrides the global `cold_start_page_require_mandatory` fallback for this site only. Set it `false` for a type the site genuinely never shows.
    - `hints` lists the site's loyalty-program words (Tesco: `clubcard`) for membership detection.
-   - Undeclared site, undeclared type, or omitted key → falls back to `config.py`. Verify with `python -m src.scraping.tests.verify_m23`.
+   - Undeclared site, undeclared type, or omitted key → falls back to `config.py`. Verify with `uv run python -m src.scraping.tests.verify_m23`.
 
 3. **Register a scraper** in `scrapers/sites/waitrose.py`:
    ```python
@@ -235,7 +233,7 @@ src/scraping/
 
 5. **Cold start** to seed the first parser + goldens:
    ```bash
-   python -m src.scraping.coldstart --site waitrose --input waitrose.xlsx
+   uv run python -m src.scraping.coldstart --site waitrose --input waitrose.xlsx
    ```
    The workbook's required page types come from the profile you wrote in step 2, so do that first — otherwise coverage validation asks for types the site does not have.
 
@@ -280,48 +278,7 @@ If a site already has a primary scraper, add a backup with `order=2` — the rou
 
 ## Storage
 
-Single SQLite database at `scraping.db` (path configurable via `SCRAPING_DB_PATH` env var). Six tables:
-
-| Table | Purpose |
-|-------|---------|
-| `parsers` | Parser code text + status (active/retired) |
-| `golden_samples` | HTML snapshots + expected ProductData for promote gate |
-| `scrape_runs` | Per-execution log for success/failure/invalid_target; repair paths set `repair_model`, failed rows carry `signature` + `error`, and `escalation_id` links to the aggregate ticket |
-| `results` | Append-only history of qualified ProductData outputs; `run_id` links to the producing execution |
-| `escalations` | Failure tickets with signature dedup (4 reason types) |
-| `invalid_target_phrases` | Learned phrases from Agent backfill for future invalid-target detection |
-
-Common queries:
-
-```sql
--- Price history for a URL
-SELECT scraped_at, product_data FROM results WHERE url = ? ORDER BY scraped_at DESC;
-
--- Qualified result → exact producing run and parser
-SELECT r.id, r.scraped_at, s.path, s.scraper, s.winning_parser_id, p.version
-FROM results r
-LEFT JOIN scrape_runs s ON s.id = r.run_id
-LEFT JOIN parsers p ON p.id = s.winning_parser_id
-WHERE r.url = ? ORDER BY r.id DESC;
-
--- Parser hit rates for a site
-SELECT winning_parser_id, COUNT(*) hits FROM scrape_runs
-WHERE site = ? AND outcome = 'success' GROUP BY winning_parser_id ORDER BY hits DESC;
-
--- Open escalations needing human attention
-SELECT * FROM escalations WHERE status = 'open' ORDER BY affected_count DESC;
-
--- Aggregate ticket → every affected execution/URL
-SELECT s.id, s.url, s.scraper, s.outcome, s.path, s.signature, s.error
-FROM scrape_runs s
-WHERE s.escalation_id = ? ORDER BY s.id DESC;
-
--- Recent diagnosable Amazon attempts, including failures
-SELECT scraped_at, site, scraper, outcome, path, signature, substr(error,1,120)
-FROM scrape_runs WHERE site='amazon' ORDER BY scraped_at DESC LIMIT 10;
-```
-
-`init_db()` automatically adds the M24 `scrape_runs.signature` / `scrape_runs.error` columns and the M28 `results.run_id` / `scrape_runs.escalation_id` columns and indexes to existing databases. It also renames the former `scrape_runs.model_used` column to `repair_model` and removes the unused `cost` column. No manual migration or data rewrite is required. Historical rows keep `NULL` correlation keys because their exact relationships cannot be reconstructed safely.
+The module uses a single SQLite database at `scraping.db` by default (override with `SCRAPING_DB_PATH`). See [Scraping storage reference](../../docs/scraping_storage.md) for the authoritative six-table schema, constraints, relationships, automatic compatibility migrations, and reusable queries. Its generated regions are rebuilt from `storage/database.py`; do not edit them by hand.
 
 ## Configuration
 
@@ -397,8 +354,8 @@ Maintain it whenever you onboard a site (see [Adding a new site](#adding-a-new-s
 Lowering the cap never deletes automatically. Preview and apply an age/provenance-aware shrink explicitly:
 
 ```bash
-python -m src.scraping.scripts.prune_goldens --site tesco
-python -m src.scraping.scripts.prune_goldens --site tesco --apply
+uv run python -m src.scraping.scripts.prune_goldens --site tesco
+uv run python -m src.scraping.scripts.prune_goldens --site tesco --apply
 ```
 
 The default is a dry run. Stale samples are evicted first, then oldest auto-seeded samples, then oldest human-confirmed cold-start samples. The configured mandatory minimum is never crossed.
@@ -408,13 +365,13 @@ The default is a dry run. Stale samples are evicted first, then oldest auto-seed
 The default test command is offline and does not use paid APIs:
 
 ```bash
-python -m pytest
+uv run pytest
 ```
 
 API-backed tests are opt-in and require the corresponding keys:
 
 ```bash
-python -m pytest -m live
+uv run pytest -m live
 ```
 
 New tests belong under `tests/unit/scraping/` and use pytest markers. The
@@ -425,7 +382,7 @@ logs are immutable audit evidence under [tests/logs/archive/](tests/logs/archive
 The former M12 live batch is now an operational, paid report command:
 
 ```bash
-python -m src.scraping.scripts.live_batch_report
+uv run python -m src.scraping.scripts.live_batch_report
 ```
 
 It writes `output/live_batch_report.log` and may call both BrightData and the

@@ -22,6 +22,217 @@ SCHEMA_VERSION = "2"
 _DB_UNSET = object()
 
 
+_DDL = """
+-- Batch or standalone search executions and their reproducibility metadata.
+CREATE TABLE IF NOT EXISTS runs (
+    run_id TEXT PRIMARY KEY, -- UUID identifying one top-level search execution
+    started_at TEXT NOT NULL, -- UTC ISO timestamp when the run started
+    finished_at TEXT, -- UTC ISO timestamp when the run reached a terminal state
+    status TEXT NOT NULL, -- Run state: running, completed, failed, or interrupted
+    mode TEXT, -- Invocation mode: batch or single
+    input_file TEXT, -- Batch input workbook path; NULL for standalone runs
+    input_sku_col TEXT, -- Batch column containing product names
+    output_file TEXT, -- Requested batch output workbook path
+    country TEXT, -- Run-level country when one value applies to all tasks
+    website TEXT, -- Run-level retailer when one value applies to all tasks
+    provider_chain TEXT, -- Comma-separated search-provider names in fallback order
+    llm_model TEXT, -- Configured distinguishing-layer model identifier
+    concurrency INTEGER, -- Maximum concurrent batch tasks
+    serper_max_calls INTEGER, -- Optional Serper call budget for the run
+    total_tasks INTEGER, -- Expected task count declared when the run starts
+    matched_count INTEGER, -- Match task count aggregated when the run finishes
+    no_match_count INTEGER, -- No-match task count aggregated when the run finishes
+    error_count INTEGER, -- Error task count aggregated when the run finishes
+    provider_calls TEXT, -- JSON object mapping provider name to call count
+    job_config TEXT, -- JSON snapshot of invocation-specific arguments
+    pipeline_config TEXT, -- JSON snapshot of the search pipeline configuration
+    git_commit TEXT, -- Git commit hash captured for reproducibility
+    error_message TEXT -- Run-level terminal error message, when any
+);
+
+-- One product-matching task within a run, including its final outcome.
+CREATE TABLE IF NOT EXISTS tasks (
+    task_id INTEGER PRIMARY KEY AUTOINCREMENT, -- Surrogate task identifier; parent of attempts
+    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE, -- Owning run
+    row_index INTEGER NOT NULL, -- Zero-based input-row identity within the run
+    product_name TEXT NOT NULL, -- Source SKU or product name searched for
+    product_key TEXT NOT NULL, -- MD5 of the normalized product name for cross-run lookup
+    brand_input TEXT, -- Optional caller-supplied brand hint
+    website TEXT, -- Retailer key used by this task
+    country TEXT, -- Country code used by search providers for this task
+    status TEXT NOT NULL, -- Recorder status: ok or error
+    verdict TEXT NOT NULL, -- Final task verdict: match, no_match, or error
+    failure_kind TEXT NOT NULL, -- Derived closed outcome category documented below
+    matched_url TEXT, -- Selected product URL for match verdicts
+    matched_title TEXT, -- Selected candidate title for match verdicts
+    reason TEXT, -- Human-readable final decision or error rationale
+    layer_trace TEXT, -- JSON object with domain, brand, numeric, and distinguishing verdicts
+    candidates_considered INTEGER, -- Candidate count reported by the final aggregation
+    final_provider TEXT, -- Provider whose attempt supplied the final result
+    attempt_count INTEGER, -- Number of provider attempts recorded for the task
+    error_type TEXT, -- Python exception class for task-level failures
+    error_message TEXT, -- Exception message for task-level failures
+    traceback TEXT, -- Full task-level Python traceback
+    started_at TEXT, -- UTC ISO timestamp when task recording began
+    finished_at TEXT, -- UTC ISO timestamp when task recording ended
+    duration_ms INTEGER, -- End-to-end task duration in milliseconds
+    UNIQUE(run_id, row_index)
+);
+
+-- One provider attempt within a task's ordered fallback chain.
+CREATE TABLE IF NOT EXISTS attempts (
+    attempt_id INTEGER PRIMARY KEY AUTOINCREMENT, -- Surrogate attempt identifier; parent of trace leaves
+    task_id INTEGER NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE, -- Owning task
+    run_id TEXT NOT NULL, -- Denormalized run identifier for direct filtering; no declared FK
+    attempt_no INTEGER NOT NULL, -- One-based provider-attempt sequence within the task
+    provider TEXT NOT NULL, -- Search provider name used by this attempt
+    verdict TEXT, -- Attempt result: match, no_match, or error
+    reason TEXT, -- Attempt-level decision or failure rationale
+    candidates_found INTEGER, -- Candidate count returned across query variants
+    alive_after_domain INTEGER, -- Candidates passing the domain layer
+    alive_after_base INTEGER, -- Candidates surviving brand and numeric rules
+    budget_exhausted INTEGER, -- Boolean integer indicating provider budget exhaustion
+    query_variants TEXT, -- JSON array of query strings issued by this attempt
+    started_at TEXT, -- UTC ISO timestamp when the attempt began
+    finished_at TEXT, -- UTC ISO timestamp when the attempt ended
+    duration_ms INTEGER, -- Attempt duration in milliseconds
+    UNIQUE(task_id, attempt_no)
+);
+
+-- Ordered node-level events emitted while a provider attempt traverses the graph.
+CREATE TABLE IF NOT EXISTS node_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT, -- Surrogate node-event identifier
+    attempt_id INTEGER NOT NULL REFERENCES attempts(attempt_id) ON DELETE CASCADE, -- Owning provider attempt
+    task_id INTEGER NOT NULL, -- Denormalized task identifier for direct filtering; no declared FK
+    run_id TEXT NOT NULL, -- Denormalized run identifier for direct filtering; no declared FK
+    seq INTEGER NOT NULL, -- One-based event sequence within the attempt
+    node TEXT NOT NULL, -- Graph node name such as search, domain_filter, or aggregate
+    status TEXT NOT NULL, -- Event state: ok, warning, error, or skipped
+    error_kind TEXT, -- Open-ended structured error category emitted by the node
+    error_message TEXT, -- Node-level warning or error message
+    traceback TEXT, -- Full traceback for node exceptions when captured
+    detail TEXT, -- JSON object containing node-specific diagnostic context
+    candidates_in INTEGER, -- Candidate count entering the node
+    candidates_out INTEGER, -- Candidate count leaving the node
+    started_at TEXT, -- UTC ISO timestamp when node execution began
+    duration_ms INTEGER -- Node duration in milliseconds
+);
+
+-- Optional per-candidate snapshots from each provider attempt.
+CREATE TABLE IF NOT EXISTS candidates (
+    candidate_id INTEGER PRIMARY KEY AUTOINCREMENT, -- Surrogate candidate snapshot identifier
+    attempt_id INTEGER NOT NULL REFERENCES attempts(attempt_id) ON DELETE CASCADE, -- Owning provider attempt
+    task_id INTEGER NOT NULL, -- Denormalized task identifier for direct filtering; no declared FK
+    run_id TEXT NOT NULL, -- Denormalized run identifier for direct filtering; no declared FK
+    rank INTEGER NOT NULL, -- Zero-based candidate order after search-result deduplication
+    url TEXT, -- Normalized candidate URL
+    title TEXT, -- Search-result candidate title
+    snippet TEXT, -- Search-result candidate snippet
+    host TEXT, -- Lower-cased host parsed from the candidate URL
+    brands TEXT, -- JSON array of brand tokens extracted from the candidate
+    numerics TEXT, -- JSON object of normalized numeric attributes
+    v_domain TEXT, -- Domain-layer verdict: pass, fail, unknown, or NULL if unreached
+    v_brand TEXT, -- Brand-layer verdict: pass, fail, unknown, or NULL if unreached
+    v_numeric TEXT, -- Numeric-layer verdict: pass, fail, unknown, or NULL if unreached
+    v_distinguishing TEXT, -- LLM-layer verdict: pass, fail, unknown, or NULL if unreached
+    alive INTEGER, -- Boolean integer indicating survival after the latest reached layer
+    trace_depth INTEGER, -- Number of layers reached by this candidate
+    is_matched INTEGER, -- Boolean integer indicating the selected final candidate
+    llm_index INTEGER -- Candidate index used in the batched LLM prompt, when included
+);
+
+-- Optional distinguishing-layer LLM request, response, parse, and usage telemetry.
+CREATE TABLE IF NOT EXISTS llm_calls (
+    call_id INTEGER PRIMARY KEY AUTOINCREMENT, -- Surrogate LLM-call identifier
+    attempt_id INTEGER NOT NULL REFERENCES attempts(attempt_id) ON DELETE CASCADE, -- Owning provider attempt
+    task_id INTEGER NOT NULL, -- Denormalized task identifier for direct filtering; no declared FK
+    run_id TEXT NOT NULL, -- Denormalized run identifier for direct filtering; no declared FK
+    node TEXT, -- Graph node that made the call, normally distinguishing
+    model TEXT, -- Routed model identifier
+    base_url TEXT, -- OpenAI-compatible provider base URL
+    temperature REAL, -- Sampling temperature supplied to the model
+    timeout_s REAL, -- Request timeout in seconds
+    prompt TEXT, -- Full prompt; NULL when store_llm_payload is disabled
+    raw_response TEXT, -- Raw model response; NULL when store_llm_payload is disabled
+    parsed_match_idx INTEGER, -- Parsed candidate index selected by the model
+    parsed_reason TEXT, -- Parsed model rationale
+    status TEXT, -- Call outcome: ok, error, or parse_error
+    error_message TEXT, -- Request or response-parse error message
+    prompt_tokens INTEGER, -- Provider-reported input token count
+    completion_tokens INTEGER, -- Provider-reported output token count
+    total_tokens INTEGER, -- Provider-reported total token count
+    duration_ms INTEGER -- LLM call duration in milliseconds
+);
+
+-- Small key/value store for database-level metadata.
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY, -- Metadata key, currently schema_version
+    value TEXT NOT NULL -- Metadata value stored as text
+);
+"""
+
+_INDEX_DDL = """
+-- Supports loading all tasks for a run.
+CREATE INDEX IF NOT EXISTS idx_tasks_run ON tasks(run_id);
+-- Supports per-run verdict aggregation.
+CREATE INDEX IF NOT EXISTS idx_tasks_verdict ON tasks(run_id, verdict);
+-- Supports per-run failure-category analysis.
+CREATE INDEX IF NOT EXISTS idx_tasks_failure ON tasks(run_id, failure_kind);
+-- Supports finding the same normalized product across runs.
+CREATE INDEX IF NOT EXISTS idx_tasks_key ON tasks(product_key);
+-- Supports loading provider attempts for a task.
+CREATE INDEX IF NOT EXISTS idx_attempts_task ON attempts(task_id);
+-- Supports loading ordered node events for an attempt.
+CREATE INDEX IF NOT EXISTS idx_events_attempt ON node_events(attempt_id);
+-- Supports per-run warning and error analysis by node.
+CREATE INDEX IF NOT EXISTS idx_events_err ON node_events(run_id, status, node);
+-- Supports loading candidate snapshots for an attempt.
+CREATE INDEX IF NOT EXISTS idx_cand_attempt ON candidates(attempt_id);
+-- Supports finding repeated candidate URLs within a run.
+CREATE INDEX IF NOT EXISTS idx_cand_url ON candidates(run_id, url);
+-- Supports loading LLM calls for an attempt.
+CREATE INDEX IF NOT EXISTS idx_llm_attempt ON llm_calls(attempt_id);
+"""
+
+_VIEW_DDL = """
+-- Warning and error events enriched with task identity and provider.
+CREATE VIEW IF NOT EXISTS v_errors AS
+SELECT e.*, t.row_index, t.product_name, a.provider
+FROM node_events e
+JOIN tasks t ON t.task_id = e.task_id
+JOIN attempts a ON a.attempt_id = e.attempt_id
+WHERE e.status IN ('error', 'warning');
+
+-- Task outcomes enriched with the most useful owning-run fields.
+CREATE VIEW IF NOT EXISTS v_task_result AS
+SELECT t.*, r.started_at AS run_started_at,
+       r.finished_at AS run_finished_at, r.status AS run_status,
+       r.input_file, r.output_file, r.provider_chain, r.llm_model
+FROM tasks t JOIN runs r ON r.run_id = t.run_id;
+
+-- Per-run, per-node candidate funnel counts and average duration.
+CREATE VIEW IF NOT EXISTS v_funnel AS
+SELECT run_id, node, COUNT(*) AS event_count,
+       SUM(candidates_in) AS candidates_in,
+       SUM(candidates_out) AS candidates_out,
+       AVG(duration_ms) AS avg_duration_ms
+FROM node_events
+WHERE status != 'warning'
+GROUP BY run_id, node;
+
+-- One-row-per-run summary with computed duration and failure distribution.
+CREATE VIEW IF NOT EXISTS v_run_summary AS
+SELECT r.*,
+       CAST((julianday(r.finished_at) - julianday(r.started_at))
+            * 86400000 AS INTEGER) AS duration_ms,
+       COALESCE((SELECT json_group_object(failure_kind, n)
+         FROM (SELECT failure_kind, COUNT(*) AS n
+               FROM tasks t2 WHERE t2.run_id = r.run_id
+               GROUP BY failure_kind)), '{}') AS failure_distribution
+FROM runs r;
+"""
+
+
 class SearchDB:
     """SQLite persistence for batch runs and task-level execution traces."""
 
@@ -59,192 +270,9 @@ class SearchDB:
         with self._lock:
             conn = self._connect()
             try:
-                conn.executescript(
-                    """
-                    CREATE TABLE IF NOT EXISTS runs (
-                        run_id TEXT PRIMARY KEY,
-                        started_at TEXT NOT NULL,
-                        finished_at TEXT,
-                        status TEXT NOT NULL,
-                        mode TEXT,
-                        input_file TEXT,
-                        input_sku_col TEXT,
-                        output_file TEXT,
-                        country TEXT,
-                        website TEXT,
-                        provider_chain TEXT,
-                        llm_model TEXT,
-                        concurrency INTEGER,
-                        serper_max_calls INTEGER,
-                        total_tasks INTEGER,
-                        matched_count INTEGER,
-                        no_match_count INTEGER,
-                        error_count INTEGER,
-                        provider_calls TEXT,
-                        job_config TEXT,
-                        pipeline_config TEXT,
-                        git_commit TEXT,
-                        error_message TEXT
-                    );
-
-                    CREATE TABLE IF NOT EXISTS tasks (
-                        task_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-                        row_index INTEGER NOT NULL,
-                        product_name TEXT NOT NULL,
-                        product_key TEXT NOT NULL,
-                        brand_input TEXT,
-                        website TEXT,
-                        country TEXT,
-                        status TEXT NOT NULL,
-                        verdict TEXT NOT NULL,
-                        failure_kind TEXT NOT NULL,
-                        matched_url TEXT,
-                        matched_title TEXT,
-                        reason TEXT,
-                        layer_trace TEXT,
-                        candidates_considered INTEGER,
-                        final_provider TEXT,
-                        attempt_count INTEGER,
-                        error_type TEXT,
-                        error_message TEXT,
-                        traceback TEXT,
-                        started_at TEXT,
-                        finished_at TEXT,
-                        duration_ms INTEGER,
-                        UNIQUE(run_id, row_index)
-                    );
-
-                    CREATE TABLE IF NOT EXISTS attempts (
-                        attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        task_id INTEGER NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
-                        run_id TEXT NOT NULL,
-                        attempt_no INTEGER NOT NULL,
-                        provider TEXT NOT NULL,
-                        verdict TEXT,
-                        reason TEXT,
-                        candidates_found INTEGER,
-                        alive_after_domain INTEGER,
-                        alive_after_base INTEGER,
-                        budget_exhausted INTEGER,
-                        query_variants TEXT,
-                        started_at TEXT,
-                        finished_at TEXT,
-                        duration_ms INTEGER,
-                        UNIQUE(task_id, attempt_no)
-                    );
-
-                    CREATE TABLE IF NOT EXISTS node_events (
-                        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        attempt_id INTEGER NOT NULL REFERENCES attempts(attempt_id) ON DELETE CASCADE,
-                        task_id INTEGER NOT NULL,
-                        run_id TEXT NOT NULL,
-                        seq INTEGER NOT NULL,
-                        node TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        error_kind TEXT,
-                        error_message TEXT,
-                        traceback TEXT,
-                        detail TEXT,
-                        candidates_in INTEGER,
-                        candidates_out INTEGER,
-                        started_at TEXT,
-                        duration_ms INTEGER
-                    );
-
-                    CREATE TABLE IF NOT EXISTS candidates (
-                        candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        attempt_id INTEGER NOT NULL REFERENCES attempts(attempt_id) ON DELETE CASCADE,
-                        task_id INTEGER NOT NULL,
-                        run_id TEXT NOT NULL,
-                        rank INTEGER NOT NULL,
-                        url TEXT,
-                        title TEXT,
-                        snippet TEXT,
-                        host TEXT,
-                        brands TEXT,
-                        numerics TEXT,
-                        v_domain TEXT,
-                        v_brand TEXT,
-                        v_numeric TEXT,
-                        v_distinguishing TEXT,
-                        alive INTEGER,
-                        trace_depth INTEGER,
-                        is_matched INTEGER,
-                        llm_index INTEGER
-                    );
-
-                    CREATE TABLE IF NOT EXISTS llm_calls (
-                        call_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        attempt_id INTEGER NOT NULL REFERENCES attempts(attempt_id) ON DELETE CASCADE,
-                        task_id INTEGER NOT NULL,
-                        run_id TEXT NOT NULL,
-                        node TEXT,
-                        model TEXT,
-                        base_url TEXT,
-                        temperature REAL,
-                        timeout_s REAL,
-                        prompt TEXT,
-                        raw_response TEXT,
-                        parsed_match_idx INTEGER,
-                        parsed_reason TEXT,
-                        status TEXT,
-                        error_message TEXT,
-                        prompt_tokens INTEGER,
-                        completion_tokens INTEGER,
-                        total_tokens INTEGER,
-                        duration_ms INTEGER
-                    );
-
-                    CREATE TABLE IF NOT EXISTS meta (
-                        key TEXT PRIMARY KEY,
-                        value TEXT NOT NULL
-                    );
-
-                    CREATE INDEX IF NOT EXISTS idx_tasks_run ON tasks(run_id);
-                    CREATE INDEX IF NOT EXISTS idx_tasks_verdict ON tasks(run_id, verdict);
-                    CREATE INDEX IF NOT EXISTS idx_tasks_failure ON tasks(run_id, failure_kind);
-                    CREATE INDEX IF NOT EXISTS idx_tasks_key ON tasks(product_key);
-                    CREATE INDEX IF NOT EXISTS idx_attempts_task ON attempts(task_id);
-                    CREATE INDEX IF NOT EXISTS idx_events_attempt ON node_events(attempt_id);
-                    CREATE INDEX IF NOT EXISTS idx_events_err ON node_events(run_id, status, node);
-                    CREATE INDEX IF NOT EXISTS idx_cand_attempt ON candidates(attempt_id);
-                    CREATE INDEX IF NOT EXISTS idx_cand_url ON candidates(run_id, url);
-                    CREATE INDEX IF NOT EXISTS idx_llm_attempt ON llm_calls(attempt_id);
-
-                    CREATE VIEW IF NOT EXISTS v_errors AS
-                    SELECT e.*, t.row_index, t.product_name, a.provider
-                    FROM node_events e
-                    JOIN tasks t ON t.task_id = e.task_id
-                    JOIN attempts a ON a.attempt_id = e.attempt_id
-                    WHERE e.status IN ('error', 'warning');
-
-                    CREATE VIEW IF NOT EXISTS v_task_result AS
-                    SELECT t.*, r.started_at AS run_started_at,
-                           r.finished_at AS run_finished_at, r.status AS run_status,
-                           r.input_file, r.output_file, r.provider_chain, r.llm_model
-                    FROM tasks t JOIN runs r ON r.run_id = t.run_id;
-
-                    CREATE VIEW IF NOT EXISTS v_funnel AS
-                    SELECT run_id, node, COUNT(*) AS event_count,
-                           SUM(candidates_in) AS candidates_in,
-                           SUM(candidates_out) AS candidates_out,
-                           AVG(duration_ms) AS avg_duration_ms
-                    FROM node_events
-                    WHERE status != 'warning'
-                    GROUP BY run_id, node;
-
-                    CREATE VIEW IF NOT EXISTS v_run_summary AS
-                    SELECT r.*,
-                           CAST((julianday(r.finished_at) - julianday(r.started_at))
-                                * 86400000 AS INTEGER) AS duration_ms,
-                           COALESCE((SELECT json_group_object(failure_kind, n)
-                             FROM (SELECT failure_kind, COUNT(*) AS n
-                                   FROM tasks t2 WHERE t2.run_id = r.run_id
-                                   GROUP BY failure_kind)), '{}') AS failure_distribution
-                    FROM runs r;
-                    """
-                )
+                conn.executescript(_DDL)
+                conn.executescript(_INDEX_DDL)
+                conn.executescript(_VIEW_DDL)
                 run_columns = {
                     row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()
                 }

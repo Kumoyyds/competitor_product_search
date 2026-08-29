@@ -10,13 +10,13 @@ From the repository root:
 
 ```bash
 # Default: every offline, free pytest test
-python -m pytest
+uv run pytest
 
 # Explicitly run tests that call real BrightData or LLM APIs
-python -m pytest -m live
+uv run pytest -m live
 
 # Include only long-running subprocess/I/O tests
-python -m pytest -m slow
+uv run pytest -m slow
 ```
 
 Tests that can incur API charges must use `@pytest.mark.live`; the default
@@ -29,7 +29,7 @@ The existing scripts share `_harness.py` for reporting and temporary-resource
 cleanup. Run one from the repository root when auditing a historical milestone:
 
 ```bash
-python -m src.scraping.tests.verify_m13
+uv run python -m src.scraping.tests.verify_m13
 ```
 
 Do not add a new `verify_mN.py` or capture a new committed output log. When all
@@ -38,7 +38,7 @@ checks from a script have equivalent pytest coverage, delete that script.
 The former M12 live batch utility is now an operational report tool:
 
 ```bash
-python -m src.scraping.scripts.live_batch_report
+uv run python -m src.scraping.scripts.live_batch_report
 ```
 
 It requires a BrightData key, may also call the configured LLM, incurs cost,

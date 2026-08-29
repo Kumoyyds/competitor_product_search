@@ -17,3 +17,11 @@ tesco:
     out_of_stock: {available: true,  cold_start_required: true}
     multipack:    {available: true,  cold_start_required: false}
     membership:   {available: true,  cold_start_required: true, hints: ["clubcard"]}
+
+joybuy.co.uk:
+  page_types:
+    standard:     {available: true,  cold_start_required: true}
+    discounted:   {available: true,  cold_start_required: true}
+    out_of_stock: {available: true,  cold_start_required: false}
+    multipack:    {available: true,  cold_start_required: false}
+    membership:   {available: false,  cold_start_required: false, hints: [""]}

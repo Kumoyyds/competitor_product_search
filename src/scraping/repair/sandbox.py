@@ -23,6 +23,7 @@ import errno
 import json
 import logging
 import platform
+import signal
 import sys
 import threading
 import traceback
@@ -311,6 +312,12 @@ async def run_in_sandbox(
 
     stdout = stdout_bytes.decode("utf-8", errors="replace").strip()
     stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
+
+    # The POSIX CPU guard can win a race with the parent's wall-clock timeout.
+    # Keep both enforcement paths on the same public timeout contract.
+    sigxcpu = getattr(signal, "SIGXCPU", None)
+    if sigxcpu is not None and proc.returncode == -sigxcpu:
+        return SandboxTimeout(timeout=timeout)
 
     if not stdout:
         return SandboxException(

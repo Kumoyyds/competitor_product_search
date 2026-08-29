@@ -1,15 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(.\\\\.venv\\\\Scripts\\\\Activate.ps1)",
-      "PowerShell(python -m pytest tests/unit/search/ -v)",
-      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python -m src.scraping.tests.verify_m6)",
+      "Bash(uv sync --group dev --group notebook)",
+      "Bash(uv run pytest tests/unit/search/ -v)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python -m src.scraping.tests.verify_m6)",
       "Bash(tee src/scraping/tests/verify_m6_output.log)",
-      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python -m src.scraping.tests.verify_m9)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python -m src.scraping.tests.verify_m9)",
       "Bash(tee src/scraping/tests/verify_m9_output.log)",
-      "PowerShell(py src\\\\scraping\\\\scripts\\\\reseed_goldens.py)",
-      "PowerShell(py -m src.scraping.tests.verify_m1_m3)",
-      "PowerShell(py -m src.scraping.tests.verify_m9)"
+      "Bash(uv run python src/scraping/scripts/reseed_goldens.py)",
+      "Bash(uv run python -m src.scraping.tests.verify_m1_m3)",
+      "Bash(uv run python -m src.scraping.tests.verify_m9)"
     ]
   }
 }

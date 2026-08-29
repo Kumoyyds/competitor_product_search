@@ -25,16 +25,15 @@ Search and scraping are independent today, with no cross-imports. The `orchestra
 
 ## Setup
 
-Use Python 3.12, not Python 3.14: several dependencies do not yet ship pre-built wheels for 3.14. From the repository root:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run from the repository root. The checked-in `.python-version` pins Python 3.12, and `uv` creates and manages `.venv` automatically:
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate              # macOS / Linux
-# .\.venv\Scripts\Activate.ps1           # Windows PowerShell
-pip install -r requirements.txt
+uv sync --group dev --group notebook
 cp .env.sample .env
 git config core.hooksPath .githooks    # once per clone
 ```
+
+The hook synchronizes `CLAUDE.md` / `AGENTS.md`, regenerates capability and storage-schema documentation, then checks staged text files for UTF-8 encoding problems.
 
 Both implemented modules resolve paths relative to the repository root. Fill in `.env` according to the configured services:
 
@@ -55,7 +54,7 @@ Supported marketplaces: <!-- BEGIN GENERATED: websites-inline -->`tesco`, `argos
 Supported country codes: <!-- BEGIN GENERATED: countries-inline -->`uk` (= `gb`), `de`, `fr`, `us`, `nl`, `jp`, `es`, `it`, `pt`, `se`, `pl`, `br`, `au`, `ca`<!-- END GENERATED: countries-inline -->.
 
 ```bash
-python -m src.search.batch --input input/products.xlsx --sku-col product_name \
+uv run python -m src.search.batch --input input/products.xlsx --sku-col product_name \
     --web-col web --country-col country --output output/results.xlsx
 ```
 
@@ -87,8 +86,8 @@ Cold start, site onboarding, configuration, and the complete API: [src/scraping/
 ## Tests
 
 ```bash
-python -m pytest         # offline, zero API cost
-python -m pytest -m live # real keys; may cost money
+uv run pytest         # offline, zero API cost
+uv run pytest -m live # real keys; may cost money
 ```
 
 ## Repository layout
@@ -108,6 +107,8 @@ tests/     Project-level test suite
 - [CLAUDE.md](CLAUDE.md) / [AGENTS.md](AGENTS.md) — agent-facing architecture; the pre-commit hook keeps them byte-identical.
 - [docs/architecture.md](docs/architecture.md) — current and planned project architecture.
 - [docs/scraping_design.md](docs/scraping_design.md) — scraping design overview.
+- [docs/search_storage.md](docs/search_storage.md) — generated search tracing schema, relationships, migrations, and query examples.
+- [docs/scraping_storage.md](docs/scraping_storage.md) — generated scraping schema, relationships, migrations, and query examples.
 - [src/scraping/scraping_module_spec_v1_2.md](src/scraping/scraping_module_spec_v1_2.md) — detailed scraping specification.
 - Per-module agent guidance: [src/search/CLAUDE.md](src/search/CLAUDE.md), [src/scraping/CLAUDE.md](src/scraping/CLAUDE.md), and their byte-identical `AGENTS.md` siblings.
 

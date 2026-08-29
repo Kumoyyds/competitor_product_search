@@ -203,7 +203,7 @@ result = await scrape("https://www.argos.co.uk/product/3284476")
 ## Cold Start (new site)
 
 ```bash
-python -m src.scraping.coldstart --site tesco --input src/scraping/data/cold_start/tesco.xlsx
+uv run python -m src.scraping.coldstart --site tesco --input src/scraping/data/cold_start/tesco.xlsx
 ```
 
 The workbook requires `page_type` + `url`. Mandatory coverage is validated before network spend. Non-stale golden HTML for the same URL is reused unless `--force-fetch` is passed. Interactive review shows every non-tracing `ProductData` field plus declared-bucket warnings. A rejection collects structured field corrections and a free-text hint; after the full round the parser is repaired and all URLs are rerun. The model ladder is a warm-up schedule: its last rung and temperature repeat, with thinking enabled, until all cases pass, the human quits, or the safety cap is reached. Each repair prompt contains only the preceding round's failures plus a compact resolved/regression ledger. Unchanged prior acceptances are reused. Complete success writes the parser + accepted goldens (exit 0, or exit 2 for incomplete coverage); `s` saves the current parser + this round's accepted goldens as a partial result (exit 2); `q` writes nothing (exit 1).
@@ -250,7 +250,7 @@ The cap is injected into `extra_body` as a body-level `max_tokens`, **not** pass
 Add new developer tests by topic under `tests/unit/scraping/` and run them with
 pytest. Keep the default suite offline and deterministic by mocking BrightData,
 HTTP, and LLM clients. Any test that calls a real paid API MUST use
-`@pytest.mark.live`; it is excluded from the default `python -m pytest` run.
+`@pytest.mark.live`; it is excluded from the default `uv run pytest` run.
 Tests that launch real sandbox subprocesses or perform multi-second I/O SHOULD
 also use `@pytest.mark.slow`.
 
@@ -260,7 +260,7 @@ then delete a script once every check has equivalent coverage. Historical logs
 under `tests/logs/archive/` are immutable audit evidence.
 
 The paid end-to-end batch report is operational tooling, not a test. Run it only
-when explicitly needed with `python -m src.scraping.scripts.live_batch_report`.
+when explicitly needed with `uv run python -m src.scraping.scripts.live_batch_report`.
 
 ## M19 — Cold-start correction and golden reuse
 
