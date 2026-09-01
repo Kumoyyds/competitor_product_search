@@ -1,0 +1,9 @@
+# Human-maintained provider routing shared by Search and Matching.
+# Longest case-insensitive keyword match against the configured model wins.
+providers:
+  qwen:
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    key_name: QWEN_KEY
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    key_name: DEEPSEEK_KEY

@@ -4,6 +4,7 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def isolate_scraping_database(monkeypatch, tmp_path):
-    """Keep future scraping pytest tests away from the developer runtime DB."""
+def isolate_runtime_databases(monkeypatch, tmp_path):
+    """Keep pytest away from the developer scraping and orchestrator databases."""
     monkeypatch.setenv("SCRAPING_DB_PATH", str(tmp_path / "scraping.db"))
+    monkeypatch.setenv("ORCHESTRATOR_DB_PATH", str(tmp_path / "orchestrator.db"))

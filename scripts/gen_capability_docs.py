@@ -349,7 +349,7 @@ def build_blocks(root: Path) -> dict[str, str]:
     search_config = root / "src/search/maintain/search_config.yaml"
     websites = collect_websites(search_config)
     llms = collect_llm_vendors(
-        root / "src/search/maintain/llm_router_config.yaml",
+        root / "src/common/llm_router_config.yaml",
         search_config,
     )
     return {

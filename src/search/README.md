@@ -132,7 +132,9 @@ An unmapped code doesn't fail — it degrades: DuckDuckGo falls back to `<code>-
 
 ### Accepted LLM vendors
 
-Vendor routing comes from [maintain/llm_router_config.yaml](maintain/llm_router_config.yaml); the active model comes from `llm.model` in [maintain/search_config.yaml](maintain/search_config.yaml).
+Vendor routing shared with Matching comes from [../common/llm_router_config.yaml](../common/llm_router_config.yaml); the active Search model comes from `llm.model` in [maintain/search_config.yaml](maintain/search_config.yaml).
+
+Migration note: this routing table previously lived at `maintain/llm_router_config.yaml`. If your checkout added custom vendors there, move those entries into the shared file; the old file is no longer read.
 
 <!-- BEGIN GENERATED: llm-table -->
 Active model: `deepseek-v4-flash` (routed through `deepseek`).
@@ -185,9 +187,11 @@ The path supplied as `output_file` / `--output` contains your input with these e
 |---|---|
 | **[maintain/brand.xlsx](maintain/brand.xlsx)** | Add a row whenever a brand isn't being recognised; remove a row to drop a false-positive brand. Only the `brandname_en` column is read — other columns are ignored. After saving, **restart the Python process** (the brand list is `lru_cache`-d for the lifetime of the process; CLI batch runs start fresh, so this is automatic). What's safe to add: normal brands ("Kopparberg"), short brands ("AEG", "7Up"), digit-bearing brands ("19 Crimes"), and even common English words ("Tropical", "Green") — the multi-brand any-pair-match comparison handles collisions correctly. Pure-numeric brands ("555") work but use sparingly — they may collide with codes/prices in titles. |
 | **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. Key sections: `domain_map` (key = retailer keyword, value = accepted host / `site:` value), `search.query_mode`, `search.strip_parens`, `brand.fuzzy_same_threshold` / `fuzzy_differ_threshold` (88 / 40 default), `numeric.continuous_tolerance` (±10%), `numeric.entity_to_attr` + `unit_conversions` + `discrete_attrs` (to support new attributes/units), `llm.model`, and `db`. Restart after editing. |
-| **[maintain/llm_router_config.yaml](maintain/llm_router_config.yaml)** | Keyword → `(base_url, key_name)` routing table for the `distinguishing` layer's LLM. Add an entry here when introducing a new LLM vendor — no code change needed. |
+| **[../common/llm_router_config.yaml](../common/llm_router_config.yaml)** | Shared Search/Matching keyword → `(base_url, key_name)` routing table. Add an entry when introducing a new LLM vendor. |
 
 Per-run job settings are passed directly to `match_product_batch()` or its CLI; there is no per-run YAML file.
+
+The in-memory and Excel entry points use the same internal batch executor. The Excel entry point only validates and converts rows to batch requests, then formats the ordered results back into workbook columns; it does not maintain a second provider/concurrency implementation.
 
 ### Common maintenance tasks
 
@@ -201,7 +205,7 @@ Per-run job settings are passed directly to `match_product_batch()` or its CLI; 
 | Allow more slop in weights/volumes | Raise `numeric.continuous_tolerance` |
 | Support a new unit (e.g. `floz`) | Add it under the relevant attribute in `numeric.unit_conversions` |
 | Support a brand-new numeric attribute | Add entry to `numeric.entity_to_attr` + `unit_conversions` + decide discrete-vs-continuous in `numeric.discrete_attrs` |
-| Switch LLM model/vendor | Edit `llm.model` in `maintain/search_config.yaml` (single line). It's routed to a `base_url`/API key via keyword match against `maintain/llm_router_config.yaml` — add a new vendor entry there first if it's not `qwen`/`deepseek` yet. |
+| Switch LLM model/vendor | Edit `llm.model` in `maintain/search_config.yaml`; add new vendor routing in `src/common/llm_router_config.yaml`. |
 
 ### Things that drift over time
 
@@ -266,15 +270,15 @@ Search run/task tracing is stored in `search.db` by default. See [Search storage
 | Path | Purpose |
 |---|---|
 | [pipeline.py](pipeline.py) | Public `match_product(...)` entrypoint; standalone calls create `mode=single` traces by default |
-| [batch.py](batch.py) | Public `match_product_batch(...)` entrypoint + flag-only CLI |
+| [batch.py](batch.py) | Public file `match_product_batch(...)`, typed `match_products(...)`, and file CLI |
 | [db.py](db.py) / [trace.py](trace.py) | SQLite run/task persistence and task-local trace collection |
 | [graph.py](graph.py) | LangGraph wiring of the 5 layers |
 | [layers/](layers/) | One file per layer (`search`, `domain_filter`, `brand`, `numeric`, `base_match`, `distinguishing`, `aggregate`) + `query_builder` |
 | [providers/](providers/) | `DuckDuckGoProvider` (active, free) + `SerperProvider` (active, paid) — chainable; add new search providers here |
 | [models.py](models.py) | Data classes (`MatchResult`, `LayerTrace`, `CandidateEval`, …) |
-| [config.py](config.py) | Loader for `maintain/search_config.yaml`; `resolve_llm_route()` keyword-routes `llm.model` via `maintain/llm_router_config.yaml` |
+| [config.py](config.py) | Loader for `maintain/search_config.yaml`; delegates LLM routing to `src/common` |
 | [utils.py](utils.py) | Brand-set loader + word-boundary literal matcher (reads `maintain/brand.xlsx`) |
-| [maintain/](maintain/) | **Maintained files** — `brand.xlsx` + `search_config.yaml` + `llm_router_config.yaml`. See §5 above for the how-to. |
+| [maintain/](maintain/) | **Maintained files** — `brand.xlsx` + `search_config.yaml`. Provider routing is shared under `src/common`. |
 | [search_link_algorithm_spec.md](search_link_algorithm_spec.md) | Full design rationale |
 | [CLAUDE.md](CLAUDE.md) | Code-internals reference for AI assistants / developers |
 

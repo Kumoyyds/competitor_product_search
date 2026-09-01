@@ -494,6 +494,7 @@ version = "0.1.0"
 source = { editable = "../image-load-compression" }
 dependencies = [
     { name = "httpx" },
+    { name = "openai" },
     { name = "pillow" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -502,6 +503,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "openai", specifier = ">=1.109.1" },
     { name = "openai", marker = "extra == 'calibrate'", specifier = ">=1.68,<2" },
     { name = "pillow", specifier = ">=11,<12" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<9" },

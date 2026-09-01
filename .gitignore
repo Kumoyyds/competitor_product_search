@@ -31,3 +31,6 @@ scraping.db-wal
 search.db
 search.db-shm
 search.db-wal
+orchestrator.db
+orchestrator.db-shm
+orchestrator.db-wal

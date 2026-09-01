@@ -1,4 +1,4 @@
-"""Parameterized Excel batch entry point for the search pipeline."""
+"""Shared in-memory batch execution plus the Excel input/output adapter."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from tqdm.asyncio import tqdm_asyncio
 
 from . import config
 from .db import get_db, run_scope
+from .models import MatchResult
 from .pipeline import match_product
 from .providers import SearchProvider, make_provider_chain
 from .trace import record_task
@@ -24,6 +25,28 @@ class BatchResult:
     run_id: str
     provider_calls: dict[str, int]
     output_path: str | None
+
+
+@dataclass(frozen=True)
+class SearchRequest:
+    product_name: str
+    website: str | None
+    country: str | None
+
+
+@dataclass
+class SearchItemResult:
+    request: SearchRequest
+    result: MatchResult | None = None
+    error: str | None = None
+    error_type: str | None = None
+
+
+@dataclass
+class SearchManyResult:
+    items: list[SearchItemResult]
+    run_id: str
+    provider_calls: dict[str, int]
 
 
 def _provider_call_counts(providers: list[SearchProvider]) -> dict[str, int]:
@@ -78,6 +101,138 @@ async def _run_row(
             return {"_error": str(exc), "_error_type": type(exc).__name__}
 
 
+async def _execute_search_batch(
+    requests: list[SearchRequest],
+    *,
+    concurrency: int = 16,
+    serper_max_calls: int | None = None,
+    provider: SearchProvider | list[SearchProvider] | None = None,
+    progress: bool = False,
+    job_config: dict[str, object],
+    input_file: str | None = None,
+    input_sku_col: str | None = None,
+    output_file: str | None = None,
+    web_col: str = "site_name",
+    country_col: str = "country",
+) -> SearchManyResult:
+    """Run the one shared provider/concurrency/trace implementation for a batch."""
+    if concurrency < 1:
+        raise ValueError("concurrency must be at least 1")
+    own_providers = provider is None
+    if own_providers:
+        spec = config.get("search", "provider", default="serper")
+        provider_names = [spec] if isinstance(spec, str) else list(spec or [])
+        providers: list[SearchProvider] = []
+    elif isinstance(provider, SearchProvider):
+        spec = None
+        providers = [provider]
+        provider_names = [provider.name]
+    else:
+        spec = None
+        providers = list(provider)
+        provider_names = [item.name for item in providers]
+    if not own_providers and not providers:
+        raise ValueError("provider chain must contain at least one provider")
+
+    initial_calls = _provider_call_counts(providers)
+
+    def calls() -> dict[str, int]:
+        current = _provider_call_counts(providers)
+        return {
+            name: count - initial_calls.get(name, 0)
+            for name, count in current.items()
+        }
+
+    db = get_db()
+    websites = ",".join(
+        dict.fromkeys(item.website for item in requests if item.website)
+    ) or None
+    countries = ",".join(
+        dict.fromkeys(item.country for item in requests if item.country)
+    ) or None
+    try:
+        async with run_scope(
+            db=db,
+            mode="batch",
+            total_tasks=len(requests),
+            job_config=job_config,
+            provider_chain=",".join(str(name) for name in provider_names),
+            provider_calls=calls,
+            input_file=input_file,
+            input_sku_col=input_sku_col,
+            output_file=output_file,
+            country=countries,
+            website=websites,
+            concurrency=concurrency,
+            serper_max_calls=serper_max_calls,
+        ) as run_id:
+            if own_providers:
+                providers.extend(
+                    make_provider_chain(spec, serper_max_calls=serper_max_calls)
+                )
+                initial_calls.update(_provider_call_counts(providers))
+            if not providers:
+                raise ValueError("provider chain must contain at least one provider")
+            semaphore = asyncio.Semaphore(concurrency)
+            tasks = [
+                _run_row(
+                    providers,
+                    semaphore,
+                    item.product_name,
+                    item.website,
+                    item.country,
+                    db=db,
+                    run_id=run_id,
+                    row_index=index,
+                    web_col=web_col,
+                    country_col=country_col,
+                )
+                for index, item in enumerate(requests)
+            ]
+            if not tasks:
+                raw_results = []
+            elif progress:
+                raw_results = await tqdm_asyncio.gather(*tasks)
+            else:
+                raw_results = await asyncio.gather(*tasks)
+            items = []
+            for request, raw in zip(requests, raw_results):
+                if isinstance(raw, dict) and "_error" in raw:
+                    items.append(
+                        SearchItemResult(
+                            request=request,
+                            error=raw["_error"],
+                            error_type=raw.get("_error_type"),
+                        )
+                    )
+                else:
+                    items.append(SearchItemResult(request=request, result=raw))
+            return SearchManyResult(items=items, run_id=run_id, provider_calls=calls())
+    finally:
+        if own_providers:
+            for item in providers:
+                await item.aclose()
+
+
+async def match_products(
+    requests: list[SearchRequest],
+    *,
+    concurrency: int = 16,
+    serper_max_calls: int | None = None,
+    provider: SearchProvider | list[SearchProvider] | None = None,
+    progress: bool = False,
+) -> SearchManyResult:
+    """Run one recorded Search batch directly from in-memory requests."""
+    return await _execute_search_batch(
+        requests,
+        concurrency=concurrency,
+        serper_max_calls=serper_max_calls,
+        provider=provider,
+        progress=progress,
+        job_config={"source": "in_memory", "concurrency": concurrency},
+    )
+
+
 async def match_product_batch(
     input_file: str,
     *,
@@ -111,34 +266,6 @@ async def match_product_batch(
     product_names = [str(value) for value in df[sku_col].tolist()]
     websites = [_cell(value) for value in df[web_col].tolist()]
     countries = [_cell(value) for value in df[country_col].tolist()]
-    website_summary = ",".join(dict.fromkeys(v for v in websites if v)) or None
-    country_summary = ",".join(dict.fromkeys(v for v in countries if v)) or None
-
-    own_providers = provider is None
-    if own_providers:
-        spec = config.get("search", "provider", default="serper")
-        provider_names = [spec] if isinstance(spec, str) else list(spec or [])
-        providers: list[SearchProvider] = []
-    elif isinstance(provider, SearchProvider):
-        providers = [provider]
-        provider_names = [provider.name]
-    else:
-        providers = list(provider)
-        provider_names = [item.name for item in providers]
-    if not own_providers and not providers:
-        raise ValueError("provider chain must contain at least one provider")
-
-    initial_calls = _provider_call_counts(providers)
-
-    def provider_calls() -> dict[str, int]:
-        current = _provider_call_counts(providers)
-        return {
-            name: current.get(name, 0) - initial_calls.get(name, 0)
-            for name in current
-        }
-
-    db = get_db()
-    provider_chain = ",".join(str(name) for name in provider_names)
     job_config = {
         "input_file": input_path,
         "sku_col": sku_col,
@@ -148,95 +275,62 @@ async def match_product_batch(
         "concurrency": concurrency,
         "serper_max_calls": serper_max_calls,
     }
-
-    try:
-        async with run_scope(
-            db=db,
-            mode="batch",
-            total_tasks=len(df),
-            job_config=job_config,
-            provider_chain=provider_chain,
-            provider_calls=provider_calls,
-            input_file=input_path,
-            input_sku_col=sku_col,
-            output_file=output_path,
-            country=country_summary,
-            website=website_summary,
-            concurrency=concurrency,
-            serper_max_calls=serper_max_calls,
-        ) as run_id:
-            if own_providers:
-                providers.extend(
-                    make_provider_chain(spec, serper_max_calls=serper_max_calls)
-                )
-                initial_calls.update(_provider_call_counts(providers))
-            if not providers:
-                raise ValueError("provider chain must contain at least one provider")
-
-            semaphore = asyncio.Semaphore(concurrency)
-            tasks = [
-                _run_row(
-                    providers,
-                    semaphore,
-                    product_name,
-                    website,
-                    country,
-                    db=db,
-                    run_id=run_id,
-                    row_index=row_index,
-                    web_col=web_col,
-                    country_col=country_col,
-                )
-                for row_index, (product_name, website, country) in enumerate(
-                    zip(product_names, websites, countries)
-                )
-            ]
-            if not tasks:
-                results = []
-            elif progress:
-                results = await tqdm_asyncio.gather(*tasks)
-            else:
-                results = await asyncio.gather(*tasks)
-
-            urls: list[str] = []
-            verdicts: list[str] = []
-            traces: list[str] = []
-            reasons: list[str] = []
-            for result in results:
-                if isinstance(result, dict) and "_error" in result:
-                    urls.append("not found")
-                    verdicts.append("error")
-                    traces.append("{}")
-                    reasons.append(result["_error"])
-                    continue
-                urls.append(
-                    result.matched_candidate.url
-                    if result.matched_candidate is not None
-                    else "not found"
-                )
-                verdicts.append(result.verdict.value)
-                traces.append(json.dumps(result.layer_trace.to_dict()))
-                reasons.append(result.reason)
-
-            df["url_search_1"] = urls
-            df["match_verdict"] = verdicts
-            df["match_layer_trace"] = traces
-            df["match_reason"] = reasons
-
-            if output_path is not None:
-                os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-                await asyncio.to_thread(df.to_excel, output_path, index=False)
-
-            return BatchResult(
-                df=df,
-                run_id=run_id,
-                provider_calls=provider_calls(),
-                output_path=output_path,
+    batch = await _execute_search_batch(
+        [
+            SearchRequest(product_name, website, country)
+            for product_name, website, country in zip(
+                product_names, websites, countries
             )
-    finally:
-        if own_providers:
-            for item in providers:
-                await item.aclose()
+        ],
+        concurrency=concurrency,
+        serper_max_calls=serper_max_calls,
+        provider=provider,
+        progress=progress,
+        job_config=job_config,
+        input_file=input_path,
+        input_sku_col=sku_col,
+        output_file=output_path,
+        web_col=web_col,
+        country_col=country_col,
+    )
+
+    urls: list[str] = []
+    verdicts: list[str] = []
+    traces: list[str] = []
+    reasons: list[str] = []
+    for item in batch.items:
+        if item.error is not None:
+            urls.append("not found")
+            verdicts.append("error")
+            traces.append("{}")
+            reasons.append(item.error)
+            continue
+        result = item.result
+        assert result is not None
+        urls.append(
+            result.matched_candidate.url
+            if result.matched_candidate is not None
+            else "not found"
+        )
+        verdicts.append(result.verdict.value)
+        traces.append(json.dumps(result.layer_trace.to_dict()))
+        reasons.append(result.reason)
+
+    df["url_search_1"] = urls
+    df["match_verdict"] = verdicts
+    df["match_layer_trace"] = traces
+    df["match_reason"] = reasons
+
+    if output_path is not None:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        await asyncio.to_thread(df.to_excel, output_path, index=False)
+
+    return BatchResult(
+        df=df,
+        run_id=batch.run_id,
+        provider_calls=batch.provider_calls,
+        output_path=output_path,
+    )
 
 
 def _parse_args() -> argparse.Namespace:

@@ -28,6 +28,9 @@ KNOWN_BLOCKS = {
     "search-tables",
     "search-er",
     "search-migrations",
+    "orchestrator-tables",
+    "orchestrator-er",
+    "orchestrator-migrations",
 }
 _CREATE_RE = re.compile(
     r"^\s*CREATE\s+(?:UNIQUE\s+)?(?P<kind>TABLE|VIEW|INDEX)\s+"
@@ -546,6 +549,16 @@ def render_search_migrations(version: Any) -> str:
     )
 
 
+def render_orchestrator_migrations(version: Any) -> str:
+    return "\n".join(
+        [
+            f"Current `SCHEMA_VERSION`: `{version}`.",
+            "",
+            "This is the initial orchestrator schema. Initialization uses idempotent CREATE statements and sets SQLite `user_version`; there are no legacy orchestrator databases to migrate.",
+        ]
+    )
+
+
 def build_blocks(root: Path) -> dict[str, str]:
     scraping_path = root / "src/scraping/storage/database.py"
     scraping_ddl = _literal_assignment(scraping_path, "_DDL")
@@ -563,6 +576,12 @@ def build_blocks(root: Path) -> dict[str, str]:
     search_schema = introspect_schema(search_ddl, search_indexes, search_views)
     version = _literal_assignment(search_path, "SCHEMA_VERSION")
 
+    orchestrator_path = root / "src/orchestrator/database.py"
+    orchestrator_ddl = _literal_assignment(orchestrator_path, "_DDL")
+    orchestrator_indexes = _literal_assignment(orchestrator_path, "_INDEX_DDL")
+    orchestrator_schema = introspect_schema(orchestrator_ddl, orchestrator_indexes)
+    orchestrator_version = _literal_assignment(orchestrator_path, "SCHEMA_VERSION")
+
     return {
         "scraping-tables": "\n\n" + render_tables(scraping_schema) + "\n\n",
         "scraping-er": "\n\n" + render_er(scraping_schema) + "\n\n",
@@ -570,6 +589,9 @@ def build_blocks(root: Path) -> dict[str, str]:
         "search-tables": "\n\n" + render_tables(search_schema) + "\n\n",
         "search-er": "\n\n" + render_er(search_schema) + "\n\n",
         "search-migrations": "\n\n" + render_search_migrations(version) + "\n\n",
+        "orchestrator-tables": "\n\n" + render_tables(orchestrator_schema) + "\n\n",
+        "orchestrator-er": "\n\n" + render_er(orchestrator_schema) + "\n\n",
+        "orchestrator-migrations": "\n\n" + render_orchestrator_migrations(orchestrator_version) + "\n\n",
     }
 
 
@@ -600,7 +622,11 @@ def inject_generated_blocks(
 
 
 def update_docs(root: Path, blocks: Mapping[str, str], check: bool, pre_commit: bool) -> int:
-    targets = [root / "docs/scraping_storage.md", root / "docs/search_storage.md"]
+    targets = [
+        root / "docs/scraping_storage.md",
+        root / "docs/search_storage.md",
+        root / "docs/orchestrator_storage.md",
+    ]
     changed: list[Path] = []
     replacements: dict[Path, str] = {}
     seen_ids: set[str] = set()

@@ -1,0 +1,8 @@
+llm:
+  model: deepseek-v4-flash
+  temperature: 0.1
+  timeout_s: 60
+  max_retries: 2
+
+vision:
+  model: qwen3-vl-flash

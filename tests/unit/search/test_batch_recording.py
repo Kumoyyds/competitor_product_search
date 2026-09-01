@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from src.search.batch import _parse_args, match_product_batch
+from src.search.batch import SearchRequest, _parse_args, match_product_batch, match_products
 from src.search.db import SCHEMA_VERSION, SearchDB
 from src.search.models import FinalVerdict
 from src.search.pipeline import match_product
@@ -95,6 +95,24 @@ async def test_batch_returns_columns_writes_file_and_records_one_run(tmp_path, m
     ) == [(result.run_id, "batch", 3, "completed", 3, 0)]
     assert fetchall(db_path, "SELECT COUNT(*) FROM tasks") == [(3,)]
     assert fetchall(db_path, "PRAGMA foreign_key_check") == []
+
+
+async def test_typed_in_memory_batch_records_one_run(tmp_path, monkeypatch):
+    path = tmp_path / "memory.db"
+    db = SearchDB(str(path))
+    provider = FakeSearchProvider()
+    monkeypatch.setattr("src.search.batch.get_db", lambda: db)
+    result = await match_products(
+        [
+            SearchRequest("one", "tesco", "uk"),
+            SearchRequest("two", "tesco", "uk"),
+        ],
+        provider=provider,
+        concurrency=2,
+    )
+    assert len(result.items) == 2
+    assert all(item.result.verdict == FinalVerdict.NO_MATCH for item in result.items)
+    assert fetchall(path, "SELECT mode,total_tasks FROM runs") == [("batch", 2)]
 
 
 async def test_batch_row_exception_becomes_error_without_failing_run(tmp_path, monkeypatch):

@@ -31,7 +31,7 @@ search  →  domain_filter  →  base_match  →  distinguishing  →  aggregate
 | Config | Location | What it controls |
 |--------|----------|-----------------|
 | **Pipeline config** | [maintain/search_config.yaml](maintain/search_config.yaml) | Thresholds, domain map, unit conversions, LLM model. **Edit for tuning, not per-run.** |
-| **LLM router config** | [maintain/llm_router_config.yaml](maintain/llm_router_config.yaml) | Keyword → `(base_url, key_name)` table. Switching LLM vendor/model is a single-line edit to `llm.model` above; add a vendor entry here only when introducing a brand-new vendor. |
+| **LLM router config** | [../common/llm_router_config.yaml](../common/llm_router_config.yaml) | Shared Search/Matching keyword → `(base_url, key_name)` table. |
 
 Per-run settings are arguments to `match_product()` / `match_product_batch()` or flags to `uv run python -m src.search.batch`. There is no per-run YAML. Pipeline internals read `maintain/search_config.yaml` via `config.py`.
 
@@ -40,11 +40,11 @@ Per-run settings are arguments to `match_product()` / `match_product_batch()` or
 | File | Role |
 |---|---|
 | [pipeline.py](pipeline.py) | compiles the graph once at import; `match_product()` public entrypoint |
-| [batch.py](batch.py) | parameterized `match_product_batch()` API and flag-only CLI |
+| [batch.py](batch.py) | parameterized file `match_product_batch()` plus typed in-memory `match_products()` API |
 | [db.py](db.py) / [trace.py](trace.py) | shared run/task scopes and SQLite trace persistence |
 | [graph.py](graph.py) | LangGraph StateGraph wiring + conditional short-circuit edges |
 | [models.py](models.py) | `Verdict`, `FinalVerdict`, `LayerTrace`, `BaseAttributes`, `RawCandidate`, `CandidateEval`, `MatchResult` |
-| [config.py](config.py) | yaml loader (reads `maintain/search_config.yaml`) + `domain_for()` / `query_mode_for()` / `strip_parens_enabled()` helpers + `resolve_llm_route()` (keyword-routes `llm.model` via `maintain/llm_router_config.yaml`) |
+| [config.py](config.py) | yaml loader plus compatibility wrapper around the shared Common LLM router |
 | [utils.py](utils.py) | brand-set loader (reads ONLY `brandname_en` from `maintain/brand.xlsx`), `find_literal_brands()`, accent stripping |
 | [maintain/](maintain/) | **Human-edited files**: `brand.xlsx` + `search_config.yaml`. See README §5 for the how-to. |
 | [providers/](providers/) | `SearchProvider` abstract + `DuckDuckGoProvider` (active, free, rate-limit retry) + `SerperProvider` (active, paid, aiohttp). Both have internal `_COUNTRY_TO_*` mappings. Add new ones by subclassing `base.SearchProvider`. |
@@ -77,11 +77,13 @@ Per-run settings are arguments to `match_product()` / `match_product_batch()` or
 | `url_rules` | tracking-query denylist plus optional website → single-product path regex. Websites without a path rule keep host-only filtering. |
 | `brand` | `fuzzy_same_threshold` (default 88), `fuzzy_differ_threshold` (default 40) |
 | `numeric` | `continuous_tolerance` (default 0.10), `entity_to_attr`, `unit_conversions`, `discrete_attrs`, `ambiguity_rules` |
-| `llm` | `model` (the one line to edit to switch vendor/model, routed via `maintain/llm_router_config.yaml`), `temperature`, `timeout_s` |
+| `llm` | `model` (routed via `src/common/llm_router_config.yaml`), `temperature`, `timeout_s` |
 
 ## Batch arguments
 
 `match_product_batch()` takes the full input/output paths, SKU, website, and country column names, plus optional Serper budget and concurrency. Website and country are resolved per row. Provider-chain strategy remains in `maintain/search_config.yaml` unless the caller supplies providers.
+
+`match_products()` accepts typed in-memory `SearchRequest` objects and records one batch run without creating a temporary workbook. Orchestrator uses this API. It and `match_product_batch()` share `_execute_search_batch()`; the Excel path is only an input/output adapter over the same provider, concurrency, row-error, and trace engine.
 
 ## Running
 
@@ -106,7 +108,7 @@ Writes `output/validation_report.xlsx`. Prints numeric pre-pass, then runs pipel
 ## Environment
 
 Required env vars in `.env` at repo root:
-- `QWEN_KEY` — DashScope API key for the Qwen LLM (distinguishing layer), required while `llm.model` routes to `qwen` in [maintain/llm_router_config.yaml](maintain/llm_router_config.yaml)
+- `QWEN_KEY` — DashScope API key when `llm.model` routes to `qwen` in `src/common/llm_router_config.yaml`
 - `SERPER_KEY` — google.serper.dev key, only needed if Serper is in the provider chain
 - `DEEPSEEK_KEY` — only needed if `llm.model` is switched to route to `deepseek`
 

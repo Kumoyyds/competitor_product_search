@@ -4,12 +4,14 @@ This file provides guidance to AI coding agents (Claude Code, Codex, etc.) when 
 
 ## Project Overview
 
-PriceScope — a tool that helps online retailers track competitor products on marketplaces (e.g., amazon.de, tesco.com, argos.co.uk). Two implemented modules:
+PriceScope — a tool that helps online retailers track competitor products on marketplaces (e.g., amazon.de, tesco.com, argos.co.uk). Four implemented modules:
 
 - **search** — takes a spreadsheet of SKU names, searches via configurable search engines (DuckDuckGo, Serper), then uses a 5-layer LangGraph pipeline with a routed LLM to select the best matching product URL.
 - **scraping** — takes a product URL and extracts structured `ProductData` (price, stock, images, …) via BrightData, with an LLM parser-repair ladder that self-heals broken site parsers.
+- **matching** — verifies input-vs-scraped product identity using GTIN, brand/numeric rules, optional Vision evidence, and one routed text-LLM decision.
+- **orchestrator** — accepts xlsx/csv/json or typed inputs, coordinates New Input and Rerun batches, and persists lineage/results in `orchestrator.db`.
 
-The two modules are independent (no cross-imports); the `orchestrator` module that will chain them is still a skeleton.
+Search and scraping remain independently callable; orchestrator composes them without changing their standalone APIs.
 
 ## Setup & Run
 
@@ -50,11 +52,10 @@ result = await scrape("https://www.argos.co.uk/product/3284476")
 | **search** | `src/search/` | Implemented | Product URL matching pipeline |
 | **scraping** | `src/scraping/` | Implemented | Product page data extraction (M1–M27) |
 | **api** | `src/api/` | Skeleton | REST API endpoints |
-| **orchestrator** | `src/orchestrator/` | Skeleton | Pipeline coordination and dispatch |
-| **matching** | `src/matching/` | Skeleton | Attribute-level product match scoring |
-| **storage** | `src/storage/` | Skeleton | Data persistence (temp, main, archive) |
-| **models** | `src/models/` | Skeleton | Shared data models (SKU, Product, MatchResult) |
-| **common** | `src/common/` | Skeleton | Shared utilities (LLM client, config, logging) |
+| **orchestrator** | `src/orchestrator/` | Implemented | New Input/Rerun coordination and `orchestrator.db` |
+| **matching** | `src/matching/` | Implemented | Attribute-level identity verification |
+| **models** | `src/models/` | Implemented | Shared InputItem/ProductMatchResult contracts |
+| **common** | `src/common/` | Partial | Shared Search/Matching LLM routing |
 
 Each implemented module has its own `CLAUDE.md` with the detail that matters when working inside it — read `src/search/CLAUDE.md` or `src/scraping/CLAUDE.md` before changing either.
 
@@ -115,7 +116,8 @@ Key files:
 | File | Purpose |
 |------|---------|
 | `src/search/maintain/search_config.yaml` | Pipeline tuning: `search.provider` (string or ordered list for chain), per-provider `query_mode`, `strip_parens`, thresholds, domain map, LLM model |
-| `src/search/maintain/llm_router_config.yaml` | Keyword → `(base_url, key_name)` routing table so switching LLM vendor/model is a single-line edit to `llm.model` |
+| `src/common/llm_router_config.yaml` | Shared Search/Matching keyword → `(base_url, key_name)` routing table |
+| `src/matching/matching_config.yaml` | Matching text/Vision model and request settings |
 | `src/scraping/config.py` (`ScrapingConfig`) | Repair/cold-start model + temperature ladders, sandbox limits, BrightData poll budget, DB path — see `src/scraping/CLAUDE.md` §Key Config |
 | `src/scraping/hosts.yaml`, `sites.yaml` | Host→site mapping and per-site scraper order |
 | `.env` (repo root) | API keys: `QWEN_KEY` / `DEEPSEEK_KEY` as selected by the configured model; `SERPER_KEY` only if Serper is in the search provider chain; `BRIGHT_DATA_KEY` for scraping |
@@ -127,6 +129,7 @@ Key files:
 - search output: optional `.xlsx` path passed to `match_product_batch()` / `--output`
 - search trace DB: `search.db` by default (single calls use `mode=single`; batches use `mode=batch`)
 - scraping DB: `scraping.db` by default (`SCRAPING_DB_PATH`) — parsers, goldens, results, escalations
+- orchestrator DB: `orchestrator.db` by default (`ORCHESTRATOR_DB_PATH`) — batches, item lineage, Valid snapshots, terminal failures
 - scraping cold-start workbooks: `src/scraping/data/cold_start/*.xlsx` (require `page_type` + `url`)
 
 ## Code Conventions
@@ -137,7 +140,7 @@ Key files:
 - Cross-module imports use absolute paths (e.g., `from src.search.pipeline import match_product`)
 - Direct dependencies are declared in `pyproject.toml`; `uv.lock` locks the resolved environment. Add dependencies with `uv add` (use `--group dev` or `--group notebook` when appropriate).
 - **SQLite database files use the `.db` suffix** — never `.sqlite` or `.sqlite3`. Name each database after its module (`scraping.db`, `search.db`); SQLite creates WAL/SHM sidecars as `<name>.db-wal` / `<name>.db-shm`. When adding a database, decide whether it is tracked or ignored in `.gitignore`.
-- **Every column in the search or scraping DDL needs a `--` meaning comment** on its definition line or immediately above it. Tables, indexes, and views also need a preceding purpose comment. `scripts/gen_storage_docs.py` builds `docs/search_storage.md` and `docs/scraping_storage.md` from an in-memory SQLite database, and the pre-commit hook rejects undocumented columns or stale generated regions.
+- **Every column in the search, scraping, or orchestrator DDL needs a `--` meaning comment** on its definition line or immediately above it. Tables, indexes, and views also need a preceding purpose comment. `scripts/gen_storage_docs.py` builds the three `docs/*_storage.md` references from in-memory SQLite databases, and the pre-commit hook rejects undocumented columns or stale generated regions.
 - **New search providers** must include a `_COUNTRY_TO_*` mapping (see `SerperProvider._COUNTRY_TO_GL` and `DuckDuckGoProvider._COUNTRY_TO_REGION`) to translate general country-code arguments to the format the API expects
 - **New scraping sites** are registered in `hosts.yaml` / `sites.yaml` and brought online via `uv run python -m src.scraping.coldstart`; new LLM vendors go in `src/scraping/providers.py`
 

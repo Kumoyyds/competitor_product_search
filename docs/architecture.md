@@ -1,99 +1,55 @@
 # PriceScope Architecture
 
-## Current MVP Flow (search module only)
+## Current end-to-end flow
 
-```
-User calls match_product_batch(...) or python -m src.search.batch
-    │
-    ▼
-src.search.batch
-    │
-    ├── Receives full input/output paths and SKU/web/country column names
-    ├── Creates one mode=batch DB run
-    ├── Reads the input Excel
-    │
-    ▼
-asyncio.Semaphore (16 concurrent rows by default)
-    │
-    ├── Per row: match_product()
-    │       │
-    │       ├── Resolves that row's website and country
-    │       ├── Search provider chain (DuckDuckGo / Serper)
-    │       ├── Domain, brand and numeric filtering
-    │       ├── Batched LLM distinguishing step when needed
-    │       └── Flushes one task trace to SQLite
-    │
-    └── Returns the enriched DataFrame and optionally writes Excel
+```text
+xlsx / csv / JSON / Sequence[InputItem]
+                 │
+                 ▼
+          ┌──────────────┐
+          │ Orchestrator │── batch/item lineage ──▶ orchestrator.db
+          └──────┬───────┘
+                 │
+       ┌─────────┼──────────┐
+       ▼         ▼          ▼
+   Search     Scraping   Matching
+  title+URL  ProductData rules + optional Vision + LLM
+       │         │          │
+       └─────────┴──────────┘
+                 │
+                 ▼
+          Valid / Failure
 ```
 
-## Planned Full Architecture
+Search and Scraping retain their standalone public APIs and their own trace databases. Orchestrator uses the typed in-memory Search batch API, calls Scraping per URL, and verifies a newly discovered URL through Matching before writing an append-only Valid snapshot.
 
-```
-┌─────────────┐
-│   API       │  REST endpoints for triggering searches, checking status,
-│  (src/api)  │  retrieving results. Future web UI backend.
-└──────┬──────┘
-       │
-       ▼
-┌──────────────────┐
-│   Orchestrator   │  Pipeline coordination: receives search requests,
-│(src/orchestrator)│  dispatches to search/scraping/matching, manages
-└──┬───┬───┬───────┘  retries and progress tracking.
-   │   │   │
-   ▼   │   ▼
-┌──────┐ │ ┌──────────┐
-│Search│ │ │ Scraping  │  Search: current Google+LLM URL finder.
-│      │ │ │           │  Scraping: future product page data extraction.
-└──┬───┘ │ └─────┬─────┘
-   │     │       │
-   │     ▼       │
-   │  ┌──────────┐
-   │  │ Matching  │  Compares SKU attributes against scraped product data
-   │  │           │  for precise match scoring.
-   │  └─────┬─────┘
-   │        │
-   ▼        ▼
-┌─────────────────┐
-│    Storage      │  temp_db: in-progress partition results
-│  (src/storage)  │  main_db: finalized matched results
-│                 │  trash_bin: discarded/archived entries
-└─────────────────┘
-       │
-       ▼
-┌─────────────────┐
-│    Models       │  Shared data models: SKU, Product, MatchResult
-│  (src/models)   │
-└─────────────────┘
+## New Input
 
-Cross-cutting:
-┌─────────────────┐
-│    Common       │  llm_client: shared LLM configuration
-│  (src/common)   │  config: centralized config loading
-│                 │  logging: structured logging
-└─────────────────┘
-```
+New Input validates the file structure before paid calls, records invalid rows individually, then runs Search → Scraping → Matching in batches. Search title and Scraping `ProductData.title` remain separate evidence. Only a successful identity verdict writes Valid.
 
-## Module Status
+## Rerun
 
-> The scraping module has since been built out to Phase 0 (M1–M23). Its mechanism-level
-> design — repair ladder, golden set, parser promotion/retirement, cold start — is documented
-> in [scraping_design.md](scraping_design.md).
+Every Rerun creates `<root>-rN` and selects the latest Valid URL for each logical product in the requested batch's scope. Unchanged identity fields write a fresh ProductData snapshot without another model call. Changed identity triggers Matching; a stored-URL failure or identity No Match gets one full Search → Scrape → Match fallback in the same rerun batch.
 
-| Module | Status | MVP Required |
-|--------|--------|-------------|
-| search | Implemented | Yes |
-| api | Skeleton | No (Phase 2) |
-| orchestrator | Skeleton | No (Phase 2) |
-| scraping | Implemented | No (Phase 2) |
-| matching | Skeleton | No (Phase 3) |
-| storage | Skeleton | No (Phase 2) |
-| models | Skeleton | No (Phase 2) |
-| common | Skeleton | No (Phase 2) |
+## Module ownership
 
-## MVP vs Future Expansion
+| Module | Responsibility | Persistent store |
+|---|---|---|
+| `src/search` | Marketplace candidate discovery and URL selection | `search.db` trace |
+| `src/scraping` | ProductData extraction, validation, parser repair | `scraping.db` |
+| `src/matching` | Exact identity verification | Embedded in orchestrator results |
+| `src/orchestrator` | Input parsing, workflow state, rerun lineage, terminal outcomes | `orchestrator.db` |
+| `src/models` | Shared InputItem and ProductMatchResult contracts | None |
+| `src/common` | Shared Search/Matching LLM provider routing | None |
+| `src/api` | Future REST interface | Not implemented |
 
-**MVP (current)**: The search module is fully functional as a standalone pipeline. Use `match_product()` for one product or `match_product_batch()` / `python -m src.search.batch` for Excel batches. Per-run settings are arguments, not YAML.
+The former project-level `src/storage` skeleton was removed. In-progress state, Valid results, and failures now have one clear owner in `orchestrator.db`; no temporary or trash database is required.
 
-**Phase 2**: Move higher-level orchestration into `orchestrator/`. Add `api/` endpoints. Introduce `storage/` beyond the current search trace database and define cross-module models.
+## Configuration
 
-**Phase 3**: Add `matching/` for attribute-level comparison beyond URL matching. Together with the implemented scraping module, this enables the full pipeline: find URL → scrape product data → match against SKU attributes.
+- Search tuning: `src/search/maintain/search_config.yaml`
+- Shared Search/Matching LLM vendors: `src/common/llm_router_config.yaml`
+- Matching text and Vision models: `src/matching/matching_config.yaml`
+- Scraping runtime: `src/scraping/config.py`, `hosts.yaml`, and `sites.yaml`
+
+Generated database references live in `docs/search_storage.md`, `docs/scraping_storage.md`, and `docs/orchestrator_storage.md`.

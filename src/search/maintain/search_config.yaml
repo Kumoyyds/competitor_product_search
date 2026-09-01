@@ -234,7 +234,7 @@ numeric:
       "flash drive": storage_gb
 
 llm:
-  # Model identifier — routed to a base_url/API key via maintain/llm_router_config.yaml.
+  # Model identifier — routed via src/common/llm_router_config.yaml.
   # Change this line alone to switch vendor/model.
   model: deepseek-v4-flash
   # Sampling temperature — lower = more deterministic
