@@ -32,6 +32,21 @@ class VisionStatus(StrEnum):
     FAILED = "failed"
 
 
+class DecisionNode(StrEnum):
+    GTIN = "gtin"
+    VARIANT_RULE = "variant_rule"
+    VISION = "vision"
+    LLM = "llm"
+    IDENTITY_GUARD = "identity_guard"
+
+
+class DecisionNodeRecord(BaseModel):
+    node: DecisionNode
+    status: str
+    terminal: bool = False
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProductMatchResult(BaseModel):
     verdict: ProductMatchVerdict
     decision_source: DecisionSource
@@ -41,3 +56,4 @@ class ProductMatchResult(BaseModel):
     vision_status: VisionStatus = VisionStatus.NOT_REQUESTED
     vision_comment: str | None = None
     evidence: dict[str, Any] = Field(default_factory=dict)
+    trace: list[DecisionNodeRecord] = Field(default_factory=list)

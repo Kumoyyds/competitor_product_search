@@ -21,7 +21,7 @@ xlsx / csv / JSON / Sequence[InputItem]
           Valid / Failure
 ```
 
-Search and Scraping retain their standalone public APIs and their own trace databases. Orchestrator uses the typed in-memory Search batch API, calls Scraping per URL, and verifies a newly discovered URL through Matching before writing an append-only Valid snapshot.
+Search and Scraping retain their standalone public APIs and their own trace databases. Orchestrator uses the typed in-memory Search batch API, calls Scraping per URL, and verifies a newly discovered URL through Matching before writing an append-only Valid snapshot. Each Matching invocation is also appended to `matching_decisions` with its ordered GTIN → variant rule → Vision → LLM trace; identity reuse and technical failures are represented explicitly.
 
 ## New Input
 
@@ -37,19 +37,19 @@ Every Rerun creates `<root>-rN` and selects the latest Valid URL for each logica
 |---|---|---|
 | `src/search` | Marketplace candidate discovery and URL selection | `search.db` trace |
 | `src/scraping` | ProductData extraction, validation, parser repair | `scraping.db` |
-| `src/matching` | Exact identity verification | Embedded in orchestrator results |
-| `src/orchestrator` | Input parsing, workflow state, rerun lineage, terminal outcomes | `orchestrator.db` |
+| `src/matching` | Exact identity verification and ordered decision traces | Persisted once in orchestrator `matching_decisions` |
+| `src/orchestrator` | Input parsing, workflow state, rerun lineage, terminal outcomes, Matching decision history | `orchestrator.db` |
 | `src/models` | Shared InputItem and ProductMatchResult contracts | None |
 | `src/common` | Shared Search/Matching LLM provider routing | None |
 | `src/api` | Future REST interface | Not implemented |
 
-The former project-level `src/storage` skeleton was removed. In-progress state, Valid results, and failures now have one clear owner in `orchestrator.db`; no temporary or trash database is required.
+The former project-level `src/storage` skeleton was removed. In-progress state, Valid results, failures, and Matching decision history now have one clear owner in `orchestrator.db`; no temporary or trash database is required.
 
 ## Configuration
 
 - Search tuning: `src/search/maintain/search_config.yaml`
 - Shared Search/Matching LLM vendors: `src/common/llm_router_config.yaml`
-- Matching text and Vision models: `src/matching/matching_config.yaml`
+- Matching text and Vision models, plus per-side Vision image caps: `src/matching/matching_config.yaml`
 - Scraping runtime: `src/scraping/config.py`, `hosts.yaml`, and `sites.yaml`
 
 Generated database references live in `docs/search_storage.md`, `docs/scraping_storage.md`, and `docs/orchestrator_storage.md`.

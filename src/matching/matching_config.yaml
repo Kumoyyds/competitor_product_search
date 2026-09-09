@@ -3,6 +3,9 @@ llm:
   temperature: 0.1
   timeout_s: 60
   max_retries: 2
+  concurrency: 16
 
 vision:
-  model: qwen3-vl-flash
+  model: qwen3.8-flash
+  max_considered_num_input_image: 2
+  max_considered_num_scraping_image: 2

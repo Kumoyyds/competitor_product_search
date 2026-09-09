@@ -1,4 +1,6 @@
 from .match_result import (
+    DecisionNode,
+    DecisionNodeRecord,
     DecisionSource,
     EvidenceStatus,
     ProductMatchResult,
@@ -9,6 +11,8 @@ from .product import ProductData
 from .sku import InputItem
 
 __all__ = [
+    "DecisionNode",
+    "DecisionNodeRecord",
     "DecisionSource",
     "EvidenceStatus",
     "InputItem",

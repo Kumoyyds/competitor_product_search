@@ -554,7 +554,7 @@ def render_orchestrator_migrations(version: Any) -> str:
         [
             f"Current `SCHEMA_VERSION`: `{version}`.",
             "",
-            "This is the initial orchestrator schema. Initialization uses idempotent CREATE statements and sets SQLite `user_version`; there are no legacy orchestrator databases to migrate.",
+            "Version 3 transactionally rebuilds v1/v2 databases into the normalized five-table schema, removes denormalized terminal/result columns and duplicate indexes, moves the Rerun source reference to `batch_items.source_valid_result_id`, and derives summaries through views. Recoverable legacy `matching_result` / No Match JSON is backfilled into `matching_decisions`; stored-URL identity reuse is synthesized when its old Valid snapshot had no Matching payload. `vision_enabled` remains a typed batch column and is removed from `job_config` during migration.",
         ]
     )
 
@@ -579,7 +579,10 @@ def build_blocks(root: Path) -> dict[str, str]:
     orchestrator_path = root / "src/orchestrator/database.py"
     orchestrator_ddl = _literal_assignment(orchestrator_path, "_DDL")
     orchestrator_indexes = _literal_assignment(orchestrator_path, "_INDEX_DDL")
-    orchestrator_schema = introspect_schema(orchestrator_ddl, orchestrator_indexes)
+    orchestrator_views = _literal_assignment(orchestrator_path, "_VIEW_DDL")
+    orchestrator_schema = introspect_schema(
+        orchestrator_ddl, orchestrator_indexes, orchestrator_views
+    )
     orchestrator_version = _literal_assignment(orchestrator_path, "SCHEMA_VERSION")
 
     return {

@@ -7,6 +7,7 @@ import pandas as pd
 
 import pytest
 
+from src.matching import MatchingBatchError, MatchingError
 from src.models import (
     DecisionSource,
     EvidenceStatus,
@@ -71,9 +72,13 @@ async def test_new_input_records_row_validation_and_success(tmp_path, monkeypatc
 
     conn = sqlite3.connect(db_path)
     try:
-        assert conn.execute("SELECT search_title,url FROM valid_results").fetchall() == [
+        assert conn.execute("SELECT search_title,matched_url FROM item_outcomes").fetchall() == [
             ("Found title", "https://example.test/product/1")
         ]
+        assert conn.execute(
+            "SELECT attempt_no,execution_path,verdict,decision_source "
+            "FROM matching_decisions"
+        ).fetchall() == [(1, "new_input", "match", "llm")]
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         conn.close()
@@ -149,8 +154,58 @@ async def test_search_no_match_stores_null_search_title(tmp_path, monkeypatch):
     conn = sqlite3.connect(db_path)
     try:
         assert conn.execute(
-            "SELECT fail_node,search_title FROM failure_results"
+            "SELECT fail_node,search_title FROM item_outcomes"
         ).fetchall() == [("search", None)]
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    ("technical", "expected_verdict", "expected_kind"),
+    [
+        (False, "no_match", "no_match"),
+        (True, "error", "technical_error"),
+    ],
+)
+async def test_new_input_records_matching_no_match_and_technical_error(
+    tmp_path, monkeypatch, technical, expected_verdict, expected_kind
+):
+    db_path = tmp_path / f"orchestrator-{expected_verdict}.db"
+
+    async def fake_search(requests, **_kwargs):
+        return SearchManyResult(
+            items=[SearchItemResult(request=requests[0], result=matched())],
+            run_id="search-run",
+            provider_calls={},
+        )
+
+    async def fake_scrape(_url):
+        return product_data(title="Found title")
+
+    async def fake_verify(_requests, **_kwargs):
+        if technical:
+            raise MatchingBatchError([None], {0: MatchingError("model timeout")})
+        return [verified(ProductMatchVerdict.NO_MATCH, "different product")]
+
+    monkeypatch.setattr("src.orchestrator.workflow.match_products", fake_search)
+    monkeypatch.setattr("src.orchestrator.workflow.scrape", fake_scrape)
+    monkeypatch.setattr("src.orchestrator.workflow.verify_products", fake_verify)
+    result = await run_new_input(
+        [InputItem(title="Input", country="uk", site_name="tesco")],
+        db_path=db_path,
+    )
+    assert result.failed == 1
+
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute(
+            "SELECT verdict,decision_source FROM matching_decisions"
+        ).fetchall() == [
+            (expected_verdict, "technical_error" if technical else "llm")
+        ]
+        assert conn.execute(
+            "SELECT failure_kind FROM failure_results"
+        ).fetchall() == [(expected_kind,)]
     finally:
         conn.close()
 
@@ -163,8 +218,8 @@ async def test_rerun_creates_derived_batch_and_unchanged_identity_skips_search_m
     item_id = db.add_item(root, row_index=0, raw=item.model_dump(), item=item)
     old = product_data(title="Stable title")
     db.record_valid(
-        item_id, old, search_title="Search title", url=old.url,
-        execution_path="new_input", matching_result=verified(),
+        item_id, old, search_title="Search title",
+        execution_path="new_input",
     )
     db.finish_batch(root)
     db.close()
@@ -189,6 +244,22 @@ async def test_rerun_creates_derived_batch_and_unchanged_identity_skips_search_m
     assert result.batch_id == f"{root}-r1"
     assert result.valid == 1
     assert calls == {"search": 0, "match": 0}
+    check = sqlite3.connect(db_path)
+    try:
+        assert check.execute(
+            "SELECT d.execution_path,verdict,decision_source,decision_process "
+            "FROM matching_decisions AS d JOIN batch_items AS i USING(item_id) "
+            "WHERE i.batch_id=?",
+            (result.batch_id,),
+        ).fetchall()[0][:3] == ("stored_url", "match", "identity_guard")
+        process = json.loads(check.execute(
+            "SELECT decision_process FROM matching_decisions AS d "
+            "JOIN batch_items AS i USING(item_id) WHERE i.batch_id=?",
+            (result.batch_id,),
+        ).fetchone()[0])
+        assert process["terminated_at"] == "identity_guard"
+    finally:
+        check.close()
 
 
 async def test_rerun_missing_title_rejects_before_child_creation(tmp_path):
@@ -199,8 +270,8 @@ async def test_rerun_missing_title_rejects_before_child_creation(tmp_path):
     item_id = db.add_item(root, row_index=0, raw=item.model_dump(), item=item)
     old = product_data(title="Stable title")
     db.record_valid(
-        item_id, old, search_title="Known title", url=old.url,
-        execution_path="new_input", matching_result=verified(),
+        item_id, old, search_title="Known title",
+        execution_path="new_input",
     )
     db.finish_batch(root)
     db.close()
@@ -257,8 +328,8 @@ async def test_rerun_identity_no_match_falls_back_once_without_failure_row(tmp_p
     item_id = db.add_item(root, row_index=0, raw=item.model_dump(), item=item)
     old = product_data(title="Old identity", url="https://example.test/old")
     db.record_valid(
-        item_id, old, search_title="Old search title", url=old.url,
-        execution_path="new_input", matching_result=verified(),
+        item_id, old, search_title="Old search title",
+        execution_path="new_input",
     )
     db.finish_batch(root)
     db.close()
@@ -302,12 +373,21 @@ async def test_rerun_identity_no_match_falls_back_once_without_failure_row(tmp_p
     check = sqlite3.connect(db_path)
     try:
         assert check.execute(
-            "SELECT execution_path,search_title,url FROM valid_results WHERE batch_id=?",
+            "SELECT execution_path,search_title,matched_url FROM item_outcomes WHERE batch_id=?",
             (result.batch_id,),
         ).fetchall() == [("fallback", "New search title", "https://example.test/new")]
         assert check.execute(
-            "SELECT COUNT(*) FROM failure_results WHERE batch_id=?", (result.batch_id,)
+            "SELECT COUNT(*) FROM item_outcomes WHERE batch_id=? AND failure_id IS NOT NULL",
+            (result.batch_id,),
         ).fetchone()[0] == 0
+        assert check.execute(
+            "SELECT attempt_no,d.execution_path,verdict FROM matching_decisions AS d "
+            "JOIN batch_items USING(item_id) WHERE batch_id=? ORDER BY attempt_no",
+            (result.batch_id,),
+        ).fetchall() == [
+            (1, "identity_revalidation", "no_match"),
+            (2, "fallback", "match"),
+        ]
     finally:
         check.close()
 
@@ -320,8 +400,8 @@ async def test_rerun_stored_scrape_failure_fallback_failure_records_real_node_on
     item_id = db.add_item(root, row_index=0, raw=item.model_dump(), item=item)
     old = product_data(title="Old identity", url="https://example.test/old")
     db.record_valid(
-        item_id, old, search_title="Old search title", url=old.url,
-        execution_path="new_input", matching_result=verified(),
+        item_id, old, search_title="Old search title",
+        execution_path="new_input",
     )
     db.finish_batch(root)
     db.close()
@@ -356,7 +436,8 @@ async def test_rerun_stored_scrape_failure_fallback_failure_records_real_node_on
     check = sqlite3.connect(db_path)
     try:
         assert check.execute(
-            "SELECT operation,fail_node,search_title FROM failure_results WHERE batch_id=?",
+            "SELECT operation,fail_node,search_title FROM item_outcomes "
+            "JOIN batches USING(batch_id) WHERE batch_id=?",
             (result.batch_id,),
         ).fetchall() == [("rerun", "search", None)]
         trace = json.loads(check.execute(

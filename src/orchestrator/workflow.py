@@ -21,7 +21,6 @@ from .models import BatchResult
 class WorkItem:
     item_id: int
     item: InputItem
-    source_valid_result_id: int | None = None
 
 
 @dataclass(slots=True)
@@ -54,6 +53,29 @@ def _trace_error(value: Exception | InvalidTargetResult) -> dict[str, Any]:
     return {"type": type(value).__name__, "reason": str(value)}
 
 
+def _record_matching_error(
+    db: OrchestratorDB,
+    item_id: int,
+    error: Exception,
+    *,
+    execution_path: str,
+    url: str | None,
+) -> None:
+    trace = [
+        node.model_dump(mode="json")
+        for node in getattr(error, "trace", [])
+    ]
+    db.record_matching_decision(
+        item_id,
+        execution_path=execution_path,
+        url=url,
+        verdict="error",
+        decision_source="technical_error",
+        reasoning=str(error),
+        decision_process={"nodes": trace, "terminated_at": "technical_error"},
+    )
+
+
 async def _match_and_persist(
     db: OrchestratorDB,
     works: list[WorkItem],
@@ -63,6 +85,7 @@ async def _match_and_persist(
     urls: list[str],
     execution_path: str,
     vision_enabled: bool,
+    concurrency: int,
 ) -> None:
     """Persist terminal Match/No-Match outcomes for one full pipeline pass."""
     if not works:
@@ -73,6 +96,7 @@ async def _match_and_persist(
         partial = await verify_products(
             [(work.item, product) for work, product in zip(works, products)],
             vision_enabled=vision_enabled,
+            concurrency=concurrency,
         )
     except MatchingBatchError as exc:
         partial = exc.results
@@ -80,6 +104,13 @@ async def _match_and_persist(
 
     for index, (work, product, title, url) in enumerate(zip(works, products, search_titles, urls)):
         if index in errors:
+            _record_matching_error(
+                db,
+                work.item_id,
+                errors[index],
+                execution_path=execution_path,
+                url=url,
+            )
             db.record_failure(
                 work.item_id,
                 fail_node="match",
@@ -91,15 +122,18 @@ async def _match_and_persist(
             continue
         result = partial[index]
         assert result is not None
+        db.record_matching_result(
+            work.item_id,
+            execution_path=execution_path,
+            url=url,
+            result=result,
+        )
         if result.verdict == ProductMatchVerdict.MATCH:
             db.record_valid(
                 work.item_id,
                 product,
                 search_title=title,
-                url=url,
                 execution_path=execution_path,
-                matching_result=result,
-                source_valid_result_id=work.source_valid_result_id,
             )
         else:
             db.record_failure(
@@ -109,7 +143,6 @@ async def _match_and_persist(
                 reasoning=result.reasoning,
                 search_title=title,
                 url=url,
-                detail=result.model_dump(mode="json"),
             )
 
 
@@ -198,6 +231,7 @@ async def _run_full_pipeline(
         urls=match_urls,
         execution_path=execution_path,
         vision_enabled=vision_enabled,
+        concurrency=concurrency,
     )
 
 
@@ -215,7 +249,7 @@ async def run_new_input(
     batch_id = db.create_new_batch(
         vision_enabled=vision_enabled,
         source_file=source_file,
-        job_config={"concurrency": concurrency, "vision_enabled": vision_enabled},
+        job_config={"concurrency": concurrency},
     )
     try:
         works: list[WorkItem] = []
@@ -276,7 +310,6 @@ async def rerun(
             vision_enabled=active_vision,
             job_config={
                 "concurrency": concurrency,
-                "vision_enabled": active_vision,
                 "search_titles": list(search_titles) if search_titles is not None else None,
             },
         )
@@ -289,10 +322,10 @@ async def rerun(
                 raw=source.item.model_dump(),
                 item=source.item,
                 logical_item_id=source.logical_item_id,
-                source_item_id=source.source_item_id,
+                source_valid_result_id=source.valid_result_id,
                 execution_path="stored_url",
             )
-            work = WorkItem(item_id, source.item, source.valid_result_id)
+            work = WorkItem(item_id, source.item)
             works.append(work)
             work_by_id[item_id] = (work, source)
 
@@ -313,14 +346,36 @@ async def rerun(
                 )
                 fallback.append(work)
             elif _identity(outcome.product) == _identity(source.product):
+                identity_reason = (
+                    "Stored-URL rescrape reproduced the prior qualified identity; "
+                    "Matching was skipped."
+                )
+                db.record_matching_decision(
+                    work.item_id,
+                    execution_path="stored_url",
+                    url=source.url,
+                    verdict="match",
+                    decision_source="identity_guard",
+                    reasoning=identity_reason,
+                    decision_process={
+                        "nodes": [
+                            {
+                                "node": "identity_guard",
+                                "status": "reused",
+                                "terminal": True,
+                                "detail": {
+                                    "source_valid_result_id": source.valid_result_id
+                                },
+                            }
+                        ],
+                        "terminated_at": "identity_guard",
+                    },
+                )
                 db.record_valid(
                     work.item_id,
                     outcome.product,
                     search_title=source.search_title,
-                    url=source.url,
                     execution_path="stored_url",
-                    matching_result=None,
-                    source_valid_result_id=source.valid_result_id,
                 )
             else:
                 db.update_item(
@@ -338,6 +393,7 @@ async def rerun(
                 results = await verify_products(
                     [(work.item, product) for work, product in zip(revalidate_works, revalidate_products)],
                     vision_enabled=active_vision,
+                    concurrency=concurrency,
                 )
                 partial: list[Any] = results
                 errors: dict[int, Exception] = {}
@@ -347,17 +403,35 @@ async def rerun(
                 zip(revalidate_works, revalidate_products, revalidate_titles, revalidate_urls)
             ):
                 if index in errors:
+                    _record_matching_error(
+                        db,
+                        work.item_id,
+                        errors[index],
+                        execution_path="identity_revalidation",
+                        url=url,
+                    )
                     db.record_failure(
                         work.item_id, fail_node="match", failure_kind="technical_error",
                         reasoning=str(errors[index]), search_title=title, url=url,
                     )
                 elif partial[index].verdict == ProductMatchVerdict.MATCH:
+                    db.record_matching_result(
+                        work.item_id,
+                        execution_path="identity_revalidation",
+                        url=url,
+                        result=partial[index],
+                    )
                     db.record_valid(
-                        work.item_id, product, search_title=title, url=url,
-                        execution_path="revalidated", matching_result=partial[index],
-                        source_valid_result_id=work.source_valid_result_id,
+                        work.item_id, product, search_title=title,
+                        execution_path="identity_revalidation",
                     )
                 else:
+                    db.record_matching_result(
+                        work.item_id,
+                        execution_path="identity_revalidation",
+                        url=url,
+                        result=partial[index],
+                    )
                     db.update_item(
                         work.item_id,
                         execution_path="fallback",

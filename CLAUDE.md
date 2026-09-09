@@ -117,7 +117,7 @@ Key files:
 |------|---------|
 | `src/search/maintain/search_config.yaml` | Pipeline tuning: `search.provider` (string or ordered list for chain), per-provider `query_mode`, `strip_parens`, thresholds, domain map, LLM model |
 | `src/common/llm_router_config.yaml` | Shared Search/Matching keyword → `(base_url, key_name)` routing table |
-| `src/matching/matching_config.yaml` | Matching text/Vision model and request settings |
+| `src/matching/matching_config.yaml` | Matching text/Vision model, per-side Vision image caps, text-decision `llm.concurrency`, and request settings |
 | `src/scraping/config.py` (`ScrapingConfig`) | Repair/cold-start model + temperature ladders, sandbox limits, BrightData poll budget, DB path — see `src/scraping/CLAUDE.md` §Key Config |
 | `src/scraping/hosts.yaml`, `sites.yaml` | Host→site mapping and per-site scraper order |
 | `.env` (repo root) | API keys: `QWEN_KEY` / `DEEPSEEK_KEY` as selected by the configured model; `SERPER_KEY` only if Serper is in the search provider chain; `BRIGHT_DATA_KEY` for scraping |
