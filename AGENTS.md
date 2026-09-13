@@ -144,6 +144,11 @@ Key files:
 - **New search providers** must include a `_COUNTRY_TO_*` mapping (see `SerperProvider._COUNTRY_TO_GL` and `DuckDuckGoProvider._COUNTRY_TO_REGION`) to translate general country-code arguments to the format the API expects
 - **New scraping sites** are registered in `hosts.yaml` / `sites.yaml` and brought online via `uv run python -m src.scraping.coldstart`; new LLM vendors go in `src/scraping/providers.py`
 
+## Agent Workflow
+
+- Use a subagent for any task requiring more than ~3 file reads, to avoid polluting main context.
+- Long-running verification (full test suite, large scrapes) should run in background with a status check-in, not block the main thread.
+
 ## Documentation Discipline (mandatory)
 
 Any change that alters how a human operates or maintains this project MUST update the README in the same commit. README = how a human runs and maintains it; CLAUDE.md = the architecture and design an agent needs.
