@@ -29,12 +29,14 @@ from typing import Any, Optional
 
 from openpyxl import load_workbook
 
+from src.common.llm_client import UnknownModelError
+
 from .config import get_config
 from .exceptions import ColdStartInputError
 from .extraction import with_extraction_retry
 from .models.enums import PAGE_TYPES
 from .models.product_data import ProductData
-from .providers import make_chat_client
+from .providers import make_chat_client, validate_model_ladders
 from .registry import get_scrapers
 from .repair.golden import _matches_expected, classify_page_type
 from .repair.prepass import build_price_aware_context
@@ -1041,6 +1043,12 @@ def main() -> int:
 
     if args.verbose:
         logging.basicConfig(level=logging.INFO)
+
+    try:
+        validate_model_ladders()
+    except UnknownModelError as exc:
+        print(f"UnknownModelError: {exc}")
+        return 1
 
     try:
         rows = read_coldstart_input(args.input_path, args.site)

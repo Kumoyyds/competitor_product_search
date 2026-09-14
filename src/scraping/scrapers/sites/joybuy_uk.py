@@ -5,7 +5,7 @@ from ...registry import register_scraper
 from ..html_scraper import HTMLScraper
 
 
-@register_scraper("joybuy.co.uk", order=1)
+@register_scraper("joybuy_uk", order=1)
 class JoybuyUKScraper(HTMLScraper):
     """Joybuy UK HTML route (plain Web Unlocker).
 

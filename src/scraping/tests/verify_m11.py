@@ -37,8 +37,8 @@ cfg = _config.get_config()
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "html_sample"
 from src.scraping.providers import resolve_provider
-_, _coldstart_provider = resolve_provider(cfg.cold_start_model_ladder[0])
-HAS_LLM = bool(cfg.api_key_for(_coldstart_provider.key_name))
+_, _coldstart_route, _ = resolve_provider(cfg.cold_start_model_ladder[0])
+HAS_LLM = bool(cfg.api_key_for(_coldstart_route.key_name))
 
 
 
@@ -89,7 +89,7 @@ async def run() -> None:
     check("None when no OK", rep is None)
 
     if not HAS_LLM:
-        skip("M11.3-M11.5", f"{_coldstart_provider.key_name} not set")
+        skip("M11.3-M11.5", f"{_coldstart_route.key_name} not set")
         return
 
     section("M11.3 - Cold start with 'y y' accepts both URLs")

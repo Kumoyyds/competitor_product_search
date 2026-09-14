@@ -8,7 +8,7 @@ from typing import Any, Sequence
 
 from src.matching import MatchingBatchError, verify_products
 from src.models import InputItem, ProductData, ProductMatchVerdict
-from src.scraping import InvalidTargetResult, scrape
+from src.scraping import InvalidTargetResult, scrape, validate_model_ladders
 from src.search import FinalVerdict
 from src.search.batch import SearchRequest, match_products
 
@@ -244,6 +244,7 @@ async def run_new_input(
 ) -> BatchResult:
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
+    validate_model_ladders()
     parsed, source_file = load_input(source)
     db = OrchestratorDB(db_path)
     batch_id = db.create_new_batch(
@@ -299,6 +300,7 @@ async def rerun(
 ) -> BatchResult:
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
+    validate_model_ladders()
     db = OrchestratorDB(db_path)
     try:
         sources = db.rerun_sources(batch_id, search_titles)

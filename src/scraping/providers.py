@@ -1,7 +1,12 @@
-"""LLM provider registry -- the single place to add a model or vendor.
+"""LLM vendor call-capability registry.
 
-Adding a model requires one line in an existing provider's ``models`` tuple.
-Adding a vendor requires one registry entry and its API key in ``.env``.
+Routing (model name -> vendor -> base_url + API-key env name) lives in the
+shared ``src/common/llm_router_config.yaml``, resolved by keyword match. This
+module holds only per-vendor CALL CAPABILITIES that the shared router doesn't
+know about: thinking-mode parameters, output-token caps, and JSON-mode
+support. Adding a vendor here is optional -- a vendor with no entry gets a
+neutral default (no special call parameters). Add an entry only when a vendor
+needs one of these capability overrides.
 """
 
 from __future__ import annotations
@@ -13,6 +18,8 @@ import threading
 import weakref
 from dataclasses import dataclass
 from typing import Any, Optional
+
+from src.common.llm_client import LlmRoute, UnknownModelError, resolve_llm_endpoint
 
 from .config import get_config
 
@@ -26,9 +33,6 @@ _CLIENT_CLOSE_TASKS_LOCK = threading.Lock()
 
 @dataclass(frozen=True)
 class ProviderSpec:
-    base_url: str
-    key_name: str
-    models: tuple[str, ...]
     thinking_extra_body: Optional[dict[str, Any]] = None
     non_thinking_extra_body: Optional[dict[str, Any]] = None
     supports_json_object: bool = True
@@ -42,22 +46,15 @@ class ProviderSpec:
     thinking_max_output_tokens: Optional[int] = None
 
 
+_DEFAULT_SPEC = ProviderSpec()
+
+# Keys here must match the provider keywords in
+# src/common/llm_router_config.yaml -- that file owns base_url/key_name.
 PROVIDERS: dict[str, ProviderSpec] = {
     "qwen": ProviderSpec(
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        key_name="QWEN_KEY",
-        models=(
-            "qwen3.7-plus",
-            # Legacy project spelling; retained for compatibility.
-            "qwen-3.7-plus",
-            "qwen3.7-flash",
-        ),
         thinking_extra_body={"enable_thinking": True},
     ),
     "deepseek": ProviderSpec(
-        base_url="https://api.deepseek.com",
-        key_name="DEEPSEEK_KEY",
-        models=("deepseek-v4-flash", "deepseek-v4-pro"),
         thinking_extra_body={"thinking": {"type": "enabled"}},
         # DeepSeek V4 defaults to thinking mode, so explicitly disable it on
         # ordinary ladder nodes to preserve the existing last-node-only policy.
@@ -69,31 +66,36 @@ PROVIDERS: dict[str, ProviderSpec] = {
     ),
 }
 
-DEFAULT_PROVIDER = "qwen"
 
+def resolve_provider(model: str) -> tuple[str, "LlmRoute", ProviderSpec]:
+    """Resolve a model name to its bare model id, route, and call capabilities.
 
-def resolve_provider(model: str) -> tuple[str, ProviderSpec]:
-    """Resolve a model name to its bare model id and provider specification.
-
-    An explicit ``provider/model`` prefix wins. Otherwise the registry's model
-    tuples are searched. Unknown names fall back to the default provider so
-    offline tests and private deployments can keep using unregistered model ids.
+    An explicit ``provider/model`` prefix is validated against the shared
+    router table and stripped before routing the remainder. Otherwise the
+    whole string is routed by the shared router's keyword match. Unroutable
+    names raise ``UnknownModelError`` -- there is no silent fallback.
     """
     if "/" in model:
-        provider_name, bare_model = model.split("/", 1)
-        if provider_name in PROVIDERS and bare_model:
-            return bare_model, PROVIDERS[provider_name]
+        prefix, rest = model.split("/", 1)
+        if rest:
+            route = resolve_llm_endpoint(prefix)
+            return rest, route, PROVIDERS.get(route.provider, _DEFAULT_SPEC)
 
-    for spec in PROVIDERS.values():
-        if model in spec.models:
-            return model, spec
+    route = resolve_llm_endpoint(model)
+    return model, route, PROVIDERS.get(route.provider, _DEFAULT_SPEC)
 
-    logger.warning(
-        "Unknown LLM model %r; falling back to provider=%s",
-        model,
-        DEFAULT_PROVIDER,
-    )
-    return model, PROVIDERS[DEFAULT_PROVIDER]
+
+def validate_model_ladders(cfg: Any = None) -> None:
+    """Eagerly resolve every configured model ladder entry.
+
+    Call this at a batch entry point (cold start, orchestrator run) so a
+    typo'd model name raises before any paid scraping/repair spend, instead of
+    surfacing lazily on the first LLM call deep in the repair ladder.
+    """
+    cfg = cfg or get_config()
+    for ladder_name in ("repair_model_ladder", "cold_start_model_ladder"):
+        for model in getattr(cfg, ladder_name):
+            resolve_provider(model)
 
 
 def make_chat_client(
@@ -119,14 +121,14 @@ def make_chat_client(
         logger.error("langchain_openai not installed%s", _purpose_suffix(purpose))
         return None
 
-    bare_model, spec = resolve_provider(model)
-    provider_name = _provider_name(spec)
+    bare_model, route, spec = resolve_provider(model)
+    provider_name = route.provider
     cfg = get_config()
-    api_key = cfg.api_key_for(spec.key_name)
+    api_key = cfg.api_key_for(route.key_name)
     if not api_key:
         logger.warning(
             "%s not set -- cannot invoke provider=%s%s",
-            spec.key_name,
+            route.key_name,
             provider_name,
             _purpose_suffix(purpose),
         )
@@ -148,11 +150,9 @@ def make_chat_client(
             provider_name,
         )
 
-    base_url = spec.base_url
-    # Retain the pre-M18 Qwen endpoint override while keeping vendor-specific
-    # handling inside this registry module.
-    if spec is PROVIDERS["qwen"] and cfg.qwen_base_url:
-        base_url = cfg.qwen_base_url
+    # A configured per-provider override (e.g. the legacy qwen_base_url field)
+    # wins; otherwise use the shared router's endpoint for this vendor.
+    base_url = cfg.base_url_for(provider_name) or route.base_url
 
     # Sent through extra_body, not ChatOpenAI(max_tokens=...): langchain renames
     # that field to `max_completion_tokens`, which DeepSeek accepts and then
@@ -292,13 +292,6 @@ def _close_chat_clients_at_exit() -> None:
 
 
 atexit.register(_close_chat_clients_at_exit)
-
-
-def _provider_name(spec: ProviderSpec) -> str:
-    for name, registered in PROVIDERS.items():
-        if registered is spec:
-            return name
-    return "unknown"
 
 
 def _purpose_suffix(purpose: str) -> str:

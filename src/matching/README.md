@@ -31,6 +31,6 @@ llm:
 
 It must be an integer >= 1; `verify_products()` accepts `concurrency=` to override the file per call. Vision still completes for the whole batch before any text decision starts, because the text prompt consumes the visual comment. Callers that already bound their own fan-out (the orchestrator passes its `--concurrency`) should pass it here too rather than relying on the file default.
 
-Configuration lives in `matching_config.yaml`; provider routing shared with Search lives in `src/common/llm_router_config.yaml`. A model/parse failure raises `MatchingError` rather than returning a business No Match.
+Configuration lives in `matching_config.yaml`; provider routing shared with Search and Scraping lives in `src/common/llm_router_config.yaml`. A model/parse failure raises `MatchingError` rather than returning a business No Match.
 
 Use `verify_products()` for batches so image downloads are deduplicated across pairs and text decisions overlap.

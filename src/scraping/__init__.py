@@ -9,6 +9,7 @@ Public API:
 
 from .exceptions import BrightDataInfraError, ScrapeFailed
 from .models import InvalidTargetResult, ProductData, ScrapeOutcome
+from .providers import validate_model_ladders
 from .router import scrape
 
 # Trigger site scraper registration
@@ -21,4 +22,5 @@ __all__ = [
     "ScrapeOutcome",
     "ScrapeFailed",
     "BrightDataInfraError",
+    "validate_model_ladders",
 ]

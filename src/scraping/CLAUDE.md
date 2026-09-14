@@ -44,7 +44,7 @@ BaseScraper (ABC)
 
 ### Repair Ladder (§5.5)
 
-Config-driven: attempt count = `len(cfg.repair_model_ladder)`. Each attempt registers a full `AttemptRecord` (code, capture summary, errors) fed back to the next attempt — no index misalignment, works for any node count. Default: `["deepseek-v4-flash", "deepseek-v4-flash"]` (2 attempts; previously 4, reduced in `fb68f14`).
+Config-driven: attempt count = `len(cfg.repair_model_ladder)`. Each attempt registers a full `AttemptRecord` (code, capture summary, errors) fed back to the next attempt — no index misalignment, works for any node count. Default: `["deepseek-v4-flash", "deepseek-v4-pro"]` (2 attempts; previously 4, reduced in `fb68f14`).
 
 With the default 2-node ladder, Turn B runs before attempt 1 only when attempt 0 produced a runnable parser, failed at the gates, and its capture summary shows missing required fields. Sandbox failures, golden failures, and gate failures involving only optional fields do not provide source-absence evidence, so they continue directly to parser generation. The logic is:
 
@@ -56,7 +56,7 @@ With the default 2-node ladder, Turn B runs before attempt 1 only when attempt 0
 **Convergence-quality signals fed into the ladder**:
 - **Full sandbox tracebacks** propagated into next attempt (F1 fix).
 - **AttemptRecord list**: candidate code + `summarize_capture()` output (which fields captured/missing) + errors, all aligned by index.
-- **Temperature ramp** from config (`repair_temperature_ladder`), default `[0.1, 0.4]` (2 values matching 2-attempt ladder). Judgment prompts (Turn A/B) always stay at 0.1.
+- **Temperature ramp** from config (`repair_temperature_ladder`), default `[0.1, 0.3]` (2 values matching 2-attempt ladder). Judgment prompts (Turn A/B) always stay at 0.1.
 - **Thinking mode** enabled on the last attempt (len-1), only for Turn C.
 - **Role-specific strategy hints** (3 semantic roles): `first` = "JSON-LD for identity, evidence-driven for prices", `middle` = "fix specific missing field from capture", `last` = "thinking, inspect all prior records".
 - **Price-aware pre-pass (M14/M15)**: `build_price_aware_context(html, url)` replaces raw `_excerpt` for parser-gen prompts. Three evidence sources (DOM currency scan, meta description scan, schema.org JSON-LD `priceSpecification`/`validForMemberTier` walk) are collected, anchored to the main product (URL product ID + canonical title + h1 match), cross-sell prices hard-deleted (double-hit rule), and emitted as a structured `PriceContext` (including `promotion_signal` from M15). Prompt rules are evidence-driven (struck-through/labeled → `list_price`; visible membership gating → `membership_price`), site-agnostic, with a RECALL FAILURE warning. `validForMemberTier` is a corroborating hint only (demoted from imperative in M15). No DOM price subtree can be truncated away.
@@ -126,7 +126,7 @@ Known limitation: the current Tesco DCA collector does not emit a Clubcard/membe
 src/scraping/
 ├── __init__.py             # Public API: scrape(), ProductData, ScrapeFailed
 ├── config.py               # ScrapingConfig (spec §7)
-├── providers.py            # LLM model/provider registry + unified client factory (M18)
+├── providers.py            # LLM vendor call-capability registry + unified client factory (M18)
 ├── exceptions.py           # ScrapeFailed, BrightDataInfraError, SandboxSpawnError
 ├── detection.py            # Invalid page detection (5 signals)
 ├── router.py               # Two-hop dispatch + fallback loop + escalation writer (M10)
@@ -212,8 +212,8 @@ The workbook requires `page_type` + `url`. Mandatory coverage is validated befor
 
 - `BRIGHT_DATA_KEY` / provider keys such as `QWEN_KEY` and `DEEPSEEK_KEY` — loaded from `.env`
 - `SCRAPING_DB_PATH` — SQLite path (default: `scraping.db`)
-- `repair_model_ladder` / `repair_temperature_ladder` — runtime HTML-repair model + temperature per attempt (default: `["deepseek-v4-flash", "deepseek-v4-flash"]` / `[0.1, 0.4]`; lengths must match); JSON healing uses the first repair model
-- `cold_start_model_ladder` / `cold_start_temperature_ladder` — independent cold-start warm-up schedule (default: `["deepseek-v4-flash", "deepseek-v4-flash"]` / `[0.1, 0.4]`; lengths must match); the last rung repeats with thinking enabled
+- `repair_model_ladder` / `repair_temperature_ladder` — runtime HTML-repair model + temperature per attempt (default: `["deepseek-v4-flash", "deepseek-v4-pro"]` / `[0.1, 0.3]`; lengths must match); JSON healing uses the first repair model
+- `cold_start_model_ladder` / `cold_start_temperature_ladder` — independent cold-start warm-up schedule (default: `["deepseek-v4-flash", "deepseek-v4-pro"]` / `[0.1, 0.4]`; lengths must match); the last rung repeats with thinking enabled
 - `cold_start_max_repair_rounds = 10` — runaway guard for the otherwise human-terminated cold-start repair loop
 - `bd_async_poll_max_seconds` / `bd_async_poll_interval_seconds` — Datasets/DCA poll budget (default: 300s / 4s; from M13 Amazon fix)
 - `json_heal_budget = 1`
@@ -235,7 +235,7 @@ The workbook requires `page_type` + `url`. Mandatory coverage is validated befor
 - **BrightData Web Unlocker** — raw HTML (Tesco, Argos)
 - **BrightData Datasets API** — structured JSON (Amazon)
 - **BrightData DCA** — structured JSON (Tesco backup)
-- **Provider-aware LLMs** — runtime repair defaults to Qwen via DashScope; cold start defaults to DeepSeek via its official OpenAI-compatible API. Add models/vendors only in `providers.py`, then set the selected provider key in `.env`.
+- **Provider-aware LLMs** — runtime repair and cold start both currently default to DeepSeek via its official OpenAI-compatible API (Qwen via DashScope is the alternative). Model → vendor → (base_url, key_name) routing is resolved by keyword match against the shared `src/common/llm_router_config.yaml` (also used by Search and Matching); add a new vendor there, then set its key in `.env`. `providers.py` separately holds optional per-vendor call capabilities (thinking params, output caps, JSON-mode support) keyed by the same vendor name — add an entry there only if a vendor needs one of those overrides. An unroutable model name raises `UnknownModelError` (`src/common/llm_client.py`); `validate_model_ladders()` checks every configured ladder entry eagerly at cold-start/orchestrator entry points, before any paid scraping spend.
 
 ### Output cap (`ProviderSpec.max_output_tokens`)
 

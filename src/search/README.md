@@ -132,7 +132,7 @@ An unmapped code doesn't fail — it degrades: DuckDuckGo falls back to `<code>-
 
 ### Accepted LLM vendors
 
-Vendor routing shared with Matching comes from [../common/llm_router_config.yaml](../common/llm_router_config.yaml); the active Search model comes from `llm.model` in [maintain/search_config.yaml](maintain/search_config.yaml).
+Vendor routing shared with Matching and Scraping comes from [../common/llm_router_config.yaml](../common/llm_router_config.yaml); the active Search model comes from `llm.model` in [maintain/search_config.yaml](maintain/search_config.yaml).
 
 Migration note: this routing table previously lived at `maintain/llm_router_config.yaml`. If your checkout added custom vendors there, move those entries into the shared file; the old file is no longer read.
 
@@ -187,7 +187,7 @@ The path supplied as `output_file` / `--output` contains your input with these e
 |---|---|
 | **[maintain/brand.xlsx](maintain/brand.xlsx)** | Add a row whenever a brand isn't being recognised; remove a row to drop a false-positive brand. Only the `brandname_en` column is read — other columns are ignored. After saving, **restart the Python process** (the brand list is `lru_cache`-d for the lifetime of the process; CLI batch runs start fresh, so this is automatic). What's safe to add: normal brands ("Kopparberg"), short brands ("AEG", "7Up"), digit-bearing brands ("19 Crimes"), and even common English words ("Tropical", "Green") — the multi-brand any-pair-match comparison handles collisions correctly. Pure-numeric brands ("555") work but use sparingly — they may collide with codes/prices in titles. |
 | **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. Key sections: `domain_map` (key = retailer keyword, value = accepted host / `site:` value), `search.query_mode`, `search.strip_parens`, `brand.fuzzy_same_threshold` / `fuzzy_differ_threshold` (88 / 40 default), `numeric.continuous_tolerance` (±10%), `numeric.entity_to_attr` + `unit_conversions` + `discrete_attrs` (to support new attributes/units), `llm.model`, and `db`. Restart after editing. |
-| **[../common/llm_router_config.yaml](../common/llm_router_config.yaml)** | Shared Search/Matching keyword → `(base_url, key_name)` routing table. Add an entry when introducing a new LLM vendor. |
+| **[../common/llm_router_config.yaml](../common/llm_router_config.yaml)** | Shared Search/Matching/Scraping keyword → `(base_url, key_name)` routing table. Add an entry when introducing a new LLM vendor. |
 
 Per-run job settings are passed directly to `match_product_batch()` or its CLI; there is no per-run YAML file.
 

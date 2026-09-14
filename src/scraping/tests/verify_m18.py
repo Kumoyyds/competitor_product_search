@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import tempfile
 import traceback
 from pathlib import Path
 from unittest.mock import patch
 
+from src.common.llm_client import UnknownModelError
 from src.scraping.config import ScrapingConfig, set_config
 from src.scraping.providers import (
     PROVIDERS,
@@ -33,34 +33,45 @@ class FakeChatOpenAI:
 
 def verify_resolution() -> None:
     section("M18.1 - provider resolution")
-    model, spec = resolve_provider("deepseek-v4-pro")
+    model, route, spec = resolve_provider("deepseek-v4-pro")
     check(
         "registered DeepSeek model resolves",
-        model == "deepseek-v4-pro" and spec is PROVIDERS["deepseek"],
+        model == "deepseek-v4-pro"
+        and route.provider == "deepseek"
+        and spec is PROVIDERS["deepseek"],
     )
 
-    model, spec = resolve_provider("deepseek/private-preview")
+    model, route, spec = resolve_provider("deepseek/private-preview")
     check(
         "explicit provider prefix wins",
-        model == "private-preview" and spec is PROVIDERS["deepseek"],
+        model == "private-preview"
+        and route.provider == "deepseek"
+        and spec is PROVIDERS["deepseek"],
     )
 
-    model, spec = resolve_provider("qwen3.7-plus")
+    model, route, spec = resolve_provider("qwen3.7-plus")
     check(
         "registered Qwen model resolves",
-        model == "qwen3.7-plus" and spec is PROVIDERS["qwen"],
+        model == "qwen3.7-plus"
+        and route.provider == "qwen"
+        and spec is PROVIDERS["qwen"],
     )
 
-    with _capture_provider_warnings() as records:
-        model, spec = resolve_provider("configured-coldstart-model")
+    # Keyword matching means a previously-unregistered Qwen model id now
+    # routes correctly with zero registry maintenance -- the drift this
+    # consolidation fixes (providers.py used to only know qwen3.7-*).
+    model, route, spec = resolve_provider("qwen3.8-flash")
     check(
-        "unknown model falls back without raising",
-        model == "configured-coldstart-model" and spec is PROVIDERS["qwen"],
+        "unregistered but keyword-matching Qwen model resolves",
+        model == "qwen3.8-flash" and route.provider == "qwen",
     )
-    check(
-        "unknown-model fallback emits warning",
-        any("falling back" in record.getMessage() for record in records),
-    )
+
+    try:
+        resolve_provider("configured-coldstart-model")
+        raised = False
+    except UnknownModelError:
+        raised = True
+    check("unroutable model name raises UnknownModelError instead of falling back", raised)
 
 
 def verify_key_resolution() -> None:
@@ -135,8 +146,8 @@ def verify_client_factory() -> None:
     plain_args, thinking_args, qwen_args = FakeChatOpenAI.calls
     check("DeepSeek client is constructed", deepseek_plain is not None)
     check(
-        "DeepSeek official endpoint selected",
-        plain_args.get("base_url") == "https://api.deepseek.com",
+        "DeepSeek official endpoint selected (via the shared router table)",
+        plain_args.get("base_url") == "https://api.deepseek.com/v1",
     )
     check(
         "DeepSeek key channel is independent",
@@ -256,26 +267,6 @@ def verify_call_sites() -> None:
         healer_args.get("model") == "configured-first-model",
         str(healer_args.get("model")),
     )
-
-
-class _capture_provider_warnings:
-    def __enter__(self):
-        self.records = []
-        self.handler = _ListHandler(self.records)
-        logging.getLogger("src.scraping.providers").addHandler(self.handler)
-        return self.records
-
-    def __exit__(self, exc_type, exc_value, tb):
-        logging.getLogger("src.scraping.providers").removeHandler(self.handler)
-
-
-class _ListHandler(logging.Handler):
-    def __init__(self, records):
-        super().__init__(logging.WARNING)
-        self.records = records
-
-    def emit(self, record):
-        self.records.append(record)
 
 
 def main() -> int:

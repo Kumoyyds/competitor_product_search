@@ -38,7 +38,7 @@ All commands resolve paths relative to the repository root. Fill in `.env` accor
 
 | Key | Needed by |
 |---|---|
-| `QWEN_KEY` / `DEEPSEEK_KEY` | Search and scraping, for whichever provider the configured model routes to |
+| `QWEN_KEY` / `DEEPSEEK_KEY` | Search, scraping, and matching, for whichever provider the configured model routes to |
 | `SERPER_KEY` | Search, only when Serper is in the provider chain |
 | `BRIGHT_DATA_KEY` | Scraping |
 | `ORCHESTRATOR_DB_PATH` | Optional orchestrator database override; defaults to `orchestrator.db` |
@@ -86,6 +86,8 @@ uv run python -m src.orchestrator rerun --batch-id b-... --search-title "Selecte
 The Python API exposes `await run_new_input(...)` and `await rerun(...)`. Results are append-only in `orchestrator.db`; exit code 0 means all Valid, 2 means completed with row failures, and 1 means a fatal invocation error. See the [Orchestrator README](src/orchestrator/README.md).
 
 The Search LLM routing table moved from `src/search/maintain/llm_router_config.yaml` to `src/common/llm_router_config.yaml`. Existing installations with custom vendor entries must copy those entries to the new shared file; no database migration is required.
+
+Scraping's LLM routing (base URL, key name per vendor) previously lived in `src/scraping/providers.py` and silently fell back to Qwen for an unregistered model name. It now resolves from the same shared `src/common/llm_router_config.yaml` by keyword match; `providers.py` keeps only optional per-vendor call capabilities (thinking params, output caps). An unroutable model name now raises instead of falling back — add the vendor keyword to the shared yaml.
 
 The REST `api` module remains planned and is not part of these workflows.
 

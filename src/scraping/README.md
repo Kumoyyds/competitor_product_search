@@ -45,7 +45,7 @@ flowchart TD
     H0B -->|"failed"| H1{"attempt 1 (last)\nTurn B: source_absence?\n(skipped if 2-node)"}
 
     H1 -->|"source_absent"| H1A["ScrapeFailed\n(source_absent)"]
-    H1 -->|"solvable"| H1B["Turn C: gen parser\n(repair_model_ladder[-1] + thinking, T=0.4)"]
+    H1 -->|"solvable"| H1B["Turn C: gen parser\n(repair_model_ladder[-1] + thinking, T=0.3)"]
     H1B -->|"success"| H_DONE
     H1B -->|"failed"| H_FAIL["ScrapeFailed\n(parser_broken)"]
 
@@ -96,11 +96,11 @@ Copy `.env.sample` to `.env` and fill in:
 
 ```
 BRIGHT_DATA_KEY = your Bright Data API key
-QWEN_KEY        = your Qwen API key (runtime repair + JSON healing by default)
-DEEPSEEK_KEY    = your DeepSeek API key (cold start by default)
+QWEN_KEY        = your Qwen API key
+DEEPSEEK_KEY    = your DeepSeek API key (both ladders default to DeepSeek)
 ```
 
-BrightData is used for extraction (Web Unlocker for HTML, Datasets API for Amazon). Both the runtime repair ladder and the (independent) cold-start ladder currently default to `deepseek-v4-flash` — see the [configuration table](#configuration) for the exact defaults and how to switch back to Qwen. Keep whichever provider key the configured ladders resolve to; `providers.py` maps a model id to its vendor, endpoint, and key name.
+BrightData is used for extraction (Web Unlocker for HTML, Datasets API for Amazon). Both the runtime repair ladder and the (independent) cold-start ladder currently default to `deepseek-v4-flash` — see the [configuration table](#configuration) for the exact defaults and how to switch back to Qwen. Keep whichever provider key the configured ladders resolve to; model → vendor → endpoint/key-name routing is resolved from `src/common/llm_router_config.yaml` by keyword match, shared with Search and Matching.
 
 ### 3. Scrape a URL
 
@@ -155,7 +155,7 @@ Before re-cold-starting, open `scripts/check_database.ipynb`, set `SITE` and `TA
 src/scraping/
 ├── __init__.py                     Public API: scrape(), ProductData, ScrapeFailed
 ├── config.py                       ScrapingConfig (all knobs from spec §7)
-├── providers.py                    LLM model/vendor registry + client factory (M18)
+├── providers.py                    LLM vendor call-capability registry + client factory (M18)
 ├── exceptions.py                   ScrapeFailed, BrightDataInfraError
 ├── detection.py                    Invalid-target detection (5 signal layers)
 ├── router.py                       Two-hop dispatch + scraper fallback + escalation
@@ -286,9 +286,9 @@ All knobs live in [config.py](config.py) (`ScrapingConfig`). Notable defaults (s
 
 | Setting | Default | Notes |
 |---------|---------|-------|
-| `repair_model_ladder` | `deepseek-v4-flash` x2 | Runtime HTML repair models, one per attempt; JSON healing uses the first model |
-| `repair_temperature_ladder` | `0.1 → 0.4` | Parser-generation temperature per attempt (length must match the model ladder) |
-| `cold_start_model_ladder` | `deepseek-v4-flash` x2 | Warm-up schedule; final model repeats for later repair rounds |
+| `repair_model_ladder` | `deepseek-v4-flash`, `deepseek-v4-pro` | Runtime HTML repair models, one per attempt; JSON healing uses the first model |
+| `repair_temperature_ladder` | `0.1 → 0.3` | Parser-generation temperature per attempt (length must match the model ladder) |
+| `cold_start_model_ladder` | `deepseek-v4-flash`, `deepseek-v4-pro` | Warm-up schedule; final model repeats for later repair rounds |
 | `cold_start_temperature_ladder` | `0.1 → 0.4` | Must match the cold-start model ladder; final rung repeats with thinking enabled |
 | `cold_start_max_repair_rounds` | 10 | Runaway guard for the otherwise human-terminated cold-start repair loop |
 | `bright_data_zone` | `web_unlocker1` | Web Unlocker zone used by the HTML route |
@@ -322,7 +322,7 @@ SCRAPING_COLD_START_PAGE_REQUIRE_MANDATORY='{"multipack": false, "membership": f
 SCRAPING_GOLDEN_MAX_SAMPLES_PER_PAGE_TYPE=2
 ```
 
-LLM models, endpoints, key names, JSON-mode support, output caps, and thinking toggles live only in `providers.py` — registered models are `qwen3.7-plus` / `qwen3.7-flash` (DashScope, `QWEN_KEY`) and `deepseek-v4-flash` / `deepseek-v4-pro` (`DEEPSEEK_KEY`). Switching a ladder to another vendor is a model-name change here plus that vendor's key in `.env`; no scraper or repair code changes are needed. An unregistered name falls back to the default provider (Qwen).
+Model routing (vendor, endpoint, key name) is resolved by keyword match against `src/common/llm_router_config.yaml`, shared with Search and Matching — currently `qwen` (DashScope, `QWEN_KEY`) and `deepseek` (`DEEPSEEK_KEY`). Any model id containing one of those keywords works with zero registry maintenance (e.g. a new `qwen3.8-*` model needs no code change). `providers.py` separately holds per-vendor call capabilities — JSON-mode support, output caps, thinking toggles — keyed by the same vendor names; a vendor needs an entry there only if it requires one of those overrides. Switching a ladder to another vendor is a model-name change plus that vendor's key in `.env`; no scraper or repair code changes are needed. A model name that matches no vendor keyword raises `UnknownModelError` instead of silently falling back — add the vendor keyword to the shared yaml.
 
 ### Site profiles (`sites.yaml`)
 
@@ -415,7 +415,7 @@ Full design spec: [scraping_module_spec_v1_2.md](scraping_module_spec_v1_2.md) (
 ## External dependencies
 
 - **BrightData** — [Web Unlocker](https://docs.brightdata.com/scraping-automation/web-unlocker/introduction) for HTML, Datasets API for Amazon, DCA collectors for Tesco backup
-- **LLM providers** — DeepSeek through its official OpenAI-compatible endpoint (current ladder default) and Qwen via DashScope; registry in `providers.py`
+- **LLM providers** — DeepSeek through its official OpenAI-compatible endpoint (current ladder default) and Qwen via DashScope; routing in `src/common/llm_router_config.yaml`, call capabilities in `providers.py`
 - **Python 3.12** — some upstream deps lack 3.14 wheels
 - Key libraries: `pydantic`, `httpx`, `lxml`, `beautifulsoup4`, `openpyxl`, `langchain-openai`, `pydantic-settings`, `pyyaml`
 

@@ -1,4 +1,4 @@
-# Human-maintained provider routing shared by Search and Matching.
+# Human-maintained provider routing shared by Search, Matching, and Scraping.
 # Longest case-insensitive keyword match against the configured model wins.
 providers:
   qwen:

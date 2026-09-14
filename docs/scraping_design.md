@@ -78,7 +78,7 @@ flowchart TD
     subgraph L3["Layer 3 — repair ladder (repair/agent.py)"]
         direction TB
         R0["attempt 0 (T=0.1)"]
-        R1["attempt N-1 (T=0.4, thinking)"]
+        R1["attempt N-1 (T=0.3, thinking)"]
         R0 -->|"candidate rejected"| R1
     end
 
@@ -345,9 +345,10 @@ again, with neither counter ever exhausting.
 
 ### How the ladder converges
 
-Escalating the model is only one of several levers, and on the default ladder
-(`["deepseek-v4-flash", "deepseek-v4-flash"]`) it is not used at all. What actually varies
-between attempts:
+Escalating the model is only one of several levers. On the default ladder
+(`["deepseek-v4-flash", "deepseek-v4-pro"]`) the model does escalate on the last attempt; the
+other levers below matter regardless of whether a given ladder escalates the model or repeats
+it. What actually varies between attempts:
 
 - **`AttemptRecord`** ([`repair/agent.py`](../src/scraping/repair/agent.py)) — every attempt
   records its index, model, generated code, sandbox output, a `summarize_capture()` breakdown
@@ -359,7 +360,7 @@ between attempts:
   sees the failing line and expression.
 - **`GoldenRejection`** carries which golden, which field, expected vs. actual — a far more
   actionable signal than "golden test failed".
-- **Temperature ramp** from `repair_temperature_ladder` (default `[0.1, 0.4]`). Judgment
+- **Temperature ramp** from `repair_temperature_ladder` (default `[0.1, 0.3]`). Judgment
   prompts (Turns A/B) always stay at 0.1 regardless.
 - **Thinking mode** on the last rung only, via the provider's `thinking_extra_body`.
 - **Role strategy** ([`repair/prompts.py:_ROLE_STRATEGY`](../src/scraping/repair/prompts.py)):
@@ -867,9 +868,18 @@ declared-unavailable bucket.
 
 ### Providers
 
-[`providers.py`](../src/scraping/providers.py) is the only place a model or vendor is defined:
-base URL, key name, model ids, thinking toggle, JSON-mode support, and output caps. Switching
-a ladder to another vendor is a model-name change in config plus that vendor's key in `.env`.
+Model routing (vendor, base URL, key name) is resolved by keyword match against the shared
+[`llm_router_config.yaml`](../src/common/llm_router_config.yaml), also used by Search and
+Matching — there is no per-model allowlist, so any model id containing a registered vendor
+keyword (e.g. `qwen`, `deepseek`) routes with zero registry maintenance. A name matching no
+vendor keyword raises `UnknownModelError` rather than silently falling back to a default
+provider. [`providers.py`](../src/scraping/providers.py) separately holds optional per-vendor
+call capabilities — thinking toggle, JSON-mode support, output caps — keyed by the same vendor
+name; a vendor needs an entry there only if it requires one of those overrides. Switching a
+ladder to another vendor is a model-name change in config plus that vendor's key in `.env`.
+`validate_model_ladders()` resolves every configured ladder entry eagerly at the cold-start CLI
+and orchestrator batch entry points, so a typo'd model name fails before any paid scraping
+spend rather than after N per-item BrightData fetches.
 
 One trap is worth carrying forward. The output cap is injected into `extra_body` as a
 body-level `max_tokens`, **not** passed as `ChatOpenAI(max_tokens=...)` — langchain rewrites
@@ -889,8 +899,8 @@ overrides. The values most load-bearing for design discussions:
 
 | Knob | Default | Governs |
 |---|---|---|
-| `repair_model_ladder` / `repair_temperature_ladder` | `["deepseek-v4-flash"] × 2` / `[0.1, 0.4]` | Runtime repair budget (§5) |
-| `cold_start_model_ladder` / `cold_start_temperature_ladder` | same | Cold-start warm-up schedule (§8) |
+| `repair_model_ladder` / `repair_temperature_ladder` | `["deepseek-v4-flash", "deepseek-v4-pro"]` / `[0.1, 0.3]` | Runtime repair budget (§5) |
+| `cold_start_model_ladder` / `cold_start_temperature_ladder` | `["deepseek-v4-flash", "deepseek-v4-pro"]` / `[0.1, 0.4]` | Cold-start warm-up schedule (§8) |
 | `per_site_parser_limit` | 4 | Hard-cap retirement (§7) |
 | `prune_sliding_window` | 50 | Natural retirement (§7) |
 | `golden_max_samples_per_page_type` | 3 | Golden bucket cap (§6) |

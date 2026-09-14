@@ -238,7 +238,10 @@ async def verify_coldstart_and_runtime() -> None:
 
     set_test_config(
         qwen_key="offline-test-key",
-        cold_start_model_ladder=["configured-coldstart-model"],
+        # An explicit "qwen/" prefix keeps this offline (qwen_key has a
+        # programmatic fallback; DEEPSEEK_KEY does not) while also exercising
+        # provider-prefix routing through the shared router table.
+        cold_start_model_ladder=["qwen/configured-coldstart-model"],
         cold_start_temperature_ladder=[0.1],
     )
     with patch("langchain_openai.ChatOpenAI", new=FakeChatOpenAI):

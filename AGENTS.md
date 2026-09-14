@@ -55,7 +55,7 @@ result = await scrape("https://www.argos.co.uk/product/3284476")
 | **orchestrator** | `src/orchestrator/` | Implemented | New Input/Rerun coordination and `orchestrator.db` |
 | **matching** | `src/matching/` | Implemented | Attribute-level identity verification |
 | **models** | `src/models/` | Implemented | Shared InputItem/ProductMatchResult contracts |
-| **common** | `src/common/` | Partial | Shared Search/Matching LLM routing |
+| **common** | `src/common/` | Partial | Shared Search/Matching/Scraping LLM routing |
 
 Each implemented module has its own `CLAUDE.md` with the detail that matters when working inside it — read `src/search/CLAUDE.md` or `src/scraping/CLAUDE.md` before changing either.
 
@@ -103,7 +103,7 @@ Key files:
 
 ### External Dependencies
 
-- **LLM**: Configurable OpenAI-compatible providers. search selects via `llm.model` + the router table; scraping registers models/vendors in `src/scraping/providers.py`
+- **LLM**: Configurable OpenAI-compatible providers. All three modules select a model via a `llm.model`-style config key, resolved by keyword match against `src/common/llm_router_config.yaml`; scraping additionally registers optional per-vendor call capabilities (thinking params, output caps) in `src/scraping/providers.py`
 - **Search**: DuckDuckGo (free, via `ddgs` lib) and/or Serper (paid, via `aiohttp`)
 - **Scraping**: BrightData Web Unlocker (raw HTML), Datasets API and DCA (structured JSON)
 - **Pipeline framework**: LangGraph (StateGraph)
@@ -116,7 +116,7 @@ Key files:
 | File | Purpose |
 |------|---------|
 | `src/search/maintain/search_config.yaml` | Pipeline tuning: `search.provider` (string or ordered list for chain), per-provider `query_mode`, `strip_parens`, thresholds, domain map, LLM model |
-| `src/common/llm_router_config.yaml` | Shared Search/Matching keyword → `(base_url, key_name)` routing table |
+| `src/common/llm_router_config.yaml` | Shared Search/Matching/Scraping keyword → `(base_url, key_name)` routing table |
 | `src/matching/matching_config.yaml` | Matching text/Vision model, per-side Vision image caps, text-decision `llm.concurrency`, and request settings |
 | `src/scraping/config.py` (`ScrapingConfig`) | Repair/cold-start model + temperature ladders, sandbox limits, BrightData poll budget, DB path — see `src/scraping/CLAUDE.md` §Key Config |
 | `src/scraping/hosts.yaml`, `sites.yaml` | Host→site mapping and per-site scraper order |
@@ -142,7 +142,7 @@ Key files:
 - **SQLite database files use the `.db` suffix** — never `.sqlite` or `.sqlite3`. Name each database after its module (`scraping.db`, `search.db`); SQLite creates WAL/SHM sidecars as `<name>.db-wal` / `<name>.db-shm`. When adding a database, decide whether it is tracked or ignored in `.gitignore`.
 - **Every column in the search, scraping, or orchestrator DDL needs a `--` meaning comment** on its definition line or immediately above it. Tables, indexes, and views also need a preceding purpose comment. `scripts/gen_storage_docs.py` builds the three `docs/*_storage.md` references from in-memory SQLite databases, and the pre-commit hook rejects undocumented columns or stale generated regions.
 - **New search providers** must include a `_COUNTRY_TO_*` mapping (see `SerperProvider._COUNTRY_TO_GL` and `DuckDuckGoProvider._COUNTRY_TO_REGION`) to translate general country-code arguments to the format the API expects
-- **New scraping sites** are registered in `hosts.yaml` / `sites.yaml` and brought online via `uv run python -m src.scraping.coldstart`; new LLM vendors go in `src/scraping/providers.py`
+- **New scraping sites** are registered in `hosts.yaml` / `sites.yaml` and brought online via `uv run python -m src.scraping.coldstart`; new LLM vendors go in `src/common/llm_router_config.yaml` (shared by search, matching, and scraping) plus optionally `src/scraping/providers.py` for per-vendor call capabilities
 
 ## Agent Workflow
 

@@ -31,7 +31,14 @@ class ScrapingConfig(BaseSettings):
         default="",
         validation_alias=AliasChoices("SCRAPING_QWEN_KEY", "QWEN_KEY"),
     )
-    qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    # Empty by default: the shared router's base_url wins unless this (or
+    # llm_base_url_overrides) is set. A non-empty default here would always
+    # override the router, which is why this field was cleared in the routing
+    # consolidation -- see base_url_for().
+    qwen_base_url: str = ""
+
+    # --- per-provider base_url overrides beyond the legacy qwen_base_url ---
+    llm_base_url_overrides: dict[str, str] = Field(default_factory=dict)
 
     # --- concurrency ---
     per_site_concurrency: int = 16
@@ -45,9 +52,11 @@ class ScrapingConfig(BaseSettings):
     bd_async_poll_interval_seconds: float = 4.0  # sleep between poll GETs
 
     # --- repair (HTML route) ---
-    # Choose model ids from providers.py. Changing provider only requires the
-    # model name here plus that provider's key in .env. Edit both ladder lists
-    # together to change attempt count (their lengths are checked at runtime).
+    # Model ids route through src/common/llm_router_config.yaml (keyword match
+    # on the provider name); per-vendor call capabilities live in providers.py.
+    # Changing provider only requires the model name here plus that provider's
+    # key in .env. Edit both ladder lists together to change attempt count
+    # (their lengths are checked at runtime).
     repair_model_ladder: list[str] = Field(
         default=["deepseek-v4-flash", "deepseek-v4-pro"]
     )
@@ -144,6 +153,19 @@ class ScrapingConfig(BaseSettings):
 
         configured = getattr(self, key_name.lower(), "")
         return configured if isinstance(configured, str) else ""
+
+    def base_url_for(self, provider: str) -> str:
+        """Resolve a per-provider base_url override, or "" to defer to the router.
+
+        Checks ``llm_base_url_overrides[provider]`` first, then the legacy
+        ``<provider>_base_url`` field (e.g. ``qwen_base_url``) for backward
+        compatibility with existing callers and tests.
+        """
+        explicit = self.llm_base_url_overrides.get(provider)
+        if explicit:
+            return explicit
+        legacy = getattr(self, f"{provider}_base_url", "")
+        return legacy if isinstance(legacy, str) else ""
 
     def _read_provider_dotenv(self) -> dict[str, Optional[str]]:
         env_file = self._provider_env_file

@@ -1,3 +1,17 @@
-from .llm_client import make_chat_model, resolve_llm_route
+from .llm_client import (
+    LlmRoute,
+    UnknownModelError,
+    make_chat_model,
+    resolve_llm_endpoint,
+    resolve_llm_route,
+    set_router_config_path,
+)
 
-__all__ = ["make_chat_model", "resolve_llm_route"]
+__all__ = [
+    "LlmRoute",
+    "UnknownModelError",
+    "make_chat_model",
+    "resolve_llm_endpoint",
+    "resolve_llm_route",
+    "set_router_config_path",
+]
