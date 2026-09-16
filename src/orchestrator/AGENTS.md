@@ -29,3 +29,8 @@ Coordinates New Input and Rerun batches across Search, Scraping, Matching, and S
 - `input.py` — canonical file parsing and per-row validation
 - `__main__.py` — `new` / `rerun` CLI
 - `script/database_check.ipynb` — read-only (`mode=ro`) notebook browsing every `orchestrator.db` table
+
+## See also
+
+- [`docs/orchestrator/design.md`](../../docs/orchestrator/design.md) — New Input/Rerun design rationale: lineage fields, status/exit-code derivation, migration mechanics
+- [`docs/orchestrator/storage.md`](../../docs/orchestrator/storage.md) — generated schema for `orchestrator.db`

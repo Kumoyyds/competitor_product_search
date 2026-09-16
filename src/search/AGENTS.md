@@ -1,6 +1,6 @@
 # `src/search/` — product-URL matching pipeline
 
-Implements [`search_link_algorithm_spec.md`](search_link_algorithm_spec.md). Given `(product_name, website, brand?)`, decide whether the product exists on the target marketplace and return the matching URL.
+Given `(product_name, website, brand?)`, decide whether the product exists on the target marketplace and return the matching URL. Operator instructions (install, run, CLI flags, config table, maintenance recipes) live in [README.md](README.md) — this file is the architecture map. Pipeline mechanics and business-logic rationale (why each layer decides what it decides, the short-circuit rule, three-state semantics) live in [docs/search/design.md](../../docs/search/design.md); read that before changing layer logic. [`search_link_algorithm_spec.md`](search_link_algorithm_spec.md) is the original design spec — historical, see design.md for where it's now stale.
 
 ## Entry point
 
@@ -14,7 +14,7 @@ result = await match_product("Magic Rock Saucery 4 X 330ML", "tesco", country="u
 # result.reason         : LLM rationale or pipeline status text
 ```
 
-`pipeline.match_product` accepts a shared `SearchProvider` (or list of them) so a single budget counter can span many calls. `batch.py` and `scripts/validate_search.py` both rely on this. A standalone call creates its own `mode=single` DB run unless `record=False` or DB tracing is disabled.
+`pipeline.match_product` accepts a shared `SearchProvider` (or list of them) so a single budget counter can span many calls. `batch.py` and `scripts/validate_search.py` both rely on this. A standalone call creates its own `mode=single` DB run unless `record=False` or DB tracing is disabled. See README for CLI usage and `.env` requirements.
 
 ## Pipeline shape (LangGraph)
 
@@ -24,16 +24,16 @@ search  →  domain_filter  →  base_match  →  distinguishing  →  aggregate
    └──short-circuit when alive == 0 (or zero search results) ──→ aggregate
 ```
 
-**base (brand+numeric) and distinguishing (LLM) are physically decoupled** — they live in separate modules and never import each other. Communication is only via the orchestrator state dict. Each candidate carries a `LayerTrace` (4 fields, `pass / fail / unknown / None`) and an `alive` flag. When every candidate dies at a layer, conditional edges in [graph.py](graph.py) skip downstream layers — most importantly the LLM call.
+**base (brand+numeric) and distinguishing (LLM) are physically decoupled** — they live in separate modules and never import each other. Communication is only via the orchestrator state dict. Each candidate carries a `LayerTrace` (4 fields, `pass / fail / unknown / None`) and an `alive` flag. When every candidate dies at a layer, conditional edges in [graph.py](graph.py) skip downstream layers — most importantly the LLM call. Full rationale for this shape: [docs/search/design.md](../../docs/search/design.md).
 
 ## Configuration
 
 | Config | Location | What it controls |
 |--------|----------|-----------------|
 | **Pipeline config** | [maintain/search_config.yaml](maintain/search_config.yaml) | Thresholds, domain map, unit conversions, LLM model. **Edit for tuning, not per-run.** |
-| **LLM router config** | [../common/llm_router_config.yaml](../common/llm_router_config.yaml) | Shared Search/Matching keyword → `(base_url, key_name)` table. |
+| **LLM router config** | [../common/llm_router_config.yaml](../common/llm_router_config.yaml) | Shared Search/Matching/Scraping keyword → `(base_url, key_name)` table. |
 
-Per-run settings are arguments to `match_product()` / `match_product_batch()` or flags to `uv run python -m src.search.batch`. There is no per-run YAML. Pipeline internals read `maintain/search_config.yaml` via `config.py`.
+Per-run settings are arguments to `match_product()` / `match_product_batch()` or flags to `uv run python -m src.search.batch`. There is no per-run YAML. Pipeline internals read `maintain/search_config.yaml` via `config.py`. See README's [config reference](README.md#config-reference) for the exhaustive knob list, including `url_rules.product_path` and `db.store_candidates` / `db.store_llm_payload`.
 
 ## File map
 
@@ -60,7 +60,7 @@ Per-run settings are arguments to `match_product()` / `match_product_batch()` or
 
 ## Key invariants
 
-- **Three-state semantics** — brand and numeric layers only `FAIL` when *confirmed different*. Missing data → `UNKNOWN`, never `FAIL`. LLM in distinguishing makes the final call.
+- **Three-state semantics** — brand and numeric layers only `FAIL` when *confirmed different*. Missing data → `UNKNOWN`, never `FAIL`. LLM in distinguishing makes the final call. Rationale: [docs/search/design.md](../../docs/search/design.md).
 - **`site:` is provider-controlled** — `search.query_mode` selects `keyword`, `sitename`, or concurrent `both` per provider; unconfigured providers default to `keyword`.
 - **`BRANDS_FUZZY_SAFE` subset** = brands `len ≥ 4 AND has letter`. Shorter/pure-numeric only match via literal word-boundary regex. Without this guard, fuzzy on "ABC" matches everything.
 - **Brand list `lru_cache`-d per process** — edits to `maintain/brand.xlsx` require a Python restart. CLI batch jobs and `validate_search.py` start fresh, so automatic.
@@ -68,55 +68,19 @@ Per-run settings are arguments to `match_product()` / `match_product_batch()` or
 - **Multi-brand extraction** — `extract_brands()` returns every literal hit, not just the longest/first. `compare_brands()` uses any-pair-pass + all-pairs-differ-fail. Titles where a non-brand word collides with `brand.xlsx` (e.g. "Tetley ... Tropical Tea") are safe.
 - **Numeric regex pre-pass before quantulum3** — quantulum3 misses ABV and treats the leading number in `4 X 330ml` as dimensionless. Regex owns `abv_percent` and `count`; quantulum3 fills the rest.
 
-## Config knobs in maintain/search_config.yaml
-
-| Section | Important keys |
-|---|---|
-| `search` | `provider` (`serper` / `duckduckgo` as string for single engine, or `[duckduckgo, serper]` as ordered list for fallback chain), `k` (results per query), provider-keyed `query_mode`, `strip_parens` |
-| `domain_map` | website name → host. Add new marketplaces here. |
-| `url_rules` | tracking-query denylist plus optional website → single-product path regex. Websites without a path rule keep host-only filtering. |
-| `brand` | `fuzzy_same_threshold` (default 88), `fuzzy_differ_threshold` (default 40) |
-| `numeric` | `continuous_tolerance` (default 0.10), `entity_to_attr`, `unit_conversions`, `discrete_attrs`, `ambiguity_rules` |
-| `llm` | `model` (routed via `src/common/llm_router_config.yaml`), `temperature`, `timeout_s` |
-
 ## Batch arguments
 
-`match_product_batch()` takes the full input/output paths, SKU, website, and country column names, plus optional Serper budget and concurrency. Website and country are resolved per row. Provider-chain strategy remains in `maintain/search_config.yaml` unless the caller supplies providers.
+`match_product_batch()` takes the full input/output paths, SKU, website, and country column names, plus optional Serper budget, concurrency, and a `progress` flag (CLI: `--no-progress`; on by default). Website and country are resolved per row. Provider-chain strategy remains in `maintain/search_config.yaml` unless the caller supplies providers.
 
 `match_products()` accepts typed in-memory `SearchRequest` objects and records one batch run without creating a temporary workbook. Orchestrator uses this API. It and `match_product_batch()` share `_execute_search_batch()`; the Excel path is only an input/output adapter over the same provider, concurrency, row-error, and trace engine.
 
 ## Running
 
-End-to-end batch:
-```
-uv run python -m src.search.batch --input input/products.xlsx --sku-col product_name \
-    --web-col web --country-col country --output output/results.xlsx
-```
-The input path is passed unchanged. Blank website/country cells become row-level errors without stopping the batch. Omit `--output` when calling the Python API to return the enriched DataFrame without writing Excel.
-
-Unit tests (offline, mocks Serper + LLM — zero API cost):
-```
-uv run pytest tests/unit/search/ -v
-```
-
-Budget-capped validation against `src/0_Data/tesco_algo.xlsx`:
-```
-uv run python scripts/validate_search.py --sample 20 --budget 50
-```
-Writes `output/validation_report.xlsx`. Prints numeric pre-pass, then runs pipeline within the call budget, then per-layer verdict counts and agreement vs legacy `url_search_1`.
-
-## Environment
-
-Required env vars in `.env` at repo root:
-- `QWEN_KEY` — DashScope API key when `llm.model` routes to `qwen` in `src/common/llm_router_config.yaml`
-- `SERPER_KEY` — google.serper.dev key, only needed if Serper is in the provider chain
-- `DEEPSEEK_KEY` — only needed if `llm.model` is switched to route to `deepseek`
-
-Python 3.12. Direct dependencies are declared in the root `pyproject.toml`, with resolved versions locked in `uv.lock`.
+See [README.md](README.md) for CLI usage, `.env` requirements, and the unit/validation test commands.
 
 ## Adding things
 
 - **New search provider**: subclass `providers.base.SearchProvider`, register in `providers/__init__.py::make_provider`, add `search.provider` in `maintain/search_config.yaml`. **Must include an internal `_COUNTRY_TO_*` mapping** (see `SerperProvider._COUNTRY_TO_GL` and `DuckDuckGoProvider._COUNTRY_TO_REGION`) so general country-code arguments (uk, fr, de, nl, ...) translate to whatever format the API expects. Include a helper (`_to_gl`, `_to_region`, etc.) called inside `search()`.
-- **New marketplace**: add one `domain_map` entry in `maintain/search_config.yaml`; its key is the keyword query term and its value is the accepted host / `site:` operand. No code change needed.
+- **New marketplace**: add one `domain_map` entry in `maintain/search_config.yaml`, plus a `url_rules.product_path` entry if the marketplace has a recognisable single-product URL shape; no code change needed. See README's "Add a new marketplace" for the full walkthrough.
 - **New numeric attribute**: add `entity_to_attr` mapping (or custom regex in `layers/numeric.py::extract_numerics`) + `unit_conversions` table + decide discrete-vs-continuous in `discrete_attrs`.
 - **Brand list grows**: append rows to `maintain/brand.xlsx` `brandname_en`. `lru_cache` is per-process; restart picks up new rows. See "Files to maintain" in [README.md](README.md) for the full guide.

@@ -9,13 +9,13 @@ Five documents cover the scraping module. They do different jobs — pick the ri
 
 | Document | Job | Read it when |
 |---|---|---|
-| [`src/scraping/README.md`](../src/scraping/README.md) | Operator manual — install, run, add a site, config table, exit codes | You are *using* the module |
-| [`src/scraping/CLAUDE.md`](../src/scraping/CLAUDE.md) (= `AGENTS.md`) | Milestone log M1–M23, newest behavior first | You need to know *what changed and when* |
-| [`src/scraping/scraping_module_spec_v1_2.md`](../src/scraping/scraping_module_spec_v1_2.md) | The original Phase-0 spec (Chinese) with decisions **D1–D29** and their rationale | You are about to overturn a decision and need the original reasoning |
-| [`docs/scraping_storage.md`](scraping_storage.md) | Generated SQLite tables, columns, constraints, relationships, migrations, and queries | You need the exact persisted schema |
+| [`src/scraping/README.md`](../../src/scraping/README.md) | Operator manual — install, run, add a site, config table, exit codes | You are *using* the module |
+| [`src/scraping/CLAUDE.md`](../../src/scraping/CLAUDE.md) (= `AGENTS.md`) | Architecture map and key files, for an agent working in the code | You need to know *where things live and how to change them safely* |
+| [`src/scraping/scraping_module_spec_v1_2.md`](../../src/scraping/scraping_module_spec_v1_2.md) | The original Phase-0 spec (Chinese) with decisions **D1–D29** and their rationale | You are about to overturn a decision and need the original reasoning |
+| [`docs/scraping/storage.md`](storage.md) | Generated SQLite tables, columns, constraints, relationships, migrations, and queries | You need the exact persisted schema |
 | **This document** | Mechanism-level design reference, written from the code as it stands | You are *analyzing or evolving* the design |
 
-Two rules for this document: it describes the code as it is today (M23), and it does not
+Two rules for this document: it describes the code as it currently stands, and it does not
 repeat what the README already explains operationally. `D<n>` references point at the
 spec's decision table.
 
@@ -123,6 +123,46 @@ database at `db_path`. Knowing the writer of each explains most of the module's 
 
 `scrape_runs` is high-frequency and deliberately stores no HTML (D16 — a single Argos page
 reaches 1.6 MB). Large text lives only in `golden_samples` and `escalations`.
+
+Two nullable foreign keys tie these rows into one lineage. `results.run_id → scrape_runs.id`
+names the exact execution that produced a qualified result. `scrape_runs.escalation_id →
+escalations.id` links every failed execution in a router fallback chain to the
+signature-deduplicated ticket it fed. `scrape_runs` is strictly one row per execution — an
+earlier success-dedup window that collapsed repeated runs within a time bucket was removed so
+every result can point at a distinct producing run. Historical rows predating the migration
+keep a `NULL` key rather than being backfilled with a guess. A repaired HTML success also
+records the promoted parser id as `winning_parser_id` (not just an `agent_repaired` marker), so
+hit-rate ordering and hard-cap pruning (§7) credit a parser from its very first win; both repair
+routes — HTML parser repair and API JSON healing — record the actual configured LLM that
+performed the repair in `scrape_runs.repair_model`, left `NULL` for runs that needed no repair.
+
+### Extraction hardening: infra detection and encoding
+
+Before any parsing happens, `extraction/bright_data.py:_check_infra_error` classifies whether a
+BrightData response is even usable raw material:
+
+- **Header-authoritative** — `x-brd-error-code` values (`min_size`, `reject_block`,
+  `networkidle_event_timeout`, `bucket_rate_limit`, …) are BrightData's own signal that the
+  fetch failed, checked before anything else.
+- **Status-code fast path** — `{407, 429, 500, 502, 503, 504}` always trigger the extraction
+  retry (pause + re-request, D7).
+- **Body-length fallback** (HTML route only) — a 200 with a body under 1000 chars is treated as
+  an infra flake (empty/stub response); Datasets/DCA trigger responses are small JSON by design
+  and skip this check.
+- **Upstream error markers** (HTML route only) — a 200 under 5000 chars containing a literal
+  upstream error status line (`502 Bad Gateway`, nginx `Gateway Time-out`, …) is still infra,
+  not content — BrightData proxied a transient failure transparently.
+- **Soft-tolerance** — an error header paired with a substantial body (≥ 1000 chars) is let
+  through to invalid-target detection (§3) instead of failing hard, logged at WARN; Turn A is
+  the ultimate safety net if that guess is wrong.
+
+`BrightDataUnlocker.fetch()` also forces UTF-8 decoding
+(`resp.charset_encoding or "utf-8"`, then `resp.content.decode(...)`) rather than trusting
+httpx's automatic charset guess, which has mis-detected Latin-1 for at least one site and turned
+every multi-byte UTF-8 currency symbol into a mojibake sequence that then broke downstream
+`Decimal` parsing in generated parsers. One choke point at extraction time means no per-parser
+or per-site encoding patch is ever needed; an explicitly declared charset is still honored, so a
+future site that genuinely serves non-UTF-8 markup is not broken by the default.
 
 ---
 
@@ -749,6 +789,17 @@ is exactly the sort of plausible-looking wrong number D25 exists to prevent.
 Budget is `json_heal_budget = 1` — single shot. A heal that needs several attempts is a schema
 change, which is a human's problem.
 
+### API price-field normalization
+
+Hand-written API field mappings pass through one canonical choke point,
+[`scrapers/price_fields.py`](../src/scraping/scrapers/price_fields.py), before Gate 1/2
+validation. It drops a `list_price` or `membership_price` qualifier that would violate the M20
+ordering contract (§2) — equal-or-lower `list_price`, equal-or-higher or non-positive
+`membership_price` — while keeping a positive qualifier alone when ordinary `price` is absent.
+HTML parser output is deliberately left unnormalized: a gate failure there must still surface,
+because that is what drives the repair ladder (§5). Normalizing an HTML mapping the same way
+would quietly fix its output instead of teaching the ladder that the mapping was wrong.
+
 ### Trigger/poll split (M13)
 
 The Datasets (Amazon) and DCA (Tesco/Argos backup) APIs are asynchronous: POST to trigger a
@@ -762,6 +813,18 @@ POST creates nothing, while `_poll()` runs **outside** the retry wrapper and own
 wall-clock budget (`bd_async_poll_max_seconds` = 300 s, `bd_async_poll_interval_seconds` =
 4 s), never re-triggering. One URL, at most one snapshot. This is the general principle worth
 remembering: **retry wraps the idempotent half, never the half that allocates a resource.**
+
+### Shape-tolerant polling (M27)
+
+Bright Data serves a completed Datasets/DCA collection as JSON Lines. A one-record response is
+one JSON object plus a trailing newline, which `httpx.Response.json()` returns as a `dict`, not
+the list a naive "take the first element" caller assumes. `_poll()` for both clients shares one
+normalization-and-status-classification loop that accepts a JSON array, a single JSON object,
+single-line JSONL, or multi-line JSONL, and classifies pending/failed/ready status envelopes
+before handing back the record. Permanent 401/403 responses fail immediately instead of being
+retried as if transient; a timeout reports the poll count, the last HTTP status, and a bounded
+body preview instead of a bare `TimeoutError`. Trigger-retry boundaries are unchanged — polling
+still can never create a second snapshot.
 
 ---
 
@@ -971,9 +1034,9 @@ than *what a valid product looks like*.
 
 ## Related documents
 
-- [`src/scraping/README.md`](../src/scraping/README.md) — operator manual, config table, adding a site
-- [`src/scraping/CLAUDE.md`](../src/scraping/CLAUDE.md) — milestone log M1–M23
-- [`src/scraping/scraping_module_spec_v1_2.md`](../src/scraping/scraping_module_spec_v1_2.md) — original spec, decisions D1–D29
-- [`docs/scraping_storage.md`](scraping_storage.md) — generated SQLite schema and migration reference
-- [`src/scraping/tests/README.md`](../src/scraping/tests/README.md) — verification inventory
-- [`docs/architecture.md`](architecture.md) — project-level module map
+- [`src/scraping/README.md`](../../src/scraping/README.md) — operator manual, config table, adding a site
+- [`src/scraping/CLAUDE.md`](../../src/scraping/CLAUDE.md) — architecture map and key files
+- [`src/scraping/scraping_module_spec_v1_2.md`](../../src/scraping/scraping_module_spec_v1_2.md) — original spec, decisions D1–D29
+- [`docs/scraping/storage.md`](storage.md) — generated SQLite schema and migration reference
+- [`src/scraping/tests/README.md`](../../src/scraping/tests/README.md) — verification inventory
+- [`docs/architecture.md`](../architecture.md) — project-level module map

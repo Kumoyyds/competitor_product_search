@@ -4,23 +4,7 @@
 
 Given a product name and a target marketplace (Tesco / Argos / Amazon), this module decides whether that product exists on the marketplace and returns the matching listing URL.
 
-It replaces the old "let an LLM agent pick a URL" approach with a **5-layer pipeline** that filters candidates progressively and only invokes the LLM on the small set that survives cheap rule-based filters. Design rationale and full spec: [search_link_algorithm_spec.md](search_link_algorithm_spec.md).
-
-### How it works
-
-```
-search  →  domain_filter  →  base_match  →  distinguishing  →  aggregate
-```
-
-1. **search** — builds provider-specific keyword and/or `site:` queries, fires them concurrently at the first provider in the chain (DuckDuckGo / Serper / custom), and dedups results by URL.
-2. **domain_filter** — drops candidates whose host isn't the target marketplace (e.g. only keep `*.tesco.com` when targeting Tesco).
-3. **base_match** — for each surviving candidate, compares **brand** (rapidfuzz against `brand.xlsx`, three-state pass/fail/unknown) and **numeric attributes** (volume, weight, count, ABV, storage… extracted via quantulum3 + regex). Mismatches kill the candidate; missing info passes through as `unknown`.
-4. **distinguishing** — one batched call to the configured LLM decides which surviving candidate (if any) is the same SKU, catching variant differences the rules miss (flavour, colour, version, pack size).
-5. **aggregate** — picks the verdict (`match` / `no_match`) and the per-layer trace.
-
-Short-circuiting: whenever a layer kills every candidate, the pipeline skips straight to `aggregate`. The LLM is never called when cheap rules already settled the question.
-
-Each candidate carries a `LayerTrace` showing exactly where the decision happened — useful for debugging and tuning.
+It runs candidates through a **5-layer pipeline** — search, domain filter, rule-based base match (brand + numeric), a single batched LLM call for anything still ambiguous, then aggregation — only invoking the LLM on the small set that survives the cheap rule-based filters first. For how each layer decides what it decides, and why, see [docs/search/design.md](../../docs/search/design.md); for the original design spec see [search_link_algorithm_spec.md](search_link_algorithm_spec.md) (historical — see design.md for where it's now out of date).
 
 ---
 
@@ -85,7 +69,7 @@ Stratified sample from `src/0_Data/tesco_algo.xlsx`, capped at 50 Serper calls. 
   - `item_sku_name_de` (or whatever you pass as `sku_col`) — the product name string
   - `web` (or whatever you pass as `web_col`) — the target marketplace code, such as `tesco` or `amazon`
   - `country` (or whatever you pass as `country_col`) — the general country code (`uk` / `fr` / `de` / `nl`; each provider maps it internally)
-- **Arguments**: `sku_col`, `web_col`, `country_col`, optional `output_file`, `serper_max_calls`, `concurrency` (default 16), and `progress`
+- **Arguments**: `sku_col`, `web_col`, `country_col`, optional `output_file`, `serper_max_calls`, `concurrency` (default 16), and `progress` (CLI: `--no-progress` to disable; the batch CLI shows a progress bar by default)
 - **Invalid rows**: a blank/NaN website or country cell becomes a row-level `error` with `url_search_1="not found"`; other rows continue. A missing required column raises `KeyError` before the run starts.
 
 ### Accepted `website` values
@@ -103,7 +87,7 @@ The website code is looked up in `domain_map` in [maintain/search_config.yaml](m
 
 A `domain_map` value **ending in `.`** is a registrable-name prefix — it matches that name under any TLD. Values without the trailing dot match that exact host and its subdomains only. Look-alikes (`notamazon.de`, `amazon.de.evil.com`) are rejected either way.
 
-An unlisted website code doesn't raise — sitename mode falls back to a keyword query, then every candidate fails `domain_filter` and the row comes back `no_match`. To support a new marketplace, add one `domain_map` entry — no code change needed.
+An unlisted website code doesn't raise — sitename mode falls back to a keyword query, then every candidate fails `domain_filter` and the row comes back `no_match`. To support a new marketplace, add one `domain_map` entry — no code change needed. If the marketplace has a recognisable single-product URL shape, also add a `url_rules.product_path` entry (see "Add a new marketplace" below) so gallery/category/browse pages that share the same host are rejected too.
 
 ### Accepted `country` values
 
@@ -186,12 +170,31 @@ The path supplied as `output_file` / `--output` contains your input with these e
 | File | When / how to update |
 |---|---|
 | **[maintain/brand.xlsx](maintain/brand.xlsx)** | Add a row whenever a brand isn't being recognised; remove a row to drop a false-positive brand. Only the `brandname_en` column is read — other columns are ignored. After saving, **restart the Python process** (the brand list is `lru_cache`-d for the lifetime of the process; CLI batch runs start fresh, so this is automatic). What's safe to add: normal brands ("Kopparberg"), short brands ("AEG", "7Up"), digit-bearing brands ("19 Crimes"), and even common English words ("Tropical", "Green") — the multi-brand any-pair-match comparison handles collisions correctly. Pure-numeric brands ("555") work but use sparingly — they may collide with codes/prices in titles. |
-| **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. Key sections: `domain_map` (key = retailer keyword, value = accepted host / `site:` value), `search.query_mode`, `search.strip_parens`, `brand.fuzzy_same_threshold` / `fuzzy_differ_threshold` (88 / 40 default), `numeric.continuous_tolerance` (±10%), `numeric.entity_to_attr` + `unit_conversions` + `discrete_attrs` (to support new attributes/units), `llm.model`, and `db`. Restart after editing. |
+| **[maintain/search_config.yaml](maintain/search_config.yaml)** | Tune without touching code. See the [config table](#config-reference) below. Restart after editing. |
 | **[../common/llm_router_config.yaml](../common/llm_router_config.yaml)** | Shared Search/Matching/Scraping keyword → `(base_url, key_name)` routing table. Add an entry when introducing a new LLM vendor. |
 
 Per-run job settings are passed directly to `match_product_batch()` or its CLI; there is no per-run YAML file.
 
 The in-memory and Excel entry points use the same internal batch executor. The Excel entry point only validates and converts rows to batch requests, then formats the ordered results back into workbook columns; it does not maintain a second provider/concurrency implementation.
+
+### Config reference
+
+Key sections of [maintain/search_config.yaml](maintain/search_config.yaml):
+
+| Section | Key(s) | What it controls |
+|---|---|---|
+| `search` | `provider` | String = single search engine for every row; list (e.g. `[duckduckgo, serper]`) = ordered fallback chain, escalating per row on `NO_MATCH` |
+| `search` | `k`, `query_mode` (per provider), `strip_parens` | Results per query; `keyword` / `sitename` / `both` query construction per provider; whether to also issue parenthesis-free query variants |
+| `domain_map` | (website → host) | Add a new marketplace here — no code change needed |
+| `url_rules` | `strip_query_params` | Tracking-parameter denylist stripped from every candidate URL before dedup |
+| `url_rules` | `product_path` | Optional per-website regex a URL path must match to count as a single product page (e.g. `tesco: '/products/\d+'`). Websites without an entry keep host-only filtering — gallery/category pages on that host are not rejected. |
+| `brand` | `fuzzy_same_threshold` / `fuzzy_differ_threshold` | RapidFuzz score bounds for brand same/differ (default 88 / 40); the gap between them is `unknown` |
+| `numeric` | `continuous_tolerance` | Allowed relative difference for continuous attributes like weight/volume (default ±10%) |
+| `numeric` | `entity_to_attr`, `unit_conversions`, `discrete_attrs`, `ambiguity_rules` | Attribute/unit support — extend for new numeric attributes or units |
+| `llm` | `model`, `temperature`, `timeout_s` | Distinguishing-layer model (routed via `src/common/llm_router_config.yaml`), sampling temperature, HTTP timeout |
+| `db` | `sqlite_path`, `enabled` | Trace database location and whether tracing runs at all |
+| `db` | `store_candidates` | If `false`, per-candidate rows are not written to `search.db` — reduces storage volume for high-throughput batches, at the cost of losing per-candidate diagnostics for later review |
+| `db` | `store_llm_payload` | If `false`, the LLM call's prompt and raw response are stored as `NULL` in `search.db` while call metadata (model, timing, outcome) is still recorded. Turn this off to avoid persisting product titles/text through the LLM payload — useful if the input data carries PII or the payload volume/cost of storing full prompts is a concern. |
 
 ### Common maintenance tasks
 
@@ -199,13 +202,20 @@ The in-memory and Excel entry points use the same internal batch executor. The E
 |---|---|
 | Recognise a new brand | Append to `maintain/brand.xlsx` `brandname_en`, save, restart |
 | Drop a noisy brand | Delete that row in `maintain/brand.xlsx`, save, restart |
-| Add a new marketplace | In `maintain/search_config.yaml`, add `domain_map: { <retailer-keyword>: <host> }` |
+| Add a new marketplace | See "Add a new marketplace" below |
 | Change query construction | Set a provider's `search.query_mode` to `keyword`, `sitename`, or `both`; toggle `search.strip_parens` for parenthesis-free variants |
 | Make brand matching stricter / looser | Raise / lower `brand.fuzzy_same_threshold` in `maintain/search_config.yaml` |
 | Allow more slop in weights/volumes | Raise `numeric.continuous_tolerance` |
 | Support a new unit (e.g. `floz`) | Add it under the relevant attribute in `numeric.unit_conversions` |
 | Support a brand-new numeric attribute | Add entry to `numeric.entity_to_attr` + `unit_conversions` + decide discrete-vs-continuous in `numeric.discrete_attrs` |
 | Switch LLM model/vendor | Edit `llm.model` in `maintain/search_config.yaml`; add new vendor routing in `src/common/llm_router_config.yaml`. |
+| Stop storing per-candidate rows / LLM prompts for cost or PII reasons | Set `db.store_candidates` / `db.store_llm_payload` to `false` in `maintain/search_config.yaml` |
+
+### Add a new marketplace
+
+1. In `maintain/search_config.yaml`, add one `domain_map` entry: `{ <retailer-keyword>: <host> }`. `<retailer-keyword>` is the term used by keyword-mode queries; `<host>` is what `domain_filter` accepts and what `site:` queries target.
+2. If the marketplace has a recognisable single-product URL shape, also add a `url_rules.product_path` entry keyed by the same website name, with a regex the product page's path must match (e.g. `'/products/\d+'`). This rejects gallery/category/browse pages that share the marketplace's host but aren't a product page. Skip this step only if you're fine with host-only filtering (any URL on the right host passes `domain_filter`).
+3. No code change is required for either step.
 
 ### Things that drift over time
 
@@ -223,49 +233,17 @@ Tests skip cleanly if a referenced brand was removed from `brand.xlsx` — so br
 
 ### What does NOT need maintenance
 
-- Code under `layers/`, `providers/`, `graph.py`, `pipeline.py` — only edit when changing algorithm behaviour.
+- Code under `layers/`, `providers/`, `graph.py`, `pipeline.py` — only edit when changing algorithm behaviour. For how that behaviour currently works, see [docs/search/design.md](../../docs/search/design.md).
 
 ---
 
-## 6. Script map
+## 6. Storage
 
-```
-[batch.py] ──→ [pipeline.py] ──→ [graph.py] ──→ [layers/search] ──→ [layers/query_builder]
-   │               │                │              │
-   │               │                │              └──→ [providers/serper]  (or [providers/duckduckgo])
-   │               │                │
-   │               │                ├──→ [layers/domain_filter]
-   │               │                │
-   │               │                ├──→ [layers/base_match] ──→ [layers/brand]
-   │               │                │         │                    └──→ [utils.py]
-   │               │                │         └──→ [layers/numeric]
-   │               │                │
-   │               │                ├──→ [layers/distinguishing]
-   │               │                └──→ [layers/aggregate]
-   │               │
-   │               ├──→ [config.py] ──→ maintain/search_config.yaml
-   │               ├──→ [models.py]
-   │               └──→ [providers/__init__] ──→ [providers/serper]
-   │                                             ├──→ [providers/duckduckgo]
-   │                                             ├──→ make_provider()
-   │                                             └──→ make_provider_chain()
-   │
-   └──→ [providers/__init__]  (make_provider_chain for shared budget chain)
-
-[utils.py] ──→ maintain/brand.xlsx
-```
-
-Key: `──→` = imports/calls. `graph.py` wires the 5 layers via LangGraph conditional edges; `base_match` delegates brand+numeric to separate files and never imports `distinguishing`.
+Search run/task tracing is stored in `search.db` by default. See [docs/search/storage.md](../../docs/search/storage.md) for the authoritative column definitions, constraints, relationships, JSON shapes, views, compatibility behavior, and example queries. The generated schema regions are rebuilt from `db.py`; do not edit them by hand.
 
 ---
 
-## Storage
-
-Search run/task tracing is stored in `search.db` by default. See [Search storage reference](../../docs/search_storage.md) for the authoritative column definitions, constraints, relationships, JSON shapes, views, compatibility behavior, and example queries. The generated schema regions are rebuilt from `db.py`; do not edit them by hand.
-
----
-
-## File map (quick)
+## 7. File map (quick)
 
 | Path | Purpose |
 |---|---|
@@ -279,7 +257,8 @@ Search run/task tracing is stored in `search.db` by default. See [Search storage
 | [config.py](config.py) | Loader for `maintain/search_config.yaml`; delegates LLM routing to `src/common` |
 | [utils.py](utils.py) | Brand-set loader + word-boundary literal matcher (reads `maintain/brand.xlsx`) |
 | [maintain/](maintain/) | **Maintained files** — `brand.xlsx` + `search_config.yaml`. Provider routing is shared under `src/common`. |
-| [search_link_algorithm_spec.md](search_link_algorithm_spec.md) | Full design rationale |
-| [CLAUDE.md](CLAUDE.md) | Code-internals reference for AI assistants / developers |
+| [search_link_algorithm_spec.md](search_link_algorithm_spec.md) | Original design spec (historical) |
+| [CLAUDE.md](CLAUDE.md) | Architecture map for AI assistants / developers |
+| [../../docs/search/design.md](../../docs/search/design.md) | Pipeline mechanics and business-logic rationale |
 
 Unit tests live at [tests/unit/search/](../../tests/unit/search/). Run `uv run pytest` for the default offline, zero-cost suite. Use `uv run pytest -m live` only when API-backed tests are intended; they require keys and may incur cost.

@@ -16,69 +16,13 @@ URL in  ─→  Router (host→site→scraper list)
 
 ### Pipeline Flow
 
-> Rendered by Mermaid (GitHub + VS Code native). Click to zoom.
-
-```mermaid
-flowchart TD
-    A["scrape(url)"] --> B{"resolve_site(url)\nhost → site via hosts.yaml"}
-    B --> C{"get_scrapers(site)\nordered by priority"}
-
-
-    C --> D["Try scraper 1"]
-
-    D --> E{"BrightData\nfetch"}
-    E -->|"HTTP 200 + body ≥ 1000"| F{"detect_invalid_page\n(5 signals)"}
-    E -->|"body < 1000 chars\nor 407/429/500/502/503/504\nor x-brd-error-code + empty\nor upstream error markers"| E1["extraction retry\npause 2s, up to 3 attempts"]
-    E1 -->|"still failing"| D1["ScrapeFailed\n(extraction_infra)"]
-    E1 -->|"recovered"| F
-
-    F -->|"page_length < 5000\nor multi_absence\nor keyword_match\nor HTTP 404/410"| F1["InvalidTargetResult ✓\n(fast — no LLM)"]
-    F -->|"page looks valid"| G["ordered parser list\n(sorted by hit rate)"]
-
-    G -->|"parser hits\ngates pass"| G1["ProductData ✓\n(fast path)"]
-    G -->|"no active parsers\nor all failed"| H
-
-    H["repair ladder\n(N att, config-driven)"] --> H0{"attempt 0\nTurn A: no_product?"}
-    H0 -->|"yes"| H0A["InvalidTargetResult ✓\n+ phrase backfill"]
-    H0 -->|"no (product page)"| H0B["Turn C: gen parser\n(repair_model_ladder[0], T=0.1)"]
-    H0B -->|"sandbox + gates pass\n+ golden test pass"| H_DONE["ProductData ✓\n(agent_repaired)\n+ promote parser"]
-    H0B -->|"failed"| H1{"attempt 1 (last)\nTurn B: source_absence?\n(skipped if 2-node)"}
-
-    H1 -->|"source_absent"| H1A["ScrapeFailed\n(source_absent)"]
-    H1 -->|"solvable"| H1B["Turn C: gen parser\n(repair_model_ladder[-1] + thinking, T=0.3)"]
-    H1B -->|"success"| H_DONE
-    H1B -->|"failed"| H_FAIL["ScrapeFailed\n(parser_broken)"]
-
-    D1 --> R{"more scrapers\nin list?"}
-    H_FAIL --> R
-    H1A --> R
-
-    R -->|"yes"| D2["Try scraper 2\n(e.g. TescoDCA)"]
-    D2 --> E
-
-    R -->|"no"| ESC{"derive reason"}
-    ESC -->|"all failures = *_infra"| ESC_I["Escalation\ninfra_failure"]
-    ESC -->|"last = api_malformed"| ESC_A["Escalation\napi_malformed"]
-    ESC -->|"else"| ESC_P["Escalation\nparser_broken"]
-
-    ESC_I --> FAIL["raise ScrapeFailed"]
-    ESC_A --> FAIL
-    ESC_P --> FAIL
-```
-
-Under the hood:
-
-- **Invalid-target detection** — before parsing, checks JSON-LD, HTTP status, structural absence, page length, and a learned phrase list. Delisted / error pages are caught before wasting a parse.
-- **Ordered parser list** — each site has multiple parsers ranked by real-time hit rate. First to pass both gates wins.
-- **Two gates** — Gate 1 = Pydantic types. Gate 2 = `feasible_check`: every in-stock product needs a positive ordinary `price`; `list_price > price` and `membership_price < price` when those fields are present; out-of-stock items still need a product signal.
-- **Trigger/poll split (M13)** — for async BD APIs (Datasets/DCA): `_trigger()` is wrapped in retry (safe — failed POST → no snapshot), `_poll()` owns the full budget and **never re-triggers**. One URL → at most one BD snapshot. Configurable poll budget via `bd_async_poll_max_seconds` (300s default). The old blind-re-trigger-on-timeout bug for Amazon is fixed.
-- **Self-healing** — when all parsers fail, a provider-configured LLM generates a candidate, sandboxes it, tests against golden samples, and promotes it if it passes. API routes use JSON remapping only (D25 red line — never fabricates).
-- **Fallback ladder** — a site can register multiple scrapers (e.g. Tesco = HTML primary + DCA backup). Terminal failure → next scraper; all exhausted → escalation ticket (`parser_broken / api_malformed / infra_failure / mass_invalid_target`).
-- **API price normalization (M24)** — hand-written API mappings pass through one canonical choke point before validation. Equal/lower `list_price` and equal/higher or non-positive `membership_price` values are omitted; HTML parsers remain gate-driven so bad generated mappings still trigger repair.
-- **Execution observability (M24/M28)** — every scraper execution, including Direct API routes such as Amazon, writes one `scrape_runs` row; successes are no longer collapsed by a time window. Qualified `results` point to their producing run, failed runs point to their aggregate escalation ticket, repaired HTML successes record the promoted parser in `winning_parser_id`, and repair paths record the actual LLM in `repair_model`.
-- **Golden set** — successful scrapes grow each page-type bucket to the config-driven cap (3 by default), with duplicate-URL protection. Five buckets (precedence order): `out_of_stock` > `membership` > `discounted` > `multipack` > `standard`. Future promotions must reproduce all goldens exactly.
-- **Site profiles (M23)** — [sites.yaml](sites.yaml) declares, per site, which page types can exist at all and which are mandatory for cold start. These are *constraints*, not detectors: a site that has no gated member pricing (Argos — Nectar points accrue rewards, they are not a member price) vetoes `membership` classification outright, and an unavailable type can never become mandatory. Undeclared sites and undeclared types fail open to the global `config.py` defaults. See [Site profiles](#site-profiles-sitesyaml).
-- **Cold start** — a validated Excel sheet declares each URL's page type; required coverage is checked before paid work. The dedicated cold-start model ladder generates and repairs one parser from sandbox failures plus structured human corrections. The parser and confirmed goldens are written only when every fetched, in-scope case passes; fetch failures remain non-blocking and are reported separately.
+Extraction → invalid-target pre-detection → ordered parser list (or JSON field mapping on the
+API route) → two validation gates → on failure, self-healing repair (or a scraper-level
+fallback to the next registered channel) → on total exhaustion, an escalation ticket. For the
+full flow diagrams (nested fallback layers, the two gates, invalid-target detection, the repair
+ladder, escalation taxonomy) and the mechanism-level "why" behind each step — the repair ladder,
+JSON self-healing, the golden set, site profiles, cold start — see
+[docs/scraping/design.md](../../docs/scraping/design.md).
 
 ## Quick start
 
@@ -170,7 +114,8 @@ src/scraping/
 │   ├── base.py                     BaseScraper ABC
 │   ├── html_scraper.py             Template Method: extract → detect → parse → gates → repair
 │   ├── api_scraper.py              JSON mapping + restricted JSON self-heal
-│   └── sites/                      TescoScraper, TescoDCAScraper, ArgosScraper, AmazonUKScraper
+│   └── sites/                      Registered scrapers, one module per site (+ DCA backups) —
+│                                    check this directory for the current roster
 ├── extraction/                     Bright Data async clients (Unlocker / Datasets / DCA)
 ├── repair/
 │   ├── sandbox.py                  Subprocess + AST whitelist + timeout
@@ -278,7 +223,7 @@ If a site already has a primary scraper, add a backup with `order=2` — the rou
 
 ## Storage
 
-The module uses a single SQLite database at `scraping.db` by default (override with `SCRAPING_DB_PATH`). See [Scraping storage reference](../../docs/scraping_storage.md) for the authoritative six-table schema, constraints, relationships, automatic compatibility migrations, and reusable queries. Its generated regions are rebuilt from `storage/database.py`; do not edit them by hand.
+The module uses a single SQLite database at `scraping.db` by default (override with `SCRAPING_DB_PATH`). See [Scraping storage reference](../../docs/scraping/storage.md) for the authoritative six-table schema, constraints, relationships, automatic compatibility migrations, and reusable queries. Its generated regions are rebuilt from `storage/database.py`; do not edit them by hand.
 
 ## Configuration
 
@@ -390,7 +335,7 @@ configured LLM.
 
 ## Design
 
-Mechanism-level design reference (how repair, cold start, parser promotion/retirement, and the golden set actually work, with diagrams): [docs/scraping_design.md](../../docs/scraping_design.md).
+Mechanism-level design reference (how repair, cold start, parser promotion/retirement, and the golden set actually work, with diagrams): [docs/scraping/design.md](../../docs/scraping/design.md).
 
 Full design spec: [scraping_module_spec_v1_2.md](scraping_module_spec_v1_2.md) (in Chinese). Key decisions are numbered D1–D29 with rationale. Highlights:
 
@@ -414,7 +359,7 @@ Full design spec: [scraping_module_spec_v1_2.md](scraping_module_spec_v1_2.md) (
 
 ## External dependencies
 
-- **BrightData** — [Web Unlocker](https://docs.brightdata.com/scraping-automation/web-unlocker/introduction) for HTML, Datasets API for Amazon, DCA collectors for Tesco backup
+- **BrightData** — [Web Unlocker](https://docs.brightdata.com/scraping-automation/web-unlocker/introduction) for HTML, Datasets API for the primary Direct-API route, DCA collectors as a backup channel on some HTML sites (see `scrapers/sites/` for which)
 - **LLM providers** — DeepSeek through its official OpenAI-compatible endpoint (current ladder default) and Qwen via DashScope; routing in `src/common/llm_router_config.yaml`, call capabilities in `providers.py`
 - **Python 3.12** — some upstream deps lack 3.14 wheels
 - Key libraries: `pydantic`, `httpx`, `lxml`, `beautifulsoup4`, `openpyxl`, `langchain-openai`, `pydantic-settings`, `pyyaml`

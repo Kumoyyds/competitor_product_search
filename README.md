@@ -83,7 +83,7 @@ uv run python -m src.orchestrator new --input input/products.xlsx --vision
 uv run python -m src.orchestrator rerun --batch-id b-... --search-title "Selected title"
 ```
 
-The Python API exposes `await run_new_input(...)` and `await rerun(...)`. Results are append-only in `orchestrator.db`; exit code 0 means all Valid, 2 means completed with row failures, and 1 means a fatal invocation error. See the [Orchestrator README](src/orchestrator/README.md).
+The Python API exposes `await run_new_input(...)` and `await rerun(...)`. Results are append-only in `orchestrator.db`; exit code 0 means all Valid, 2 means completed with row failures, and 1 covers both a fatal invocation error (bad input/flags) and a completed-but-not-fully-successful batch (`failed`/`interrupted` status). See the [Orchestrator README](src/orchestrator/README.md) for the exact status-to-exit-code mapping.
 
 The Search LLM routing table moved from `src/search/maintain/llm_router_config.yaml` to `src/common/llm_router_config.yaml`. Existing installations with custom vendor entries must copy those entries to the new shared file; no database migration is required.
 
@@ -113,18 +113,19 @@ tests/     Project-level test suite
 ## Documentation map
 
 - [CLAUDE.md](CLAUDE.md) / [AGENTS.md](AGENTS.md) — agent-facing architecture; the pre-commit hook keeps them byte-identical.
-- [docs/architecture.md](docs/architecture.md) — current and planned project architecture.
-- [docs/scraping_design.md](docs/scraping_design.md) — scraping design overview.
-- [docs/search_storage.md](docs/search_storage.md) — generated search tracing schema, relationships, migrations, and query examples.
-- [docs/scraping_storage.md](docs/scraping_storage.md) — generated scraping schema, relationships, migrations, and query examples.
-- [docs/orchestrator_storage.md](docs/orchestrator_storage.md) — generated batch lineage, Valid, and Failure schema reference.
-- [src/scraping/scraping_module_spec_v1_2.md](src/scraping/scraping_module_spec_v1_2.md) — detailed scraping specification.
-- Per-module agent guidance: [src/search/CLAUDE.md](src/search/CLAUDE.md), [src/scraping/CLAUDE.md](src/scraping/CLAUDE.md), and their byte-identical `AGENTS.md` siblings.
+- [docs/architecture.md](docs/architecture.md) — current and planned project architecture, spanning all modules.
+- Per module, under `docs/<module>/`: a `design.md` (how the pipeline/business logic works, for developers) and, where the module owns a database, a generated `storage.md` (schema, relationships, migrations, query examples):
+  - [docs/search/design.md](docs/search/design.md), [docs/search/storage.md](docs/search/storage.md)
+  - [docs/scraping/design.md](docs/scraping/design.md), [docs/scraping/storage.md](docs/scraping/storage.md)
+  - [docs/matching/design.md](docs/matching/design.md) (matching has no database of its own — its persisted decision trace lives in [docs/orchestrator/storage.md](docs/orchestrator/storage.md#matching_decisions))
+  - [docs/orchestrator/design.md](docs/orchestrator/design.md), [docs/orchestrator/storage.md](docs/orchestrator/storage.md)
+- [src/scraping/scraping_module_spec_v1_2.md](src/scraping/scraping_module_spec_v1_2.md) — original detailed scraping specification (historical; see `docs/scraping/design.md` for what's current).
+- Per-module agent guidance: `src/search/CLAUDE.md`, `src/scraping/CLAUDE.md`, `src/matching/CLAUDE.md`, `src/orchestrator/CLAUDE.md`, and their byte-identical `AGENTS.md` siblings.
 
 ## Roadmap
 
 1. Add more search engines.
-2. Add the REST API and progress endpoints over orchestrator batches.
+2. Add the REST API, including a progress-polling endpoint over orchestrator batches (the CLI/Python progress bars already shipped — see [src/orchestrator/README.md](src/orchestrator/README.md#progress)).
 3. Support self-hosted LLMs through [vLLM](https://docs.vllm.ai/en/latest/).
 
 ## Contact

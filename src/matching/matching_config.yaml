@@ -1,11 +1,27 @@
 llm:
+  # Model identifier for the final text-decision LLM call — routed via
+  # src/common/llm_router_config.yaml (shared with Search and Scraping).
   model: deepseek-v4-flash
+  # Sampling temperature — lower = more deterministic.
   temperature: 0.1
+  # HTTP timeout in seconds for the text-decision call.
   timeout_s: 60
+  # Retries on technical failure (timeout, malformed JSON, invalid verdict token).
+  # Exhausting retries raises MatchingError; it never falls back to a business No Match.
   max_retries: 2
+  # Max in-flight text-LLM decisions per verify_products() call. Must be an integer >= 1.
+  # verify_products() accepts concurrency= to override this per call.
   concurrency: 16
 
 vision:
+  # Model identifier for the Vision comparison call — also routed via
+  # src/common/llm_router_config.yaml by keyword match. Spelled differently from llm.model
+  # above ("qwen3.8-flash" vs. service.py's code-level fallback "qwen3-vl-flash") on purpose:
+  # both route through the same keyword-match table, so the differing spelling is not a typo.
   model: qwen3.8-flash
-  max_considered_num_input_image: 2
-  max_considered_num_scraping_image: 2
+  # Per-side caps on how many images are sent to Vision. Each side's URLs are deduplicated
+  # in order, then truncated to the leading min(len(urls), cap); both must be integers >= 1.
+  # These raise image_load_compression's own shared compare.max_images_per_set so it cannot
+  # silently re-truncate. verify_product()/verify_products() accept per-call overrides.
+  max_considered_num_input_image: 2      # InputItem.image_urls
+  max_considered_num_scraping_image: 2   # ProductData.image_urls

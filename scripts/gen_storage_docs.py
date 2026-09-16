@@ -626,9 +626,9 @@ def inject_generated_blocks(
 
 def update_docs(root: Path, blocks: Mapping[str, str], check: bool, pre_commit: bool) -> int:
     targets = [
-        root / "docs/scraping_storage.md",
-        root / "docs/search_storage.md",
-        root / "docs/orchestrator_storage.md",
+        root / "docs/scraping/storage.md",
+        root / "docs/search/storage.md",
+        root / "docs/orchestrator/storage.md",
     ]
     changed: list[Path] = []
     replacements: dict[Path, str] = {}
