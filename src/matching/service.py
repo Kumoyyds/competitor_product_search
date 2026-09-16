@@ -7,7 +7,7 @@ import re
 import time
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Protocol, Sequence
+from typing import Any, Callable, Protocol, Sequence
 
 from src.common.llm_client import make_chat_model, resolve_llm_route
 from src.models import (
@@ -176,6 +176,7 @@ async def verify_products(
     concurrency: int | None = None,
     chat_model: ChatModel | None = None,
     vision_runner=None,
+    on_progress: Callable[[], None] | None = None,
 ) -> list[ProductMatchResult]:
     max_input = _positive_int(
         "vision", "max_considered_num_input_image", max_considered_num_input_image, 2
@@ -223,6 +224,8 @@ async def verify_products(
                 evidence=evidence,
                 trace=trace,
             )
+            if on_progress is not None:
+                on_progress()
             continue
         variant_status, evidence = compare_variants(request.item, request.product)
         trace.append(
@@ -246,6 +249,8 @@ async def verify_products(
                 evidence=evidence,
                 trace=trace,
             )
+            if on_progress is not None:
+                on_progress()
         else:
             unresolved.append(index)
 
@@ -365,6 +370,8 @@ async def verify_products(
                         evidence=evidence,
                         trace=trace,
                     )
+                    if on_progress is not None:
+                        on_progress()
                     return
                 except Exception as exc:
                     last_error = exc
@@ -384,6 +391,8 @@ async def verify_products(
                 f"matching LLM failed after {retries + 1} attempts: {last_error}",
                 trace=trace,
             )
+            if on_progress is not None:
+                on_progress()
 
         await asyncio.gather(*(decide(index) for index in unresolved))
 

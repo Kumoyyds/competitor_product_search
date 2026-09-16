@@ -762,7 +762,11 @@ class OrchestratorDB:
             raise RuntimeError(f"item {item_id} is already terminal")
 
     def finish_batch(
-        self, batch_id: str, *, error_message: str | None = None
+        self,
+        batch_id: str,
+        *,
+        error_message: str | None = None,
+        interrupted: bool = False,
     ) -> dict[str, Any]:
         with self._lock:
             valid = self.conn.execute(
@@ -778,8 +782,13 @@ class OrchestratorDB:
             total = self.conn.execute(
                 "SELECT COUNT(*) FROM batch_items WHERE batch_id = ?", (batch_id,)
             ).fetchone()[0]
-            if error_message:
+            if interrupted:
+                status = "interrupted"
+            elif error_message is not None:
                 status = "failed"
+            elif valid + failed < total:
+                status = "failed"
+                error_message = f"{total - valid - failed} item(s) did not finish"
             elif failed:
                 status = "completed_with_failures"
             else:

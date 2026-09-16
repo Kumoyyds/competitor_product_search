@@ -1,10 +1,28 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from .database import ScrapeDB
+
+
+_captured_run_ids: ContextVar[list[int] | None] = ContextVar(
+    "captured_scrape_run_ids", default=None
+)
+
+
+@contextmanager
+def capture_run_ids() -> Iterator[list[int]]:
+    """Collect run IDs written by one scrape call, including scraper fallbacks."""
+    run_ids: list[int] = []
+    token = _captured_run_ids.set(run_ids)
+    try:
+        yield run_ids
+    finally:
+        _captured_run_ids.reset(token)
 
 
 class RunStore:
@@ -37,7 +55,11 @@ class RunStore:
             ),
         )
         self._db.conn.commit()
-        return cur.lastrowid  # type: ignore[return-value]
+        run_id = int(cur.lastrowid)
+        captured = _captured_run_ids.get()
+        if captured is not None:
+            captured.append(run_id)
+        return run_id
 
     def attach_escalation(
         self,

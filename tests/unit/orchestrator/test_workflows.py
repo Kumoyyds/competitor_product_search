@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import json
 
@@ -18,6 +19,8 @@ from src.models import (
 from src.orchestrator.database import OrchestratorDB
 from src.orchestrator.input import load_input
 from src.orchestrator.workflow import rerun, run_new_input
+from src.scraping.storage.database import ScrapeDB
+from src.scraping.storage.run_store import RunStore
 from src.search.batch import SearchItemResult, SearchManyResult
 from src.search.models import FinalVerdict, LayerTrace, MatchResult, RawCandidate
 from tests._support.factories import product_data
@@ -80,6 +83,103 @@ async def test_new_input_records_row_validation_and_success(tmp_path, monkeypatc
             "FROM matching_decisions"
         ).fetchall() == [(1, "new_input", "match", "llm")]
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        conn.close()
+
+
+async def test_stage_trace_links_search_outcomes_and_scraper_fallbacks(tmp_path, monkeypatch):
+    db_path = tmp_path / "orchestrator.db"
+    scrape_path = tmp_path / "scraping.db"
+    recorded: dict[str, list[int]] = {}
+
+    async def fake_search(requests, **_kwargs):
+        return SearchManyResult(
+            items=[
+                SearchItemResult(request=requests[0], result=matched(url="https://example.test/good")),
+                SearchItemResult(request=requests[1], result=matched(url="https://example.test/bad")),
+                SearchItemResult(request=requests[2], error="provider timed out"),
+                SearchItemResult(
+                    request=requests[3],
+                    result=MatchResult(FinalVerdict.NO_MATCH, None, LayerTrace(), 0),
+                ),
+            ],
+            run_id="search-run",
+            provider_calls={},
+        )
+
+    async def fake_scrape(url):
+        await asyncio.sleep(0)
+        scrape_db = ScrapeDB(scrape_path)
+        scrape_db.init_db()
+        try:
+            store = RunStore(scrape_db)
+            ids = [store.record(url, "example.test", "tesco", "HtmlScraper", "escalated", "escalated")]
+            await asyncio.sleep(0)
+            if url.endswith("/good"):
+                ids.append(store.record(url, "example.test", "tesco", "ApiScraper", "success", "backup_1"))
+            recorded[url] = ids
+        finally:
+            scrape_db.close()
+        if url.endswith("/bad"):
+            raise TimeoutError("both scrapers failed")
+        return product_data(url=url)
+
+    async def fake_verify(requests, **_kwargs):
+        return [verified() for _ in requests]
+
+    monkeypatch.setattr("src.orchestrator.workflow.match_products", fake_search)
+    monkeypatch.setattr("src.orchestrator.workflow.scrape", fake_scrape)
+    monkeypatch.setattr("src.orchestrator.workflow.verify_products", fake_verify)
+    result = await run_new_input(
+        [InputItem(title=title, country="uk", site_name="tesco")
+         for title in ("Good", "Bad", "Search error", "No match")],
+        db_path=db_path,
+    )
+    assert (result.valid, result.failed) == (1, 3)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        traces = {
+            title: json.loads(trace)
+            for title, trace in conn.execute("SELECT input_title,stage_trace FROM batch_items")
+        }
+        for index, title in enumerate(("Good", "Bad", "Search error", "No match")):
+            assert traces[title][0]["stage"] == "search"
+            assert (traces[title][0]["run_id"], traces[title][0]["row_index"]) == (
+                "search-run", index,
+            )
+        assert traces["Search error"][0]["status"] == "error"
+        assert traces["No match"][0]["status"] == "no_match"
+        assert traces["Good"][1]["run_ids"] == recorded["https://example.test/good"]
+        assert traces["Bad"][1]["run_ids"] == recorded["https://example.test/bad"]
+        assert traces["Good"][1]["status"] == "success"
+        assert traces["Bad"][1]["status"] == "error"
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status"),
+    [(asyncio.CancelledError(), "interrupted"), (RuntimeError(), "failed")],
+)
+async def test_new_input_exception_preserves_batch_state(tmp_path, monkeypatch, error, expected_status):
+    db_path = tmp_path / "orchestrator.db"
+
+    async def abort(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr("src.orchestrator.workflow._run_full_pipeline", abort)
+    with pytest.raises(type(error)):
+        await run_new_input(
+            [InputItem(title="Pending", country="uk", site_name="tesco")],
+            db_path=db_path,
+        )
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("SELECT status FROM batches").fetchone()[0] == expected_status
+        assert type(error).__name__ in conn.execute("SELECT error_message FROM batches").fetchone()[0]
+        assert conn.execute("SELECT status FROM batch_items").fetchone()[0] == "pending"
+        assert conn.execute("SELECT COUNT(*) FROM failure_results").fetchone()[0] == 0
     finally:
         conn.close()
 
@@ -258,8 +358,51 @@ async def test_rerun_creates_derived_batch_and_unchanged_identity_skips_search_m
             (result.batch_id,),
         ).fetchone()[0])
         assert process["terminated_at"] == "identity_guard"
+        trace = json.loads(check.execute(
+            "SELECT stage_trace FROM batch_items WHERE batch_id=?", (result.batch_id,)
+        ).fetchone()[0])
+        assert trace[0]["stage"] == "stored_url_scraping"
+        assert trace[0]["status"] == "success"
+        assert trace[0]["run_ids"] == []
     finally:
         check.close()
+
+
+async def test_rerun_cancellation_marks_only_child_interrupted(tmp_path, monkeypatch):
+    db_path = tmp_path / "orchestrator.db"
+    db = OrchestratorDB(db_path)
+    root = db.create_new_batch(vision_enabled=False, source_file=None, job_config={})
+    item = InputItem(title="Input", country="uk", site_name="tesco")
+    item_id = db.add_item(root, row_index=0, raw=item.model_dump(), item=item)
+    db.record_valid(
+        item_id,
+        product_data(title="Stable title"),
+        search_title="Search title",
+        execution_path="new_input",
+    )
+    db.finish_batch(root)
+    db.close()
+
+    async def cancel(*_args, **_kwargs):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr("src.orchestrator.workflow._scrape_many", cancel)
+    with pytest.raises(asyncio.CancelledError):
+        await rerun(root, db_path=db_path)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT batch_id,status,error_message FROM batches ORDER BY rerun_no"
+        ).fetchall()
+        assert rows[0][0:2] == (root, "completed")
+        assert rows[1][0:2] == (f"{root}-r1", "interrupted")
+        assert "CancelledError" in rows[1][2]
+        assert conn.execute(
+            "SELECT status FROM batch_items WHERE batch_id=?", (rows[1][0],)
+        ).fetchone()[0] == "pending"
+    finally:
+        conn.close()
 
 
 async def test_rerun_missing_title_rejects_before_child_creation(tmp_path):

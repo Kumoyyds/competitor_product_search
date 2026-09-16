@@ -86,6 +86,27 @@ def test_terminal_valid_and_failure_are_mutually_exclusive(tmp_path):
     db.close()
 
 
+def test_finish_batch_never_completes_with_pending_items(tmp_path):
+    db = OrchestratorDB(tmp_path / "orchestrator.db")
+    try:
+        batch_id = db.create_new_batch(vision_enabled=False, source_file=None, job_config={})
+        item = InputItem(title="Pending", country="uk", site_name="tesco")
+        db.add_item(batch_id, row_index=0, raw=item.model_dump(), item=item)
+        assert db.finish_batch(batch_id)["status"] == "failed"
+        row = db.get_batch(batch_id)
+        assert row is not None and "1 item(s) did not finish" in row["error_message"]
+
+        batch_id = db.create_new_batch(vision_enabled=False, source_file=None, job_config={})
+        db.add_item(batch_id, row_index=0, raw=item.model_dump(), item=item)
+        assert db.finish_batch(batch_id, error_message="")["status"] == "failed"
+
+        batch_id = db.create_new_batch(vision_enabled=False, source_file=None, job_config={})
+        db.add_item(batch_id, row_index=0, raw=item.model_dump(), item=item)
+        assert db.finish_batch(batch_id, interrupted=True)["status"] == "interrupted"
+    finally:
+        db.close()
+
+
 def test_concurrent_reruns_allocate_unique_monotonic_suffixes(tmp_path):
     db_path = tmp_path / "orchestrator.db"
     root = _valid_root(db_path)

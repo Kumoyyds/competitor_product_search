@@ -16,6 +16,7 @@ def _parser() -> argparse.ArgumentParser:
     new.add_argument("--input", required=True)
     new.add_argument("--vision", action="store_true")
     new.add_argument("--concurrency", type=int, default=8)
+    new.add_argument("--no-progress", action="store_true")
     new.add_argument("--db-path")
 
     repeat = sub.add_parser("rerun", help="Refresh stored product URLs for a prior batch")
@@ -26,6 +27,7 @@ def _parser() -> argparse.ArgumentParser:
     vision.add_argument("--no-vision", action="store_false", dest="vision_enabled")
     repeat.set_defaults(vision_enabled=None)
     repeat.add_argument("--concurrency", type=int, default=8)
+    repeat.add_argument("--no-progress", action="store_true")
     repeat.add_argument("--db-path")
     return parser
 
@@ -36,6 +38,7 @@ async def _run(args: argparse.Namespace):
             args.input,
             vision_enabled=args.vision,
             concurrency=args.concurrency,
+            progress=not args.no_progress,
             db_path=args.db_path,
         )
     return await rerun(
@@ -43,6 +46,7 @@ async def _run(args: argparse.Namespace):
         search_titles=args.search_titles,
         vision_enabled=args.vision_enabled,
         concurrency=args.concurrency,
+        progress=not args.no_progress,
         db_path=args.db_path,
     )
 

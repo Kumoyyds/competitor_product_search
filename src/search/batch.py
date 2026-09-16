@@ -108,6 +108,7 @@ async def _execute_search_batch(
     serper_max_calls: int | None = None,
     provider: SearchProvider | list[SearchProvider] | None = None,
     progress: bool = False,
+    progress_desc: str | None = None,
     job_config: dict[str, object],
     input_file: str | None = None,
     input_sku_col: str | None = None,
@@ -192,7 +193,7 @@ async def _execute_search_batch(
             if not tasks:
                 raw_results = []
             elif progress:
-                raw_results = await tqdm_asyncio.gather(*tasks)
+                raw_results = await tqdm_asyncio.gather(*tasks, desc=progress_desc)
             else:
                 raw_results = await asyncio.gather(*tasks)
             items = []
@@ -221,6 +222,7 @@ async def match_products(
     serper_max_calls: int | None = None,
     provider: SearchProvider | list[SearchProvider] | None = None,
     progress: bool = False,
+    progress_desc: str | None = None,
 ) -> SearchManyResult:
     """Run one recorded Search batch directly from in-memory requests."""
     return await _execute_search_batch(
@@ -229,6 +231,7 @@ async def match_products(
         serper_max_calls=serper_max_calls,
         provider=provider,
         progress=progress,
+        progress_desc=progress_desc,
         job_config={"source": "in_memory", "concurrency": concurrency},
     )
 
