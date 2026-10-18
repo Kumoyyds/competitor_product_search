@@ -36,6 +36,17 @@ class ScrapeResult:
     run_ids: tuple[int, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedBatch:
+    batch_id: str
+    operation: str
+    db_path: Path
+    vision_enabled: bool
+    concurrency: int
+    works: tuple[WorkItem, ...]
+    sources: tuple[RerunSource, ...] = ()
+
+
 async def _scrape_many(
     works: Sequence[WorkItem],
     urls: Sequence[str],
@@ -283,14 +294,13 @@ async def _run_full_pipeline(
     )
 
 
-async def run_new_input(
+def prepare_new_input(
     source: str | Path | Sequence[InputItem],
     *,
     vision_enabled: bool = False,
     concurrency: int = 8,
-    progress: bool = False,
     db_path: str | Path | None = None,
-) -> BatchResult:
+) -> PreparedBatch:
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
     validate_model_ladders()
@@ -314,15 +324,14 @@ async def run_new_input(
                 )
             else:
                 works.append(WorkItem(item_id, row.item))
-        await _run_full_pipeline(
-            db,
-            works,
+        return PreparedBatch(
+            batch_id=batch_id,
+            operation="new_input",
+            db_path=db.path,
             vision_enabled=vision_enabled,
             concurrency=concurrency,
-            execution_path="new_input",
-            progress=progress,
+            works=tuple(works),
         )
-        return BatchResult(**db.finish_batch(batch_id))
     except BaseException as exc:
         db.finish_batch(
             batch_id,
@@ -332,6 +341,23 @@ async def run_new_input(
         raise
     finally:
         db.close()
+
+
+async def run_new_input(
+    source: str | Path | Sequence[InputItem],
+    *,
+    vision_enabled: bool = False,
+    concurrency: int = 8,
+    progress: bool = False,
+    db_path: str | Path | None = None,
+) -> BatchResult:
+    prepared = prepare_new_input(
+        source,
+        vision_enabled=vision_enabled,
+        concurrency=concurrency,
+        db_path=db_path,
+    )
+    return await execute_batch(prepared, progress=progress)
 
 
 def _identity(product: ProductData) -> str:
@@ -344,23 +370,25 @@ def _identity(product: ProductData) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-async def rerun(
+def prepare_rerun(
     batch_id: str,
     *,
     search_titles: Sequence[str] | None = None,
     vision_enabled: bool | None = None,
     concurrency: int = 8,
-    progress: bool = False,
     db_path: str | Path | None = None,
-) -> BatchResult:
+) -> PreparedBatch:
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
     validate_model_ladders()
     db = OrchestratorDB(db_path)
     try:
-        sources = db.rerun_sources(batch_id, search_titles)
         parent = db.get_batch(batch_id)
-        assert parent is not None
+        if parent is None:
+            raise KeyError(f"batch not found: {batch_id}")
+        if parent["status"] == "running":
+            raise ValueError(f"batch is still running: {batch_id}")
+        sources = db.rerun_sources(batch_id, search_titles)
         active_vision = bool(parent["vision_enabled"]) if vision_enabled is None else vision_enabled
         child_id = db.create_rerun_batch(
             batch_id,
@@ -370,7 +398,6 @@ async def rerun(
                 "search_titles": list(search_titles) if search_titles is not None else None,
             },
         )
-        work_by_id: dict[int, tuple[WorkItem, RerunSource]] = {}
         works: list[WorkItem] = []
         for source in sources:
             item_id = db.add_item(
@@ -384,153 +411,17 @@ async def rerun(
             )
             work = WorkItem(item_id, source.item)
             works.append(work)
-            work_by_id[item_id] = (work, source)
-
-        direct = await _scrape_many(
-            works,
-            [source.url for source in sources],
-            concurrency,
-            progress=progress,
-            desc="stored_url scrape",
-        )
-        revalidate_works: list[WorkItem] = []
-        revalidate_products: list[ProductData] = []
-        revalidate_titles: list[str | None] = []
-        revalidate_urls: list[str] = []
-        fallback: list[WorkItem] = []
-        for outcome in direct:
-            work, source = work_by_id[outcome.work.item_id]
-            failure = (
-                outcome.invalid or outcome.error or RuntimeError("scrape returned no result")
-                if outcome.product is None else None
-            )
-            db.update_item(
-                work.item_id,
-                trace_event={
-                    "stage": "stored_url_scraping",
-                    "status": "success" if outcome.product is not None else
-                        "invalid_target" if outcome.invalid is not None else "failed",
-                    "run_ids": list(outcome.run_ids),
-                    **(_trace_error(failure) if failure is not None else {}),
-                },
-            )
-            if outcome.product is None:
-                db.update_item(
-                    work.item_id,
-                    execution_path="fallback",
-                )
-                fallback.append(work)
-            elif _identity(outcome.product) == _identity(source.product):
-                identity_reason = (
-                    "Stored-URL rescrape reproduced the prior qualified identity; "
-                    "Matching was skipped."
-                )
-                db.record_matching_decision(
-                    work.item_id,
-                    execution_path="stored_url",
-                    url=source.url,
-                    verdict="match",
-                    decision_source="identity_guard",
-                    reasoning=identity_reason,
-                    decision_process={
-                        "nodes": [
-                            {
-                                "node": "identity_guard",
-                                "status": "reused",
-                                "terminal": True,
-                                "detail": {
-                                    "source_valid_result_id": source.valid_result_id
-                                },
-                            }
-                        ],
-                        "terminated_at": "identity_guard",
-                    },
-                )
-                db.record_valid(
-                    work.item_id,
-                    outcome.product,
-                    search_title=source.search_title,
-                    execution_path="stored_url",
-                )
-            else:
-                db.update_item(
-                    work.item_id,
-                    execution_path="identity_revalidation",
-                    trace_event={"stage": "identity_guard", "status": "changed"},
-                )
-                revalidate_works.append(work)
-                revalidate_products.append(outcome.product)
-                revalidate_titles.append(source.search_title)
-                revalidate_urls.append(source.url)
-
-        if revalidate_works:
-            bar = tqdm(total=len(revalidate_works), desc="identity_revalidation") if progress else None
-            try:
-                try:
-                    results = await verify_products(
-                        [(work.item, product) for work, product in zip(revalidate_works, revalidate_products)],
-                        vision_enabled=active_vision,
-                        concurrency=concurrency,
-                        on_progress=(bar.update if bar is not None else None),
-                    )
-                    partial: list[Any] = results
-                    errors: dict[int, Exception] = {}
-                except MatchingBatchError as exc:
-                    partial, errors = exc.results, exc.errors
-            finally:
-                if bar is not None:
-                    bar.close()
-            for index, (work, product, title, url) in enumerate(
-                zip(revalidate_works, revalidate_products, revalidate_titles, revalidate_urls)
-            ):
-                if index in errors:
-                    _record_matching_error(
-                        db,
-                        work.item_id,
-                        errors[index],
-                        execution_path="identity_revalidation",
-                        url=url,
-                    )
-                    db.record_failure(
-                        work.item_id, fail_node="match", failure_kind="technical_error",
-                        reasoning=str(errors[index]), search_title=title, url=url,
-                    )
-                elif partial[index].verdict == ProductMatchVerdict.MATCH:
-                    db.record_matching_result(
-                        work.item_id,
-                        execution_path="identity_revalidation",
-                        url=url,
-                        result=partial[index],
-                    )
-                    db.record_valid(
-                        work.item_id, product, search_title=title,
-                        execution_path="identity_revalidation",
-                    )
-                else:
-                    db.record_matching_result(
-                        work.item_id,
-                        execution_path="identity_revalidation",
-                        url=url,
-                        result=partial[index],
-                    )
-                    db.update_item(
-                        work.item_id,
-                        execution_path="fallback",
-                        trace_event={"stage": "identity_revalidation", "status": "no_match"},
-                    )
-                    fallback.append(work)
-
-        await _run_full_pipeline(
-            db,
-            fallback,
+        return PreparedBatch(
+            batch_id=child_id,
+            operation="rerun",
+            db_path=db.path,
             vision_enabled=active_vision,
             concurrency=concurrency,
-            execution_path="fallback",
-            progress=progress,
+            works=tuple(works),
+            sources=tuple(sources),
         )
-        return BatchResult(**db.finish_batch(child_id))
     except BaseException as exc:
-        # No child exists for preflight selection failures; those intentionally leave no rows.
+        # Preflight errors intentionally leave no child batch.
         if "child_id" in locals():
             db.finish_batch(
                 child_id,
@@ -540,3 +431,201 @@ async def rerun(
         raise
     finally:
         db.close()
+
+
+async def execute_batch(prepared: PreparedBatch, *, progress: bool = False) -> BatchResult:
+    db = OrchestratorDB(prepared.db_path)
+    try:
+        if prepared.operation == "new_input":
+            await _run_full_pipeline(
+                db,
+                list(prepared.works),
+                vision_enabled=prepared.vision_enabled,
+                concurrency=prepared.concurrency,
+                execution_path="new_input",
+                progress=progress,
+            )
+        elif prepared.operation == "rerun":
+            await _execute_rerun(db, prepared, progress=progress)
+        else:
+            raise ValueError(f"unsupported batch operation: {prepared.operation}")
+        return BatchResult(**db.finish_batch(prepared.batch_id))
+    except BaseException as exc:
+        db.finish_batch(
+            prepared.batch_id,
+            error_message=f"{type(exc).__name__}: {exc}",
+            interrupted=isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt)),
+        )
+        raise
+    finally:
+        db.close()
+
+
+async def _execute_rerun(db: OrchestratorDB, prepared: PreparedBatch, *, progress: bool) -> None:
+    works = list(prepared.works)
+    sources = prepared.sources
+    concurrency = prepared.concurrency
+    active_vision = prepared.vision_enabled
+    work_by_id = {work.item_id: (work, source) for work, source in zip(works, sources)}
+
+    direct = await _scrape_many(
+        works,
+        [source.url for source in sources],
+        concurrency,
+        progress=progress,
+        desc="stored_url scrape",
+    )
+    revalidate_works: list[WorkItem] = []
+    revalidate_products: list[ProductData] = []
+    revalidate_titles: list[str | None] = []
+    revalidate_urls: list[str] = []
+    fallback: list[WorkItem] = []
+    for outcome in direct:
+        work, source = work_by_id[outcome.work.item_id]
+        failure = (
+            outcome.invalid or outcome.error or RuntimeError("scrape returned no result")
+            if outcome.product is None else None
+        )
+        db.update_item(
+            work.item_id,
+            trace_event={
+                "stage": "stored_url_scraping",
+                "status": "success" if outcome.product is not None else
+                    "invalid_target" if outcome.invalid is not None else "failed",
+                "run_ids": list(outcome.run_ids),
+                **(_trace_error(failure) if failure is not None else {}),
+            },
+        )
+        if outcome.product is None:
+            db.update_item(
+                work.item_id,
+                execution_path="fallback",
+            )
+            fallback.append(work)
+        elif _identity(outcome.product) == _identity(source.product):
+            identity_reason = (
+                "Stored-URL rescrape reproduced the prior qualified identity; "
+                "Matching was skipped."
+            )
+            db.record_matching_decision(
+                work.item_id,
+                execution_path="stored_url",
+                url=source.url,
+                verdict="match",
+                decision_source="identity_guard",
+                reasoning=identity_reason,
+                decision_process={
+                    "nodes": [
+                        {
+                            "node": "identity_guard",
+                            "status": "reused",
+                            "terminal": True,
+                            "detail": {
+                                "source_valid_result_id": source.valid_result_id
+                            },
+                        }
+                    ],
+                    "terminated_at": "identity_guard",
+                },
+            )
+            db.record_valid(
+                work.item_id,
+                outcome.product,
+                search_title=source.search_title,
+                execution_path="stored_url",
+            )
+        else:
+            db.update_item(
+                work.item_id,
+                execution_path="identity_revalidation",
+                trace_event={"stage": "identity_guard", "status": "changed"},
+            )
+            revalidate_works.append(work)
+            revalidate_products.append(outcome.product)
+            revalidate_titles.append(source.search_title)
+            revalidate_urls.append(source.url)
+
+    if revalidate_works:
+        bar = tqdm(total=len(revalidate_works), desc="identity_revalidation") if progress else None
+        try:
+            try:
+                results = await verify_products(
+                    [(work.item, product) for work, product in zip(revalidate_works, revalidate_products)],
+                    vision_enabled=active_vision,
+                    concurrency=concurrency,
+                    on_progress=(bar.update if bar is not None else None),
+                )
+                partial: list[Any] = results
+                errors: dict[int, Exception] = {}
+            except MatchingBatchError as exc:
+                partial, errors = exc.results, exc.errors
+        finally:
+            if bar is not None:
+                bar.close()
+        for index, (work, product, title, url) in enumerate(
+            zip(revalidate_works, revalidate_products, revalidate_titles, revalidate_urls)
+        ):
+            if index in errors:
+                _record_matching_error(
+                    db,
+                    work.item_id,
+                    errors[index],
+                    execution_path="identity_revalidation",
+                    url=url,
+                )
+                db.record_failure(
+                    work.item_id, fail_node="match", failure_kind="technical_error",
+                    reasoning=str(errors[index]), search_title=title, url=url,
+                )
+            elif partial[index].verdict == ProductMatchVerdict.MATCH:
+                db.record_matching_result(
+                    work.item_id,
+                    execution_path="identity_revalidation",
+                    url=url,
+                    result=partial[index],
+                )
+                db.record_valid(
+                    work.item_id, product, search_title=title,
+                    execution_path="identity_revalidation",
+                )
+            else:
+                db.record_matching_result(
+                    work.item_id,
+                    execution_path="identity_revalidation",
+                    url=url,
+                    result=partial[index],
+                )
+                db.update_item(
+                    work.item_id,
+                    execution_path="fallback",
+                    trace_event={"stage": "identity_revalidation", "status": "no_match"},
+                )
+                fallback.append(work)
+
+    await _run_full_pipeline(
+        db,
+        fallback,
+        vision_enabled=active_vision,
+        concurrency=concurrency,
+        execution_path="fallback",
+        progress=progress,
+    )
+
+
+async def rerun(
+    batch_id: str,
+    *,
+    search_titles: Sequence[str] | None = None,
+    vision_enabled: bool | None = None,
+    concurrency: int = 8,
+    progress: bool = False,
+    db_path: str | Path | None = None,
+) -> BatchResult:
+    prepared = prepare_rerun(
+        batch_id,
+        search_titles=search_titles,
+        vision_enabled=vision_enabled,
+        concurrency=concurrency,
+        db_path=db_path,
+    )
+    return await execute_batch(prepared, progress=progress)

@@ -16,6 +16,7 @@ htmlcov/
 *.json
 output/
 input/
+uploads/
 
 # search module runtime
 search.db*

@@ -107,6 +107,25 @@ def test_finish_batch_never_completes_with_pending_items(tmp_path):
         db.close()
 
 
+def test_mark_running_batches_interrupted_preserves_finished_batches(tmp_path):
+    db = OrchestratorDB(tmp_path / "orchestrator.db")
+    try:
+        running = db.create_new_batch(vision_enabled=False, source_file=None, job_config={})
+        finished = db.create_new_batch(vision_enabled=False, source_file=None, job_config={})
+        db.finish_batch(finished)
+
+        assert db.mark_running_batches_interrupted("server restarted") == [running]
+        interrupted_row = db.get_batch(running)
+        assert interrupted_row["status"] == "interrupted"
+        assert interrupted_row["finished_at"] is not None
+        assert interrupted_row["error_message"] == "server restarted"
+        assert db.get_batch(finished)["status"] == "completed"
+        assert db.mark_running_batches_interrupted("again") == []
+        assert db.get_batch(running)["error_message"] == "server restarted"
+    finally:
+        db.close()
+
+
 def test_concurrent_reruns_allocate_unique_monotonic_suffixes(tmp_path):
     db_path = tmp_path / "orchestrator.db"
     root = _valid_root(db_path)

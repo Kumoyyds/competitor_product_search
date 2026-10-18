@@ -429,6 +429,22 @@ class OrchestratorDB:
         ).fetchone()
         return dict(row) if row else None
 
+    def mark_running_batches_interrupted(self, reason: str) -> list[str]:
+        """Close batches left running by a previous process and return their IDs."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT batch_id FROM batches WHERE status='running' ORDER BY created_at,batch_id"
+            ).fetchall()
+            batch_ids = [row["batch_id"] for row in rows]
+            if batch_ids:
+                self.conn.execute(
+                    "UPDATE batches SET status='interrupted',finished_at=?,error_message=? "
+                    "WHERE status='running'",
+                    (utc_now(), reason),
+                )
+                self.conn.commit()
+            return batch_ids
+
     def create_new_batch(
         self,
         *,

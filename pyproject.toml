@@ -8,6 +8,7 @@ dependencies = [
     "aiohttp>=3.14",
     "beautifulsoup4>=4.15",
     "ddgs>=9.14",
+    "fastapi>=0.141.1",
     "httpx>=0.28",
     "image-load-compression",
     "langchain-openai>=1.4",
@@ -18,10 +19,12 @@ dependencies = [
     "pydantic>=2.13",
     "pydantic-settings>=2.14",
     "python-dotenv>=1.2",
+    "python-multipart>=0.0.32",
     "PyYAML>=6.0",
     "quantulum3>=0.10",
     "rapidfuzz>=3.14",
     "tqdm>=4.69",
+    "uvicorn>=0.53.0",
 ]
 
 [dependency-groups]

@@ -18,7 +18,7 @@ from src.models import (
 )
 from src.orchestrator.database import OrchestratorDB
 from src.orchestrator.input import load_input
-from src.orchestrator.workflow import rerun, run_new_input
+from src.orchestrator.workflow import execute_batch, prepare_new_input, prepare_rerun, rerun, run_new_input
 from src.scraping.storage.database import ScrapeDB
 from src.scraping.storage.run_store import RunStore
 from src.search.batch import SearchItemResult, SearchManyResult
@@ -44,6 +44,57 @@ def verified(verdict=ProductMatchVerdict.MATCH, reason="same"):
         gtin_status=EvidenceStatus.UNKNOWN,
         variant_status=EvidenceStatus.UNKNOWN,
     )
+
+
+async def test_prepared_new_input_is_visible_before_execution(tmp_path, monkeypatch):
+    db_path = tmp_path / "orchestrator.db"
+    item = InputItem(title="Input", country="uk", site_name="tesco")
+    prepared = prepare_new_input([item], db_path=db_path)
+
+    db = OrchestratorDB(db_path)
+    try:
+        assert db.get_batch(prepared.batch_id)["status"] == "running"
+        assert db.conn.execute(
+            "SELECT status FROM batch_items WHERE batch_id=?", (prepared.batch_id,)
+        ).fetchone()[0] == "pending"
+    finally:
+        db.close()
+
+    async def fake_search(requests, **kwargs):
+        assert kwargs["progress"] is True
+        return SearchManyResult(
+            items=[SearchItemResult(request=requests[0], result=matched())],
+            run_id="search-run",
+            provider_calls={},
+        )
+
+    async def fake_scrape(_url):
+        return product_data(title="Found title")
+
+    async def fake_verify(requests, **_kwargs):
+        return [verified() for _ in requests]
+
+    monkeypatch.setattr("src.orchestrator.workflow.match_products", fake_search)
+    monkeypatch.setattr("src.orchestrator.workflow.scrape", fake_scrape)
+    monkeypatch.setattr("src.orchestrator.workflow.verify_products", fake_verify)
+    result = await execute_batch(prepared, progress=True)
+    assert (result.batch_id, result.status, result.valid) == (prepared.batch_id, "completed", 1)
+
+
+def test_prepare_rerun_rejects_running_parent_without_child(tmp_path):
+    db_path = tmp_path / "orchestrator.db"
+    prepared = prepare_new_input(
+        [InputItem(title="Input", country="uk", site_name="tesco")],
+        db_path=db_path,
+    )
+    with pytest.raises(ValueError, match="still running"):
+        prepare_rerun(prepared.batch_id, db_path=db_path)
+
+    db = OrchestratorDB(db_path)
+    try:
+        assert db.conn.execute("SELECT COUNT(*) FROM batches").fetchone()[0] == 1
+    finally:
+        db.close()
 
 
 async def test_new_input_records_row_validation_and_success(tmp_path, monkeypatch):

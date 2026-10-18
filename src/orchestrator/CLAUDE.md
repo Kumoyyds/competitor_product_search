@@ -11,6 +11,13 @@ Coordinates New Input and Rerun batches across Search, Scraping, Matching, and S
 - **Input**: xlsx/csv/json paths or typed `InputItem` sequences; rerun batch ID plus optional titles
 - **Output**: `BatchResult` and `orchestrator.db` Valid/Failure records
 
+## Batch lifecycle API
+
+- `prepare_new_input()` and `prepare_rerun()` synchronously validate input and create a batch with its items; they return a `PreparedBatch` with the work needed to continue.
+- `execute_batch(prepared)` runs the prepared batch and writes its terminal status. `run_new_input()` and `rerun()` remain the public one-call wrappers for CLI and Python callers, including the `progress` option.
+- `prepare_rerun()` rejects a parent batch that is still running. Omitting `vision_enabled` on a rerun inherits the parent batch setting.
+- `OrchestratorDB.mark_running_batches_interrupted()` closes batches left running by a previous API process. Run only one API instance against a database, and do not run the CLI against that database concurrently with the API.
+
 ## Invariants
 
 - File-structure errors abort before batch creation; row validation errors are terminal `input` failures while siblings continue.

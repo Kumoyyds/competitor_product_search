@@ -9,7 +9,7 @@ PriceScope helps online retailers track competitor products on marketplaces such
 | Search | [src/search/](src/search/) | Implemented | [Search README](src/search/README.md) |
 | Scraping | [src/scraping/](src/scraping/) | Implemented | [Scraping README](src/scraping/README.md) |
 | Orchestrator | [src/orchestrator/](src/orchestrator/) | Implemented | [Orchestrator README](src/orchestrator/README.md) |
-| API | [src/api/](src/api/) | Skeleton | No README yet |
+| API | [src/api/](src/api/) | Implemented | [API README](src/api/README.md) |
 | Matching | [src/matching/](src/matching/) | Implemented | [Matching README](src/matching/README.md) |
 | Models | [src/models/](src/models/) | Implemented | Shared contracts |
 | Common | [src/common/](src/common/) | Partial | Shared Search/Matching LLM routing |
@@ -42,6 +42,9 @@ All commands resolve paths relative to the repository root. Fill in `.env` accor
 | `SERPER_KEY` | Search, only when Serper is in the provider chain |
 | `BRIGHT_DATA_KEY` | Scraping |
 | `ORCHESTRATOR_DB_PATH` | Optional orchestrator database override; defaults to `orchestrator.db` |
+| `API_UPLOAD_DIR` | Optional API upload directory; defaults to `uploads/` |
+| `API_MAX_CONCURRENT_BATCHES` | Optional limit on executing API batches; defaults to `1` |
+| `API_DEFAULT_CONCURRENCY` | Optional Search/Scraping/Matching concurrency per API batch; defaults to `8` |
 
 ## Search — find the product URL
 
@@ -89,7 +92,15 @@ The Search LLM routing table moved from `src/search/maintain/llm_router_config.y
 
 Scraping's LLM routing (base URL, key name per vendor) previously lived in `src/scraping/providers.py` and silently fell back to Qwen for an unregistered model name. It now resolves from the same shared `src/common/llm_router_config.yaml` by keyword match; `providers.py` keeps only optional per-vendor call capabilities (thinking params, output caps). An unroutable model name now raises instead of falling back — add the vendor keyword to the shared yaml.
 
-The REST `api` module remains planned and is not part of these workflows.
+## Operation API
+
+The API starts New Input and Rerun batches over HTTP and provides batch and item status endpoints:
+
+```bash
+uv run python -m src.api --host 127.0.0.1 --port 8000
+```
+
+Run one API process with one worker per `ORCHESTRATOR_DB_PATH`, and do not run the orchestrator CLI against that database at the same time. API startup marks batches left `running` after a prior process exit as `interrupted`. For endpoint and curl examples, upload storage, and polling semantics, see the [API README](src/api/README.md).
 
 ## Tests
 
@@ -101,7 +112,7 @@ uv run pytest -m live # real keys; may cost money
 ## Repository layout
 
 ```text
-src/       Implemented modules and future module skeletons
+src/       Implemented modules
 docs/      Architecture and design documentation
 scripts/   Documentation, encoding, and validation utilities
 input/     Example or job input workbooks
@@ -120,12 +131,12 @@ tests/     Project-level test suite
   - [docs/matching/design.md](docs/matching/design.md) (matching has no database of its own — its persisted decision trace lives in [docs/orchestrator/storage.md](docs/orchestrator/storage.md#matching_decisions))
   - [docs/orchestrator/design.md](docs/orchestrator/design.md), [docs/orchestrator/storage.md](docs/orchestrator/storage.md)
 - [src/scraping/scraping_module_spec_v1_2.md](src/scraping/scraping_module_spec_v1_2.md) — original detailed scraping specification (historical; see `docs/scraping/design.md` for what's current).
-- Per-module agent guidance: `src/search/CLAUDE.md`, `src/scraping/CLAUDE.md`, `src/matching/CLAUDE.md`, `src/orchestrator/CLAUDE.md`, and their byte-identical `AGENTS.md` siblings.
+- Per-module agent guidance: `src/search/CLAUDE.md`, `src/scraping/CLAUDE.md`, `src/matching/CLAUDE.md`, `src/orchestrator/CLAUDE.md`, `src/api/CLAUDE.md`, and their byte-identical `AGENTS.md` siblings.
 
 ## Roadmap
 
 1. Add more search engines.
-2. Add the REST API, including a progress-polling endpoint over orchestrator batches (the CLI/Python progress bars already shipped — see [src/orchestrator/README.md](src/orchestrator/README.md#progress)).
+2. Add analysis endpoints over the stored orchestrator results.
 3. Support self-hosted LLMs through [vLLM](https://docs.vllm.ai/en/latest/).
 
 ## Contact

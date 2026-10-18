@@ -4,12 +4,13 @@ This file provides guidance to AI coding agents (Claude Code, Codex, etc.) when 
 
 ## Project Overview
 
-PriceScope — a tool that helps online retailers track competitor products on marketplaces (e.g., amazon.de, tesco.com, argos.co.uk). Four implemented modules:
+PriceScope — a tool that helps online retailers track competitor products on marketplaces (e.g., amazon.de, tesco.com, argos.co.uk). Five implemented modules:
 
 - **search** — takes a spreadsheet of SKU names, searches via configurable search engines (DuckDuckGo, Serper), then uses a 5-layer LangGraph pipeline with a routed LLM to select the best matching product URL.
 - **scraping** — takes a product URL and extracts structured `ProductData` (price, stock, images, …) via BrightData, with an LLM parser-repair ladder that self-heals broken site parsers.
 - **matching** — verifies input-vs-scraped product identity using GTIN, brand/numeric rules, optional Vision evidence, and one routed text-LLM decision.
 - **orchestrator** — accepts xlsx/csv/json or typed inputs, coordinates New Input and Rerun batches, and persists lineage/results in `orchestrator.db`.
+- **api** — exposes operation endpoints for starting batches and reading their status and item outcomes.
 
 Search and scraping remain independently callable; orchestrator composes them without changing their standalone APIs.
 
@@ -31,9 +32,12 @@ uv run python -m src.search.batch --input input/products.xlsx --sku-col product_
 
 # scraping — cold start a new site
 uv run python -m src.scraping.coldstart --site tesco --input src/scraping/data/cold_start/tesco.xlsx
+
+# API — one process and one worker for each orchestrator database
+uv run python -m src.api --host 127.0.0.1 --port 8000
 ```
 
-Both modules resolve paths relative to the repo root — run them from there.
+These commands resolve paths relative to the repo root — run them from there.
 
 ```python
 # scraping — public API
@@ -51,7 +55,7 @@ result = await scrape("https://www.argos.co.uk/product/3284476")
 |--------|------|--------|-------------|
 | **search** | `src/search/` | Implemented | Product URL matching pipeline |
 | **scraping** | `src/scraping/` | Implemented | Product page data extraction (M1–M27) |
-| **api** | `src/api/` | Skeleton | REST API endpoints |
+| **api** | `src/api/` | Implemented | New Input/Rerun batch operations and read-only status/item queries |
 | **orchestrator** | `src/orchestrator/` | Implemented | New Input/Rerun coordination and `orchestrator.db` |
 | **matching** | `src/matching/` | Implemented | Attribute-level identity verification |
 | **models** | `src/models/` | Implemented | Shared InputItem/ProductMatchResult contracts |
@@ -121,6 +125,7 @@ Key files:
 | `src/scraping/config.py` (`ScrapingConfig`) | Repair/cold-start model + temperature ladders, sandbox limits, BrightData poll budget, DB path — see `src/scraping/CLAUDE.md` §Key Config |
 | `src/scraping/hosts.yaml`, `sites.yaml` | Host→site mapping and per-site scraper order |
 | `.env` (repo root) | API keys: `QWEN_KEY` / `DEEPSEEK_KEY` as selected by the configured model; `SERPER_KEY` only if Serper is in the search provider chain; `BRIGHT_DATA_KEY` for scraping |
+| `ORCHESTRATOR_DB_PATH`, `API_UPLOAD_DIR`, `API_MAX_CONCURRENT_BATCHES`, `API_DEFAULT_CONCURRENCY` | API database, uploaded files, maximum active batches, and default per-batch pipeline concurrency; see `src/api/README.md` |
 
 ### Data Files
 
@@ -130,6 +135,7 @@ Key files:
 - search trace DB: `search.db` by default (single calls use `mode=single`; batches use `mode=batch`)
 - scraping DB: `scraping.db` by default (`SCRAPING_DB_PATH`) — parsers, goldens, results, escalations
 - orchestrator DB: `orchestrator.db` by default (`ORCHESTRATOR_DB_PATH`) — batches, item lineage, Valid snapshots, terminal failures
+- API uploads: `uploads/` by default (`API_UPLOAD_DIR`) — stored source files for submitted batches
 - scraping cold-start workbooks: `src/scraping/data/cold_start/*.xlsx` (require `page_type` + `url`)
 
 ## Code Conventions
