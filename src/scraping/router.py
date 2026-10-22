@@ -34,9 +34,23 @@ def reload_host_map() -> None:
     HOST_TO_SITE = _load_host_map()
 
 
+def _lookup_site(host: str) -> str | None:
+    """Resolve *host* to a site, falling back to the host minus ``www.``.
+
+    hosts.yaml only needs the bare domain: ``www.example.com`` retries as
+    ``example.com``. Exactly one leading ``www.`` label is stripped, and only
+    when a real domain remains (``www.com`` stays unresolved). Other subdomains
+    must still be registered explicitly — this is not suffix matching.
+    """
+    site = HOST_TO_SITE.get(host)
+    if site is None and host.startswith("www.") and "." in host[len("www."):]:
+        site = HOST_TO_SITE.get(host[len("www."):])
+    return site
+
+
 def resolve_site(url: str) -> str:
     host = (urlparse(url).hostname or "").lower()
-    site = HOST_TO_SITE.get(host)
+    site = _lookup_site(host)
     if site is None:
         raise ValueError(
             f"Unknown host: {host} (url={url}). "

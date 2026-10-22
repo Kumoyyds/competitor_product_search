@@ -46,20 +46,21 @@ def verify_m1() -> None:
     pd, errs = validate(base)
     check("in_stock=True + price present -> passes both gates",
           pd is not None and not errs, str(errs))
+    price = pd.price if pd is not None else None
     check("price stays as Decimal after validation",
-          isinstance(pd.price, Decimal), type(pd.price).__name__)
+          isinstance(price, Decimal), type(price).__name__)
 
     # in_stock=True + price=None -> Gate 2 fault
     pd2, errs2 = validate({**base, "price": None})
     check("in_stock=True + price=None -> Gate 2 catches fault",
           pd2 is None, str(errs2))
     check("Gate 2 error message mentions price",
-          errs2 and "price" in errs2[0].lower(), str(errs2))
+          bool(errs2) and "price" in errs2[0].lower(), str(errs2))
 
     # in_stock=True + only membership_price > 0 -> price is still required
     pd5, errs5 = validate({**base, "price": None, "membership_price": Decimal("14.99")})
     check("in_stock=True + only membership_price -> Gate 2 requires price",
-          pd5 is None and errs5 and "price" in errs5[0].lower(), str(errs5))
+          pd5 is None and bool(errs5) and "price" in errs5[0].lower(), str(errs5))
 
     # in_stock=False + no images + membership_price present -> passes (product signal)
     pd6, errs6 = validate({
@@ -88,7 +89,7 @@ def verify_m1() -> None:
           pd4 is not None and not errs4, str(errs4))
 
     # image_urls=[] should pass (spec 5.1)
-    check("image_urls=[] accepted", pd.image_urls == [])
+    check("image_urls=[] accepted", pd is not None and pd.image_urls == [])
 
     # InvalidTargetResult is separate from ProductData
     itr = InvalidTargetResult(url="x", site="test", reason_signal="http_404")
@@ -137,6 +138,9 @@ def verify_m2() -> None:
         ("https://www.amazon.de/dp/ABC", "amazon"),
         ("https://www.amazon.fr/dp/DEF", "amazon"),
         ("https://WWW.TESCO.COM/x", "tesco"),  # case-insensitive
+        # www.<host> falls back to the bare-domain entry in hosts.yaml
+        ("https://www.onbuy.com/gb/p/x", "onbuy"),
+        ("https://onbuy.com/gb/p/x", "onbuy"),
     ]
     for url, expected in cases:
         got = resolve_site(url)

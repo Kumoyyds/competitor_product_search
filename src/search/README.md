@@ -83,6 +83,7 @@ The website code is looked up in `domain_map` in [maintain/search_config.yaml](m
 | `argos` | `argos.co.uk` (plus subdomains) |
 | `amazon.co.uk` | `amazon.co.uk` (plus subdomains) |
 | `amazon.nl` | `amazon.nl` (plus subdomains) |
+| `onbuy` | `onbuy.com` (plus subdomains) |
 <!-- END GENERATED: websites-table -->
 
 A `domain_map` value **ending in `.`** is a registrable-name prefix — it matches that name under any TLD. Values without the trailing dot match that exact host and its subdomains only. Look-alikes (`notamazon.de`, `amazon.de.evil.com`) are rejected either way.

@@ -5,10 +5,11 @@ from ...registry import register_scraper
 from ..html_scraper import HTMLScraper
 
 
-@register_scraper("joybuy_uk", order=1)
-class JoybuyUKScraper(HTMLScraper):
-    """Joybuy UK HTML route (plain Web Unlocker).
+@register_scraper("onbuy", order=1)
+class OnbuyScraper(HTMLScraper):
+    """Onbuy HTML primary route.
 
+    Uses Scraping Browser / CDP to handle Akamai TLS fingerprinting.
     Parser list will be implemented in M6.
     """
 

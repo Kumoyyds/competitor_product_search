@@ -3,6 +3,11 @@
 # 日后新增站点/域名：在此文件添加一行即可，无需改代码。
 # 同一个 site 可对应多个 host（如 Amazon 多国站点）。
 #
+# 注册裸域就够了：resolve_site() 先精确查表，查不到再试去掉开头 www. 的 host，
+# 所以 "onbuy.com: onbuy" 同时覆盖 onbuy.com 与 www.onbuy.com。
+# 只降级这一层 —— 其它子域（如 ie.onbuy.com）仍需各自一行显式注册。
+# 下面的 www.* 行是历史显式条目，保留无害（精确命中优先）。
+#
 # 格式:
 #   <hostname>: <site_identifier>
 
@@ -19,5 +24,7 @@ www.amazon.de: amazon
 amazon.fr: amazon
 www.amazon.fr: amazon
 
-joybuy.co.uk: joybuy_uk
+onbuy.com: onbuy
+www.onbuy.com: onbuy
+
 

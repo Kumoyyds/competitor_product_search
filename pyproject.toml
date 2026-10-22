@@ -36,7 +36,7 @@ package = false
 python-preference = "only-managed"
 
 [tool.uv.sources]
-image-load-compression = { path = "../image-load-compression", editable = true }
+image-load-compression = { git = "https://github.com/Kumoyyds/image-load-compression.git", rev = "v0.1.0" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

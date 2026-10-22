@@ -72,10 +72,12 @@ If you want to add a site that isn't yet in the parser table:
 # 1. Add the site's hostnames to hosts.yaml
 # 2. Register an HTMLScraper subclass in scrapers/sites/
 # 3. Run cold start with a representative Excel input
-uv run python -m src.scraping.coldstart --site newsite --input newsite.xlsx
+uv run python -m src.scraping.coldstart --site newsite --input /abs/path/to/newsite.xlsx
 # Ignore reusable non-stale golden snapshots when a fresh fetch is required:
-uv run python -m src.scraping.coldstart --site newsite --input newsite.xlsx --force-fetch
+uv run python -m src.scraping.coldstart --site newsite --input /abs/path/to/newsite.xlsx --force-fetch
 ```
+
+`--input` is required and there is no default folder: pass the **absolute path** of the workbook. A relative path is resolved against the directory you run the command from, so a wrong prefix fails with `could not read Excel file`. The workbooks kept in the repo live in `src/scraping/data/cold_start/`, but the CLI does not look there on its own.
 
 The first row must contain `page_type` and `url` (case-insensitive; extra columns are ignored). Legal page types are `standard`, `discounted`, `out_of_stock`, `membership`, and `multipack`. Multiple rows per type are useful as spares: once a bucket reaches its cap, remaining rows are skipped without another prompt.
 
@@ -135,11 +137,11 @@ src/scraping/
 
 ## Adding a new site
 
-1. **Add its hosts** to [hosts.yaml](hosts.yaml):
+1. **Add its hosts** to [hosts.yaml](hosts.yaml). Register the bare domain: `resolve_site()` looks the host up exactly and then retries once without a leading `www.`, so the `www.` line is optional.
    ```yaml
    waitrose.com: waitrose
-   www.waitrose.com: waitrose
    ```
+   Only a leading `www.` is stripped — any other subdomain (`ie.waitrose.com`) needs its own line. This is exact matching, not suffix matching.
 
 2. **Declare its page-type profile** in [sites.yaml](sites.yaml) — technically optional (every key fails open to `config.py`) but strongly recommended, because what it controls otherwise fails *silently*: a mis-detected `membership` bucket and a cold-start coverage requirement the site cannot satisfy.
 
@@ -178,7 +180,7 @@ src/scraping/
 
 5. **Cold start** to seed the first parser + goldens:
    ```bash
-   uv run python -m src.scraping.coldstart --site waitrose --input waitrose.xlsx
+   uv run python -m src.scraping.coldstart --site waitrose --input /abs/path/to/waitrose.xlsx
    ```
    The workbook's required page types come from the profile you wrote in step 2, so do that first — otherwise coverage validation asks for types the site does not have.
 

@@ -38,6 +38,7 @@ domain_map:
   argos:  argos.co.uk
   amazon.co.uk: amazon.co.uk
   amazon.nl: amazon.nl
+  onbuy: onbuy.com
 
 url_rules:
   # Tracking parameters stripped from every candidate URL at ingest. A trailing

@@ -52,7 +52,7 @@ The search module uses a configurable search-engine chain: DuckDuckGo is free, w
 
 Supported vendor routes and the active model are generated from the maintained configuration: <!-- BEGIN GENERATED: llm-inline -->`qwen`, `deepseek`; active model: `deepseek-v4-flash` via `deepseek`<!-- END GENERATED: llm-inline -->.
 
-Supported marketplaces: <!-- BEGIN GENERATED: websites-inline -->`tesco`, `argos`, `amazon.co.uk`, `amazon.nl`<!-- END GENERATED: websites-inline -->.
+Supported marketplaces: <!-- BEGIN GENERATED: websites-inline -->`tesco`, `argos`, `amazon.co.uk`, `amazon.nl`, `onbuy`<!-- END GENERATED: websites-inline -->.
 
 Supported country codes: <!-- BEGIN GENERATED: countries-inline -->`uk` (= `gb`), `de`, `fr`, `us`, `nl`, `jp`, `es`, `it`, `pt`, `se`, `pl`, `br`, `au`, `ca`<!-- END GENERATED: countries-inline -->.
 
