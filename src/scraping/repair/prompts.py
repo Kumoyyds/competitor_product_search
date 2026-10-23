@@ -38,6 +38,7 @@ OPTIONAL (return None or omit if unavailable):
 CRITICAL:
   - in_stock MUST be a Python literal True or False (not a string, not None)
   - prices as strings ("19.99"), not floats, not with currency symbols
+  - always use "." as the decimal separator: a European "1.299,00 €" is returned as "1299.00"
   - if in_stock is True, price MUST be present as a numeric string
   - do NOT return the tracing fields (url, website, scraped_at, source_type, parser_version) —
     the caller adds them
@@ -241,7 +242,14 @@ def parser_gen_prompt(
         "entirely; never put them in `price`, `list_price`, or `membership_price`.\n"
         "- Coupon / promo-code discounts are normal discounts: put the payable "
         "non-member price in `price` and a separately displayed higher Was/RRP in "
-        "`list_price`; never use `membership_price` unless membership gating is visible.\n\n"
+        "`list_price`; never use `membership_price` unless membership gating is visible.\n"
+        "- Prices found only in embedded state (`<script>` JSON such as `__NEXT_DATA__` or "
+        "`self.__next_f.push(...)`) are NOT shown on the page by default.  Use one only when "
+        "the SAME object also carries a display switch that is true "
+        "(`isDiscount`, `shouldDisplayCrossLine`, `memberPromotion`, …) or a visible DOM "
+        "node shows that amount.  Fields named like `*Popup*`, `*History*`, `*Tracking*` "
+        "(e.g. `originalPriceForPopup`) are never the current displayed price.  "
+        "JSON-LD and visible DOM prices are not subject to this rule.\n\n"
         "ROBUST PRICE EXTRACTION (apply to ALL sites — handles dirty/mojibake/malformed HTML):\n"
         "- NEVER strip only the currency symbol (e.g. `text.replace('£','').strip()`). "
         "Stray characters from encoding errors (`Â`), non-breaking spaces (`\\xa0`), "
@@ -249,8 +257,18 @@ def parser_gen_prompt(
         "raise Decimal conversion errors.\n"
         "- INSTEAD, locate the price DOM node first (via JSON-LD offer, buy-box selector, "
         "or anchored price container), then extract the numeric run from ITS TEXT ONLY "
-        "with a tolerant regex: `m = re.search(r'\\d[\\d,]*\\.?\\d*', node_text)` → "
-        "`m.group().replace(',', '')` → return as a string (e.g. `'19.99'`).\n"
+        "in two steps:\n"
+        "  1. FIRST check for a European decimal-comma amount (German/EU sites write "
+        "`19,99 €` or `1.299,00 €`): "
+        "`de = re.search(r'(?<![\\d.,])(?:\\d{1,3}(?:\\.\\d{3})+|\\d+),\\d{2}(?!\\d|[.,]\\d)', node_text)`. "
+        "If it matches → `de.group().replace('.', '').replace(',', '.')` "
+        "(`'1.299,00'` → `'1299.00'`, `'19,99'` → `'19.99'`).\n"
+        "  2. OTHERWISE (no match in step 1) use the tolerant regex: "
+        "`m = re.search(r'\\d[\\d,]*\\.?\\d*', node_text)` → "
+        "`m.group().replace(',', '')` → return as a string (e.g. `'19.99'`, "
+        "`'1,299.99'` → `'1299.99'`).\n"
+        "  Never apply the step-2 comma removal to a decimal-comma amount — `'19,99'` "
+        "must become `'19.99'`, not `'1999'`.\n"
         "- The regex is for CLEANING an already-located price node's text — NEVER use a "
         "bare `re.findall(r'[\\d.]+', whole_page)` which will grab pack sizes "
         "(\"12x330ml\"), ratings (\"4.5\"), years (\"48h\"), or delivery minimums.\n"

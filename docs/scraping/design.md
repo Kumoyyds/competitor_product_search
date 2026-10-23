@@ -224,6 +224,23 @@ A `Was £X Now £Y` markdown is a discount, never a membership price — even wh
 the offer with a member tier. That distinction is the difference between a correct price
 series and a silently wrong one.
 
+The three fields are one **price path**, not three independent prices:
+
+```
+list_price (Was/RRP)  →  price (ordinary discount)  →  membership_price (member discount)
+```
+
+Each step is a further reduction applied on top of the previous one, so a member can enjoy
+the ordinary markdown *and* the member discount ("折上折"). That is why a page may carry all
+three fields at once, and why the gate ordering is `list_price > price > membership_price`.
+It also defines the page type: a page is classified by the **end point of its price path**
+(§6). A page with an ordinary markdown plus a member price ends at the member price, so it is
+a `membership` page, not a `discounted` one.
+
+The contract assumes the member price is a step *below* the ordinary price. A member price
+that is not lower than `price` (for example a member discount applied to the Was price only)
+does not fit the path and is rejected by Gate 2.
+
 ### Why the gates are route-agnostic
 
 They are the single choke point where a bad mapping can be stopped before it becomes
@@ -426,6 +443,13 @@ quality:
    before emission, so the model never sees them.
 4. **Evidence-first budget allocation** — excerpts are trimmed around the evidence, so no DOM
    price subtree can be truncated away by the token budget.
+5. **Split prices and embedded state** — the DOM scan works per text node, so a price rendered
+   as `<span>59</span><span>,</span><span>99</span><span> €</span>` is recovered by a second
+   pass that only adds evidence when no text node matches alone (existing evidence is never
+   altered). Prices inside `<script>` state (`__next_f`, `__NEXT_DATA__`) are deliberately
+   *not* evidence: such payloads often hold amounts the page does not show (Joybuy ships
+   `originalPriceForPopup` while `isDiscount=false`), and the parser prompt only lets the model
+   use them when the same object's display switch is true or a visible node shows the amount.
 
 The problem this solves: an LLM handed a 1.6 MB page finds *a* price, and on a discounted or
 membership page that is frequently the wrong one. Prompt rules are stated as evidence rules
@@ -492,6 +516,12 @@ Precedence resolves overlap deterministically — an out-of-stock discounted mul
 filed under `out_of_stock`, because that is the property that most changes what a parser must
 handle. Classification reads only `ProductData` fields (`in_stock`, `membership_price`,
 `list_price` vs `price`, `variant["pack_qty"]`), so it is site-agnostic by construction.
+
+For the price-bearing buckets the precedence follows the price path of §2: `membership`
+(path ends at the member price) outranks `discounted` (path ends at the ordinary markdown),
+which outranks `standard` (no markdown). A page showing `list_price`, `price` and
+`membership_price` together is therefore a `membership` bucket sample; its `list_price` is
+still compared by the golden test, so the markdown extraction stays covered.
 
 ### Seeding
 

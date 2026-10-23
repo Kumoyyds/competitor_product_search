@@ -29,6 +29,7 @@ scraping.db
 scraping.db-shm
 scraping.db-wal
 *.html
+!tests/unit/scraping/fixtures/*.html
 search.db
 search.db-shm
 search.db-wal

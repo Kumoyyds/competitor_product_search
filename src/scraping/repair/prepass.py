@@ -28,23 +28,47 @@ _DEFAULT_BUDGET = 24000
 _HEAD_BUDGET = 2000
 _SNIPPET_MAX = 1500
 
-# Currency amounts — primary signal, site-agnostic
+# Currency amounts — primary signal, site-agnostic.
+# The German/EU decimal-comma branches only match a comma followed by exactly
+# two digits ("19,99", "1.299,00") or an amount followed by €/EUR. GBP/USD
+# formatting never has a two-digit comma group, so the original £/$ branches
+# and their matches are unchanged.
 _CURRENCY_RE = re.compile(
     r"""(?x)
+    €\s?(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}(?!\d|[.,]\d)        # €19,99 / € 1.299,00
+    |
     [£€$]\s?\d[\d,]*\.?\d*           # £19.99 style
     |
     \d[\d,]*\.\d{2}\s?(?:GBP|EUR|USD)  # 19.99 GBP style
+    |
+    (?<![\d.,])(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{2})?\s?(?:€|EUR\b)  # 19,99 € / 1.299,00 EUR
+    |
+    EUR\s?(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}(?!\d|[.,]\d)      # EUR 19,99
     """
 )
 
-# Unit-price markers (routed to unit_price_evidence, not price_evidence)
+# Unit-price markers (routed to unit_price_evidence, not price_evidence).
+# The last three branches are German: "2,49 €/kg", "2,49 € pro 1 l",
+# "1 kg = 9,96 €", and the "Grundpreis" (base/unit price) label.
 _UNIT_PRICE_RE = re.compile(
     r"""(?ix)
     [£€$]\s?\d[\d,]*\.?\d*\s*/\s*(?:kg|litre|l|100\s*g|g|oz|lb|each|unit)
     |
     \d[\d,]*\.?\d*\s*(?:GBP|EUR|USD)\s*/\s*(?:kg|litre|l|100\s*g|g|oz|lb|each|unit)
+    |
+    \d[\d.,]*\s?(?:€|EUR)\s*(?:/|pro\b|je\b)\s*(?:\d[\d.,]*\s*)?
+        (?:kg|g|l|ml|liter|litre|stück|stk)\b
+    |
+    \d[\d.,]*\s*(?:kg|g|l|ml|liter|litre|stück|stk)\s*=\s*\d[\d.,]*\s?(?:€|EUR)
+    |
+    grundpreis
     """
 )
+
+# A complete decimal-comma amount: "19,99" or "1.299,00".
+_DECIMAL_COMMA_AMOUNT_RE = re.compile(r"(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}")
+# A dot-grouped whole amount written before €/EUR: "1.299 €".
+_DOT_THOUSANDS_RE = re.compile(r"\d{1,3}(?:\.\d{3})+")
 
 # Price-signal keywords — supplementary when a price is *not* matched by the
 # currency regex but has an obvious price label.  Grown by data over time.
@@ -356,6 +380,85 @@ def _collect_dom_evidence(
                 snippet=snippet,
             ))
 
+    evidence.extend(_collect_split_price_evidence(soup, seen_values))
+    return evidence
+
+
+# Longest joined text treated as one split price ("59,99 €" rendered as
+# <span>59</span><span>,</span><span>99</span><span> €</span>).
+_SPLIT_PRICE_MAX_CHARS = 24
+
+
+def _collect_split_price_evidence(
+    soup, seen_values: set[tuple[str, str]]
+) -> list[PriceEvidence]:
+    """Recover prices whose digits and currency sit in separate text nodes.
+
+    The per-text-node scan cannot see them.  An element qualifies only when its
+    joined text is short, matches the currency regex, and none of its own text
+    nodes matches alone — so anything the per-node scan already finds is left
+    untouched.  The innermost qualifying element wins.
+    """
+    from bs4 import NavigableString, Tag
+
+    evidence: list[PriceEvidence] = []
+
+    def _joined(tag) -> str:
+        return re.sub(r"\s+", " ", tag.get_text("")).strip()
+
+    def _leaves(tag) -> list:
+        return [
+            t for t in tag.find_all(string=True)
+            if isinstance(t, NavigableString)
+            and t.strip()
+            and not (isinstance(t.parent, Tag) and t.parent.name in ("script", "style"))
+        ]
+
+    for tag in soup.find_all(True):
+        if tag.name in ("script", "style", "head", "html", "body"):
+            continue
+        text = _joined(tag)
+        if not text or len(text) > _SPLIT_PRICE_MAX_CHARS:
+            continue
+        matches = _CURRENCY_RE.findall(text)
+        if not matches:
+            continue
+        leaves = _leaves(tag)
+        if len(leaves) < 2 or any(_CURRENCY_RE.search(t.strip()) for t in leaves):
+            continue
+        # Innermost wins: skip when a child element already carries the same text.
+        if any(isinstance(c, Tag) and _joined(c) == text for c in tag.children):
+            continue
+
+        anchor = leaves[0]
+        is_unit = bool(_UNIT_PRICE_RE.search(text))
+        struck = _ancestor_has_struck(anchor)
+        css_hint = _build_css_hint(anchor)
+        label = _extract_label(text)
+        snippet = _build_snippet(anchor)
+
+        for m in matches:
+            value_text = m if isinstance(m, str) else (m[0] or m[1] if len(m) > 1 else str(m))
+            currency = _guess_currency(value_text)
+            numeric = _clean_numeric(value_text)
+            if not numeric or _is_zero_decoy(anchor, numeric):
+                continue
+            dedup_key = (numeric, currency)
+            if dedup_key in seen_values:
+                continue
+            seen_values.add(dedup_key)
+            evidence.append(PriceEvidence(
+                value=numeric,
+                currency=currency,
+                raw_text=text[:200],
+                label_text=label,
+                css_hint=css_hint,
+                struck_through=struck,
+                source="dom_unit" if is_unit else "dom",
+                source_path="",
+                snippet=snippet,
+            ))
+
     return evidence
 
 
@@ -480,7 +583,9 @@ def _walk_jsonld(
             raw_val = node["price"]
             if isinstance(raw_val, (int, float, str)):
                 try:
-                    numeric = str(raw_val).replace(",", "")
+                    numeric = (
+                        _german_amount(raw_val) if isinstance(raw_val, str) else None
+                    ) or str(raw_val).replace(",", "")
                     float(numeric)  # validate
                     # Don't duplicate if priceSpecification already covered this
                     is_member = "validForMemberTier" in node
@@ -943,11 +1048,29 @@ def _guess_currency(value_text: str) -> str:
     return ""
 
 
+def _german_amount(text: str, *, euro_suffix: bool = False) -> str | None:
+    """Return a dot-decimal string for a German/EU-formatted amount, else None.
+
+    None means "not German format" and the caller keeps its original cleaning.
+    "1.299" is only read as thousands when the source wrote €/EUR after it.
+    """
+    text = text.strip()
+    if _DECIMAL_COMMA_AMOUNT_RE.fullmatch(text):
+        return text.replace(".", "").replace(",", ".")
+    if euro_suffix and _DOT_THOUSANDS_RE.fullmatch(text):
+        return text.replace(".", "")
+    return None
+
+
 def _clean_numeric(value_text: str) -> str:
     """Extract a clean numeric string from a price text."""
     # Remove currency symbols and whitespace
     cleaned = re.sub(r"[£€$]", "", value_text).strip()
     cleaned = re.sub(r"\s*(GBP|EUR|USD)\s*$", "", cleaned, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"^(GBP|EUR|USD)\s*", "", cleaned, flags=re.IGNORECASE).strip()
+    german = _german_amount(cleaned, euro_suffix=re.search(r"(€|EUR)\s*$", value_text) is not None)
+    if german is not None:
+        return german
     # Remove thousands separators
     cleaned = cleaned.replace(",", "")
     # Validate
