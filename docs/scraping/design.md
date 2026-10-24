@@ -677,30 +677,23 @@ latency, and the output is still right.
 
 ```mermaid
 flowchart TD
-    IN["Excel: page_type + url"] --> VAL{"read_coldstart_input<br/>site-aware validation"}
-    VAL -->|"bad page_type / unavailable<br/>for this site / missing<br/>mandatory coverage"| EXIT1["ColdStartInputError<br/>exit 1 — no paid call made"]
-    VAL -->|"ok"| RES["_resolve_html<br/>non-stale golden snapshot first,<br/>BrightData for cache misses<br/>(--force-fetch bypasses)"]
-    RES --> REP{"representative HTML<br/>largest HTTP 200"}
-    REP -->|"none"| EXIT1
-    REP -->|"found"| ROUND["round loop"]
-
-    ROUND --> GEN{"parser_code is None?"}
-    GEN -->|"yes"| G1["_gen_initial_parser<br/>rung = min(round, len(ladder)-1)"]
-    GEN -->|"no"| G2["_gen_repaired_parser<br/>+ previous round failures<br/>+ resolved/regression ledger"]
-    G1 --> EMPTY{"usable code?"}
-    G2 --> EMPTY
-    EMPTY -->|"no, 1st time"| ROUND
-    EMPTY -->|"no, 2nd consecutive"| EXIT1
-    EMPTY -->|"yes"| RUN["_run_review_cases<br/>sandbox + gates on EVERY url"]
-
-    RUN --> REVIEW["human review per case<br/>y accept / n correct / q abort"]
-    REVIEW --> PASS{"any sandbox failure<br/>or human rejection?"}
-    PASS -->|"no"| SEED["_seed: parser + accepted goldens<br/>exit 0 (or 2 if coverage short)"]
-    PASS -->|"yes"| LEDGER["_update_review_ledger<br/>print failures + REGRESSION"]
-    LEDGER --> ASK{"c continue / s save / q quit"}
-    ASK -->|"c"| ROUND
-    ASK -->|"s"| PART["_seed partial<br/>exit 2"]
-    ASK -->|"q"| EXIT2["write nothing<br/>exit 1"]
+    IN["Excel: page_type + URL"] --> VAL["Site-aware validation; deduplicate URLs"]
+    VAL --> RES["Reuse golden HTML; fetch cache misses"]
+    RES --> REP["Largest HTTP 200 HTML per page type, with real URL"]
+    REP --> GEN["Bounded generation attempt; ladder's final rung repeats"]
+    GEN --> RUN["Sandbox + gates on every resolved snapshot"]
+    RUN --> ADOPT{"Regression against confirmed fields?"}
+    ADOPT -->|"yes, first two consecutive"| MERGE["Retain base; log candidate fixes/breaks"]
+    MERGE -->|"below total attempt cap"| GEN
+    ADOPT -->|"no, or retry streak exhausted"| REVIEW["Review retained base / best candidate"]
+    REVIEW --> LEDGER["Auto-pass confirmed matches; y overwrite / N typed corrections / q abort"]
+    LEDGER --> SCORE["Rescore every retained code/result pair under latest truth"]
+    SCORE --> ASK{"Failures remain?"}
+    ASK -->|"c; below attempt cap"| GEN
+    ASK -->|"all pass, or s save partial"| SEED["Seed best code + its own fully matching outputs; bucket caps"]
+    ASK -->|"q"| QUIT["No writes"]
+    MERGE -->|"at attempt cap"| SAVE["s save best / q quit"]
+    SAVE --> SEED
 ```
 
 ### Why a human is in the loop at all (D22)
@@ -709,8 +702,9 @@ A brand-new site has no ground truth. The first parser cannot be validated autom
 that same first parser is the source of every golden that will validate all later parsers. So
 the human confirmation is not a convenience — it is the seed of the entire self-healing
 system. What the human must supply is *raw material* (URLs, because the module has no
-"product name → URL" capability) and *judgment* ("this extraction is correct"). They never
-write expected values from scratch: an accepted output becomes the golden.
+"product name → URL" capability) and *judgment* ("this extraction is correct"). An accepted output supplies all expected fields; a rejection with typed corrections
+supplies a corrected expectation, which must be reproduced by a validated parser before
+it can become a golden.
 
 ### Fail before spending
 
@@ -723,14 +717,32 @@ Then `_resolve_html` prefers a non-stale golden HTML snapshot for the same URL o
 fetch (`--force-fetch` bypasses it), so iterating on a site's parser does not re-pay for pages
 already captured.
 
-### Round-based review, and why every URL reruns
+### Session expectations and regression-aware selection
 
-Each round runs the current parser against **every** resolved URL, not only the failures. This
-is what makes a repair unable to silently regress a previously accepted case: a fixed
-membership price that breaks a standard page shows up in the same round, and the ledger
-prints it as `[REGRESSION]`. Previously accepted results whose fields are unchanged
-(`_products_match`, reusing `_matches_expected`) are auto-accepted without re-prompting the
-human — thoroughness without re-asking.
+`coldstart_ledger.py` owns `CaseExpectation` (all 11 golden comparison fields, declared
+page type, accumulated hints, confirmed/unspecified status), `Score`, and `RoundRecord`.
+An acceptance snapshots every output field; corrected rejections overlay typed values and
+confirm unselected fields. The latest human answer replaces prior values. Unspecified
+rejections and declined absent-value corrections remain unconfirmed and cannot auto-pass
+or seed. Cold-start-only decimal scale normalization makes `3.30` equal to `3.3`; runtime
+golden comparison is unchanged.
+
+Every usable generated parser runs against all shared HTML snapshots. A regression is any
+field matching the confirmed expectation in the base but failing it in the candidate,
+including sandbox/gate failures. Fully matching page count outranks weighted field matches:
+price/stock/currency weight 3, reference/member prices 2, title/stock label 1, remaining
+fields 0.5. A candidate without regressions replaces the base only when its score is at
+least as high. The first two consecutive regressing candidates are logged and retried
+without human review; the next prompt asks for a merge preserving their fixes and restoring
+base logic. After the retry streak is exhausted, the best retained version is reviewed.
+Stable ties favor the current base. Every ledger update is reflected when rescoring all
+retained immutable code/result pairs; only HTML references are shared.
+
+Confirmed exact matches auto-pass; mismatches print expected and actual values before
+asking the human. Bucket caps and spare rows still apply, declared/classified mismatches
+remain warnings, and extraction failures are excluded from parser scores and regressions.
+Duplicate identical URL declarations collapse deterministically; conflicting types fail
+before fetching.
 
 ### The ladder is a warm-up schedule (M21)
 
@@ -746,32 +758,43 @@ next round generates from scratch, and with a usable current parser that parser 
 Two consecutive unusable replies abort — that pattern means the provider or the output cap is
 wrong, not the parser.
 
-### Feedback design: current round only, plus a bounded ledger
+### Bounded evidence and change history
 
-A repair prompt carries the **immediately preceding round's** failures — structured field
-corrections plus a free-text hint per rejected case, and sandbox/gate failures — plus a
-compact URL→field ledger of what has already been resolved and what regressed
-(`_update_review_ledger`). Everything else is dropped.
+`repair/evidence.py` searches unchanged raw snapshots for decimal point/comma/thousands
+variants with numeric-token boundaries. It returns bounded DOM/CSS, attribute, or script
+snippets, including amounts split across adjacent inline nodes. Matching product IDs within
+2000 characters rank first, then site membership hints and display-switch keywords, then
+position. Display unescaping never changes the source snapshot. Joybuy DE URLs explicitly
+resolve their `/dp/<slug>/<id>` product ID in the pre-pass.
 
-The reason is signal dilution, not just prompt size: an accumulating transcript of every past
-mistake makes the current, actual defect one item among dozens, and models start "fixing"
-issues that were fixed three rounds ago. The bounded ledger preserves the one long-range fact
-that matters — "you already got this right, do not break it again".
+Initial generation gets one largest fetched page per declared page type. Each pre-pass uses
+the actual URL and `max(6000, 24000 // pages)` budget; rendered contexts have a **combined
+24k character cap**, including JSON-LD/evidence. Repair uses half budgets and a combined
+12k rendered cap. Prompts include an expected output table, grouped failing evidence (up
+to two URLs per type/field; total 16k), the last three records (diffs <=3k each), optional
+merge instructions (<=4.5k), and complete base code/schema. Merge context separately selects
+field dependencies from the original full base/candidate pair. Static AST inspection follows
+output values through local assignments, callable aliases and helper return expressions;
+changed extraction statements outrank unchanged output assignments. This preserves late
+helper fixes outside the log prefix even when a later selection changes the current base. Human-confirmed snippets can
+justify embedded-state extraction. Auxiliary budgets do not impose an impossible constant
+whole-prompt cap on arbitrary parser source or the one-row-per-URL expected table. Each
+call prints its actual total character count.
 
-A human correction value of `-`, `none`, `null`, or `n/a` is normalized to
-`"None (clear or omit this field)"` before it reaches the prompt, so a rejected field is
-never taught as a literal hyphen.
+Corrections are field-aware: finite decimal strings, bools, JSON lists/dicts, identifier text,
+and explicit nulls. Price corrections absent from the raw snapshot require a retain/decline
+answer; declined corrections leave the rejection unresolved. Hints accumulate by URL across
+all rounds.
 
-### Persistence is atomic at workflow level
+### Save the best parser and its matching outputs together
 
-Nothing is written until the whole round passes. A parser crash, a gate failure, or a single
-human rejection blocks **both** the parser and every golden. Half a cold start is worse than
-none: a stored parser that fails on membership pages will be tried first on every future
-scrape and will keep falling through to repair.
-
-The one exception is fetch failures. They are reported separately and never blamed on the
-parser — the parser had no opportunity to prove itself on a page that never arrived. They can
-still leave a coverage shortfall, which is why exit 2 exists.
+All writes wait until complete review or explicit partial save. On either path, all retained
+versions are rescored against the latest expectations and the winning code is paired with
+**its own** validated, fully matching outputs, capped per declared bucket. Unconfirmed and
+failed cases cannot seed. A partial save can therefore contain fewer goldens than the last
+reviewed version. Fetch failures do not block persistence but may leave a coverage shortfall.
+`q` and review abort always write nothing. The total generation cap also applies to empty
+replies and automatic regression retries; at the cap only save-best or quit is offered.
 
 ### Exit contract
 
@@ -779,7 +802,7 @@ still leave a coverage shortfall, which is why exit 2 exists.
 |---|---|---|
 | All cases pass, mandatory coverage complete | Parser + all accepted goldens | 0 |
 | All cases pass, coverage short | Parser + accepted goldens | 2 |
-| `s` — save partial | Current parser + this round's accepted goldens (`partial=True`) | 2 |
+| `s` — save partial | Best parser + its matching confirmed outputs (`partial=True`) | 2 |
 | `q`, review abort, bad input, no seed | Nothing | 1 |
 
 ---

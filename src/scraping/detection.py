@@ -7,6 +7,7 @@ Reused in two places:
 Signal priority (structural signals primary, keywords auxiliary):
   1. JSON-LD Product schema presence (strongest)
   2. HTTP status code (404/410 etc.)
+  2b. Not-found <title> on an HTTP 200 page (soft-404)
   3. Multiple structural absence combination (title + price + add-to-cart)
   4. Page length anomaly
   5. Keyword matching (from invalid_target_phrases table)
@@ -30,6 +31,9 @@ _ADD_TO_CART_PATTERNS = [
     re.compile(r'add[- _]?to[- _]?(?:cart|bag|basket|trolley)', re.IGNORECASE),
     re.compile(r'buy[- _]?now', re.IGNORECASE),
     re.compile(r'in den (?:Einkaufs)?wagen', re.IGNORECASE),
+    # Most German shops label the button "In den Warenkorb" / "Jetzt kaufen".
+    re.compile(r'in den warenkorb', re.IGNORECASE),
+    re.compile(r'(?:jetzt|sofort) kaufen', re.IGNORECASE),
     re.compile(r'ajouter au panier', re.IGNORECASE),
 ]
 
@@ -47,6 +51,22 @@ _PRICE_PATTERNS = [
     re.compile(r'data-test="product-price', re.IGNORECASE),
     re.compile(r'data-auto="price-value', re.IGNORECASE),
 ]
+
+
+# Soft-404 pages (HTTP 200) keep the site chrome and recommendation carousels, so
+# price / title / add-to-cart signals all still appear. The <title> is the one
+# thing the site rewrites for the error page, and a real product title never
+# starts with "404" or says "page not found".
+_TITLE_TAG = re.compile(r'<title[^>]*>(.*?)</title>', re.IGNORECASE | re.DOTALL)
+_NOT_FOUND_TITLE = re.compile(
+    r'^\s*(?:error\s*)?404\b'
+    r'|page\s+not\s+found'
+    r'|(?:seite|artikel|produkt)\s+nicht\s+gefunden'
+    r'|page\s+introuvable'
+    r'|p[aá]gina\s+no\s+encontrada'
+    r'|pagina\s+non\s+trovata',
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -114,6 +134,13 @@ def detect_invalid_page(
     # Signal 2: HTTP status code (before content checks)
     if status_code in (404, 410, 403, 451):
         return InvalidPageSignal("http_status", f"HTTP {status_code}")
+
+    # Signal 2b: soft-404 — HTTP 200 but the <title> says the page is missing
+    title_match = _TITLE_TAG.search(html)
+    if title_match:
+        title_text = " ".join(title_match.group(1).split())
+        if _NOT_FOUND_TITLE.search(title_text):
+            return InvalidPageSignal("not_found_title", f"Title: {title_text[:80]}")
 
     # Signal 1: JSON-LD Product schema presence (strongest positive signal)
     if _has_jsonld_product(html):

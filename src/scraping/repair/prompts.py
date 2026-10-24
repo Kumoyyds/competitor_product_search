@@ -6,7 +6,6 @@ Each builder returns a list of chat messages in LangChain format:
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 SCHEMA_HINT = """\
@@ -305,7 +304,7 @@ def parser_gen_prompt(
     ]
 
 
-def _render_price_context(ctx) -> str:
+def _render_price_context(ctx, main_cap: int = 8000, *, total_cap: int | None = None) -> str:
     """Render a PriceContext into a structured text bundle for the LLM prompt."""
     parts: list[str] = []
 
@@ -368,9 +367,10 @@ def _render_price_context(ctx) -> str:
 
     # Main excerpt
     if ctx.main_excerpt:
-        parts.append(f"[MAIN EXCERPT (DOM fallback)]\n{ctx.main_excerpt[:8000]}")
+        parts.append(f"[MAIN EXCERPT (DOM fallback)]\n{ctx.main_excerpt[:main_cap]}")
 
-    return "\n\n".join(parts)
+    rendered = "\n\n".join(parts)
+    return rendered if total_cap is None else rendered[:total_cap]
 
 
 def _format_record(rec: Any) -> str:
@@ -397,80 +397,157 @@ def _format_record(rec: Any) -> str:
     return "\n".join(parts)
 
 
-def initial_parser_gen_prompt(price_context, site: str) -> list[dict[str, str]]:
-    """Cold-start (M11): first parser generation, no error history yet."""
-    return parser_gen_prompt(price_context, site, role="first", initial_errors=[], attempts=[])
+def _render_pages(pages, *, budget: int) -> str:
+    """Hard cap the rendered bundle, including JSON-LD and all evidence."""
+    if not pages:
+        return ""
+    per_page = budget // len(pages)
+    sections = []
+    for page_type, url, context in pages:
+        heading = f"=== PAGE ({page_type}) {url} ===\n"
+        remaining = max(0, per_page - len(heading) - 2)
+        sections.append(heading + _render_price_context(
+            context, main_cap=max(0, remaining // 2), total_cap=remaining))
+    return "\n\n".join(sections)[:budget]
+
+
+def _coldstart_system(site: str, role: str, context) -> str:
+    system = parser_gen_prompt(context, site, role, [], [])[0]["content"]
+    return system + (
+        "\nValues in [FAILING CASE EVIDENCE] are human-confirmed expected answers. "
+        "Their snippets, including <script> state, may be used to locate the correct "
+        "data and override the default distrust of script-only prices. Generalize the "
+        "extraction logic; never hard-code expected prices or individual product IDs."
+    )
+
+
+def initial_parser_gen_prompt(pages, site: str) -> list[dict[str, str]]:
+    """Generate from one actual URL/context per declared page type."""
+    return [
+        {"role": "system", "content": _coldstart_system(site, "first", pages[0][2])},
+        {"role": "user", "content": f"Site: {site}\n\n" +
+         _render_pages(pages, budget=24000) + '\nRespond with JSON only: {"parser_code": "..."}'},
+    ]
+
+
+def _expected_table(ledger, cases) -> str:
+    from .prepass import _extract_url_product_id, _resolve_site
+
+    lines = ["[EXPECTED OUTPUT TABLE]", "URL | product id | page_type | price | list_price | membership_price | in_stock | currency | status"]
+    for case in cases:
+        url = case.row.url
+        exp = ledger.cases.get(url)
+        fields = exp.fields if exp else {}
+        status = "PASS" if ledger.matches(url, case.product) else "FAIL"
+        if case.failure_kind == "extraction_failed":
+            status = "FETCH FAILED (excluded)"
+        pid = _extract_url_product_id(url, _resolve_site(url)) or "-"
+        values = " | ".join(str(fields.get(name))[:100] for name in
+                            ("price", "list_price", "membership_price", "in_stock", "currency"))
+        lines.append(f"{url} | {pid} | {case.row.page_type} | {values} | {status}")
+    return "\n".join(lines)
+
+
+def _failing_evidence(ledger, cases, site: str, *, cap: int = 16000) -> str:
+    from collections import defaultdict
+    from ..coldstart_ledger import diff_case
+    from ..site_profile import membership_hints
+    from .evidence import locate_value_snippets
+
+    groups = defaultdict(list)
+    for case in cases:
+        if case.failure_kind == "extraction_failed" or ledger.matches(case.row.url, case.product):
+            continue
+        exp = ledger.cases.get(case.row.url)
+        wrong = (diff_case(case.product, exp) if exp and exp.status == "confirmed"
+                 else {"<unconfirmed>": (None, None)})
+        for name, values in wrong.items():
+            group = groups[(case.row.page_type, name)]
+            if len(group) < 2:
+                group.append((case, values, exp))
+    heading = "[FAILING CASE EVIDENCE]\n"
+    if not groups:
+        return heading + "None."
+    allocation = max(0, (cap - len(heading) - 2 * len(groups)) // len(groups))
+    keywords = membership_hints(site) | {"isDiscount", "memberPromotion", "crossLine"}
+    # Batch requests by URL so the small snapshot-index cache parses each page
+    # once per prompt, even when its failing fields span several groups. Retain
+    # bounded snippets here, rather than retaining every parsed soup indefinitely.
+    requests = {}
+    for entries in groups.values():
+        for case, (expected, got), _ in entries:
+            for value, limit in ((expected, 3), (got, 1)):
+                requests[(case.row.url, repr(value), limit)] = (case, value)
+    located = {}
+    for key, (case, value) in sorted(requests.items()):
+        located[key] = locate_value_snippets(case.html, case.row.url, value,
+                                             keywords=keywords, max_hits=key[2])
+    sections = []
+    for (page_type, name), entries in sorted(groups.items()):
+        # Keep one complete diagnosis per group even when many fields fail.
+        lines = [f"GROUP {page_type} / {name}"]
+        entry_cap = max(0, (allocation - len(lines[0]) - 2) // len(entries))
+        for case, (expected, got), exp in entries:
+            prefix = (f"URL {case.row.url}\n{name}: expected {expected!r}, got {got!r}\n"
+                      f"status: {exp.status if exp else 'unreviewed'}; "
+                      f"failure: {case.failure_detail or '-'}\n")
+            if exp and exp.hints:
+                prefix += "hints: " + " | ".join(exp.hints)[-1000:] + "\n"
+            snippets = []
+            for label, value, limit in (("EXPECTED", expected, 3), ("ACTUAL", got, 1)):
+                for snippet in located[(case.row.url, repr(value), limit)]:
+                    snippets.append(f"{label} {snippet.source} {snippet.path}: {snippet.text}")
+            lines.append((prefix + "\n".join(snippets))[:entry_cap])
+        sections.append("\n".join(lines)[:allocation])
+    return heading + "\n\n".join(sections)
+
+
+def _focused_merge_source(source: str, other: str, fields: set[str], *, cap: int) -> str:
+    from .merge_context import focused_merge_source
+
+    return focused_merge_source(source, other, fields, cap=cap)
+
+
+def _merge_excerpt(record, current_code: str, *, cap: int = 3000) -> str:
+    # The current base may have changed after third-regression selection. Use
+    # the immutable original source pair that produced this record's verdict.
+    base = record.base_code or current_code
+    base_heading = "[ORIGINAL BASE: restore broken-field logic]\n"
+    candidate_heading = "[REJECTED CANDIDATE: retain fixed-field logic]\n"
+    per_source = max(0, (cap - len(base_heading) - len(candidate_heading) - 2) // 2)
+    return (base_heading + _focused_merge_source(
+                base, record.code, {field for _, field in record.broke}, cap=per_source)
+            + "\n\n" + candidate_heading + _focused_merge_source(
+                record.code, base, {field for _, field in record.fixed}, cap=per_source))[:cap]
 
 
 def coldstart_repair_prompt(
-    price_context,
-    site: str,
-    current_code: str,
-    feedbacks: list[Any],
-    failures: list[str],
-    *,
-    role: str,
-    attempt_index: int,
-    model: str,
-    resolved_ledger: dict[str, list[str]],
-    regressions: dict[str, list[str]],
+    pages, site: str, current_code: str, ledger, cases, records,
+    *, role: str, attempt_index: int, model: str, merge_record=None,
 ) -> list[dict[str, str]]:
-    """Build a cold-start repair prompt from code and in-memory review evidence.
+    """Bound auxiliary context without ever truncating parser code or schema.
 
-    This deliberately reuses ``parser_gen_prompt`` and its retry strategies.  A
-    lightweight record with the same attributes as ``AttemptRecord`` avoids a
-    prompts -> agent import cycle while still using the shared formatter.
+    Evidence <=16k, pages <=12k, history <=10.5k, merge <=4.5k. The full
+    prompt additionally includes the complete base code and one table row per URL.
     """
-    errors: list[str] = []
-
-    if regressions:
-        lines = ["【回退警告 — 上一轮修复弄坏了已通过的字段】"]
-        for url, fields in sorted(regressions.items()):
-            lines.append(f"- {url}: {', '.join(fields)}")
-        errors.append("\n".join(lines))
-
-    if feedbacks:
-        lines = ["【提取错误，需修复】(本轮)"]
-        for feedback in feedbacks:
-            lines.append(f"URL: {feedback.url} ({feedback.page_type})")
-            if feedback.corrections:
-                for correction in feedback.corrections:
-                    expected = correction.correct_value or "(人工未提供正确值)"
-                    lines.append(f"- {correction.field}: 正确值应为 {expected!r}")
-            else:
-                lines.append("- 人工确认结果有误，但未指定字段")
-            if feedback.hint:
-                lines.append(f"人工提示：{feedback.hint}")
-        errors.append("\n".join(lines))
-
-    if failures:
-        errors.append(
-            "【Sandbox / Gate 失败，需修复】(本轮)\n"
-            + "\n".join(f"- {failure}" for failure in failures)
-        )
-
-    if resolved_ledger:
-        lines = ["【历史已修复，保持现状勿回退】"]
-        for url, fields in sorted(resolved_ledger.items()):
-            lines.append(f"- {url}: {', '.join(fields)}")
-        errors.append("\n".join(lines))
-
-    record = SimpleNamespace(
-        index=attempt_index,
-        model=model,
-        code=current_code,
-        output=None,
-        capture=None,
-        failure_stage="coldstart_review",
-        errors=errors,
-    )
-    return parser_gen_prompt(
-        price_context,
-        site,
-        role=role,
-        initial_errors=[],
-        attempts=[record],
-    )
+    parts = [f"Site: {site}; round {attempt_index + 1}; model {model}",
+             _ROLE_STRATEGY.get(role, ""), _expected_table(ledger, cases),
+             _failing_evidence(ledger, cases, site), "[CHANGE LOG]"]
+    for record in records[-3:]:
+        summary = (f"Round {record.round}: adopted={record.adopted}; reviewer={record.reviewer}\n"
+                   f"fixed={sorted(record.fixed)}\nbroke={sorted(record.broke)}\n")[:500]
+        parts.append(summary + record.diff_vs_base[:3000])
+    if merge_record is not None and merge_record.broke:
+        parts.append((
+            "[MERGE INSTRUCTION]\n候选版修好了 X、弄坏了 Y。基础版里负责 Y 的是下面这段代码，"
+            "请保留候选版对 X 的修复，并恢复 Y 的逻辑。\n"
+            f"X={sorted(merge_record.fixed)}\nY={sorted(merge_record.broke)}\n"
+        )[:1500] + _merge_excerpt(merge_record, current_code))
+    parts.extend(["[CURRENT BASE CODE]\n" + current_code,
+                  _render_pages(pages, budget=12000),
+                  'Respond with JSON only: {"parser_code": "..."}'])
+    return [{"role": "system", "content": _coldstart_system(site, role, pages[0][2])},
+            {"role": "user", "content": "\n\n".join(parts)}]
 
 
 def json_heal_precheck_prompt(

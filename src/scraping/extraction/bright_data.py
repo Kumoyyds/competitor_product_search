@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from typing import Any, Mapping, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -36,6 +37,33 @@ _UPSTREAM_ERROR_MARKERS = (
 # (0 chars and 122 chars) while staying well below detection.py's 5000-char
 # `page_length` bar for genuinely short pages.
 _MIN_HTML_BODY_LENGTH = 1000
+
+# Characters left untouched when percent-encoding a request URL: the RFC 3986
+# reserved set, "~", and "%" so existing %XX escapes are not double-encoded.
+_URI_SAFE_CHARS = "!#$%&'()*+,/:;=?@[]~"
+
+
+def _to_request_uri(url: str) -> str:
+    """Percent-encode characters Bright Data rejects in a URL.
+
+    Product slugs can carry raw non-ASCII text (joybuy.de:
+    ``/dp/essensschüssel-ø-115-cm-h-6/10466952``). Bright Data answers such
+    URLs with HTTP 400 ``"url" must be a valid uri``, so every request payload
+    sends the UTF-8 percent-encoded form. Callers keep the original URL for
+    routing, storage and results.
+    """
+    return quote(url, safe=_URI_SAFE_CHARS)
+
+
+def _bd_rejection_code(body: str) -> str | None:
+    """Return Bright Data's own ``error_code`` when *body* is its API error JSON."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None
+    if isinstance(data, dict) and isinstance(data.get("error_code"), str):
+        return data["error_code"]
+    return None
 
 _POLL_PENDING_STATUSES = {
     "building",
@@ -195,6 +223,17 @@ def _check_infra_error(
             f"Bright Data infra error: HTTP {status_code} — {body[:200]}",
             status_code=status_code,
         )
+    # Bright Data rejected the request itself (e.g. `validation` for a URL it
+    # does not accept). The body is BD's JSON error, not the target page, so it
+    # must not reach detect_invalid_page and be mislabelled invalid_target.
+    if status_code == 400:
+        bd_code = _bd_rejection_code(body)
+        if bd_code:
+            raise BrightDataInfraError(
+                f"Bright Data rejected the request: HTTP 400 "
+                f"error_code={bd_code} — {body[:200]}",
+                status_code=status_code,
+            )
     # BrightData explicitly signals fetch problems via response headers.
     # `x-brd-error-code` is the authoritative signal (observed values include
     # `min_size`, `reject_block`, `networkidle_event_timeout`,
@@ -273,7 +312,7 @@ class BrightDataUnlocker:
         cfg = get_config()
         payload: dict[str, Any] = {
             "zone": self._zone,
-            "url": url,
+            "url": _to_request_uri(url),
             "format": "raw",
             "method": "GET",
         }
@@ -313,7 +352,7 @@ class BrightDataDatasets:
             "Content-Type": "application/json",
         }
 
-        input_item: dict[str, str] = {"url": url, **extra_input}
+        input_item: dict[str, str] = {"url": _to_request_uri(url), **extra_input}
 
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
@@ -365,7 +404,7 @@ class BrightDataDCA:
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{_BD_API_BASE}/dca/trigger",
-                json=[{"url": url}],
+                json=[{"url": _to_request_uri(url)}],
                 headers=headers,
                 params={"collector": self._collector_id, "queue_next": "1"},
             )

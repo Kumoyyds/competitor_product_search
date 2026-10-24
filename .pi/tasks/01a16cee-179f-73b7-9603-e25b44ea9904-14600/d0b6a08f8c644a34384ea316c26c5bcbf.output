@@ -1,0 +1,13 @@
+Warning: No project session found with id 'delegate-7e63856f147212ecdb0dac77ce9bd5a4'; creating a new session with that id.
+**结论：首次生成 parser 时，agent 不会收到输入表里的“所有 URL”作为 URL 列表，也不会按 `page_type` 分组各生成一个 parser。**它收到的是一份从**单个代表性 HTML**构建的 prompt：代表页是本轮已成功解析到的 HTML 中体积最大的那份。输入 URL 用来选取/获取这些 HTML，但首次生成调用没有把这些 URL 逐个传入 prompt。
+
+数据流和边界如下：
+
+- CLI `src/scraping/coldstart.py:1020–1063` 读取 `--input` 工作簿，将 `page_type + url` 行交给 `run_coldstart()`。`read_coldstart_input()`（`coldstart.py:900` 起）校验每行和站点 page-type 政策，并检查必需类型是否至少有一行；这只是输入校验，不是生成时的分组。
+- `run_coldstart()`（`coldstart.py:86` 起）调用 `_resolve_html()`，再用 `_pick_representative_html()` 选 HTML（调用位置约 `coldstart.py:123`，选择函数 `:491`）。选择逻辑是从 status 为 200 且 HTML 非空的结果里取 HTML 最长者；**不按 `page_type` 选或分组**。
+- 初始生成调用 `_gen_initial_parser(site, representative_html, ...)`（约 `coldstart.py:145–150`）。它调用 `build_price_aware_context(html, f"https://dummy/{site}")`，再以 `initial_parser_gen_prompt(...)` 构造消息并 `llm.ainvoke(...)`（`coldstart.py:538` 起）。因此给 context builder 的 URL 是合成的 `https://dummy/{site}`，不是工作簿里的 URL。
+- Prompt 构造见 `src/scraping/repair/prompts.py:191–305`：user 消息包含站点、role 和 `_render_price_context()` 渲染出的代表页证据；其中可能有由合成 URL 导出的 product ID（`:308` 起），但没有把工作簿 URL 列表作为列表放入初始 prompt。
+
+**其余输入页仍会被使用，但用途是验证同一个 parser。** `_run_review_cases()`（`coldstart.py:624` 起）对 `rows` 与 `fetched` 逐行运行 parser，并把该行 URL 传给 sandbox；这不是初始生成 prompt。若要修复，`_gen_repaired_parser()` 仍以同一份 `representative_html` 构造 context（`coldstart.py:573` 起），但 `coldstart_repair_prompt()` 可附带本轮失败 URL、人工反馈 URL/page_type，以及历史已修复/回归 URL（`prompts.py:405` 起）。所以**修复轮可能看到部分实际 URL**，但也不是完整的所有输入 URL 清单。
+
+边界上，`_resolve_html()` 会按 URL 去重后抓取缺失页（`coldstart.py:426` 起），并可复用非 stale golden HTML；随后仍按输入行形成结果。未成功解析 HTML 的页不会成为代表页，但会在 review 阶段作为提取失败处理。

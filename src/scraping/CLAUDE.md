@@ -115,13 +115,14 @@ src/scraping/
 ├── config.py               # ScrapingConfig (spec §7)
 ├── providers.py             # LLM vendor call-capability registry + unified client factory
 ├── exceptions.py           # ScrapeFailed, BrightDataInfraError, SandboxSpawnError
-├── detection.py            # Invalid page detection (5 signals)
+├── detection.py            # Invalid page detection (5 signals + soft-404 title check)
 ├── router.py               # Two-hop dispatch + fallback loop + escalation writer
 ├── registry.py             # @register_scraper decorator
 ├── hosts.yaml              # host → site mapping (edit here to add sites)
 ├── sites.yaml              # site → page-type availability / cold-start profile
 ├── site_profile.py         # fail-open site-profile loader and policy accessors
-├── coldstart.py            # CLI cold start (validated Excel + review/repair loop + golden HTML reuse)
+├── coldstart.py            # CLI cold start (bounded candidate selection, review, best-code golden seeding)
+├── coldstart_ledger.py     # Persistent session expectations, typed corrections, weighted score, change records
 ├── models/                 # ProductData (availability_raw normalizer), enums, InvalidTargetResult
 ├── validation/             # gate1 (Pydantic), gate2 (feasible_check + structural price rules)
 ├── scrapers/
@@ -136,6 +137,7 @@ src/scraping/
 ├── repair/
 │   ├── sandbox.py          # AST isolation + bounded, cancellation-safe subprocess lifecycle
 │   ├── agent.py            # Repair ladder (RepairContext, ladder driver, no_product/source_absence branches)
+│   ├── evidence.py         # Deterministic raw HTML/DOM/script value snippets for cold-start feedback
 │   ├── prompts.py          # Prompt builders + SCHEMA_HINT + PriceContext renderer
 │   ├── prepass.py          # Price-aware context builder (PriceEvidence, PriceContext, anchoring, cross-sell delete, promotion signal detector)
 │   ├── json_healer.py      # Restricted JSON remap (D25 3-layer enforcement)
@@ -164,6 +166,15 @@ uv run python -m src.scraping.coldstart --site tesco --input src/scraping/data/c
 Operational detail (workbook format, review keys, exit codes) lives in the README's "Cold start
 a new site" section; the human-in-the-loop rationale and round-based review mechanics live in
 `docs/scraping/design.md` §8.
+
+The session ledger persists confirmed field values and accumulated hints across rounds;
+unspecified/declined corrections remain unconfirmed. Every candidate runs all shared snapshots,
+then regression detection retains the base for up to two automatic merge retries. Fully matching
+pages outrank weighted field matches; all historic code/result pairs are rescored after human
+truth changes. Confirmed exact matches auto-pass. Saving selects the best parser and only its
+own validated matching goldens under bucket caps. Each generation attempt counts toward the
+round cap, including empty responses and automatic retries. Multi-page prompts use actual URLs,
+bounded value evidence and the last three code diffs; raw snapshots stay unchanged.
 
 ## Key Config (all in `ScrapingConfig`, spec §7)
 

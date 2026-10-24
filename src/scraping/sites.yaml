@@ -26,3 +26,20 @@ onbuy:
     out_of_stock: {available: false,  cold_start_required: false}
     multipack:    {available: false,  cold_start_required: false}
     membership:   {available: false,  cold_start_required: false}
+
+
+joybuy_de:
+  page_types:
+    standard:     {available: true,  cold_start_required: true}
+    discounted:   {available: true,  cold_start_required: true}
+    out_of_stock: {available: true,  cold_start_required: true}
+    multipack:    {available: false,  cold_start_required: false}
+    membership:   {available: true,  cold_start_required: true, hints: ["JoyPlus"]}
+
+joybuy_uk:
+  page_types:
+    standard:     {available: true,  cold_start_required: true}
+    discounted:   {available: true,  cold_start_required: true}
+    out_of_stock: {available: true,  cold_start_required: true}
+    multipack:    {available: false,  cold_start_required: false}
+    membership:   {available: true,  cold_start_required: true, hints: ["JoyPlus"]}

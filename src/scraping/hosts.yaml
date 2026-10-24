@@ -10,6 +10,7 @@
 #
 # 格式:
 #   <hostname>: <site_identifier>
+# host 是从网址中截取到的。 like /www.tesco.co.uk/ 这种
 
 tesco.com: tesco
 www.tesco.com: tesco
@@ -27,4 +28,12 @@ www.amazon.fr: amazon
 onbuy.com: onbuy
 www.onbuy.com: onbuy
 
+# joybuy de
+joybuy.de: joybuy_de
+www.joybuy.de: joybuy_de
+m.joybuy.de: joybuy_de
 
+# joybuy uk
+joybuy.co.uk: joybuy_uk
+www.joybuy.co.uk: joybuy_uk
+m.joybuy.co.uk: joybuy_uk

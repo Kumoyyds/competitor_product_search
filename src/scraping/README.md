@@ -81,15 +81,69 @@ uv run python -m src.scraping.coldstart --site newsite --input /abs/path/to/news
 
 The first row must contain `page_type` and `url` (case-insensitive; extra columns are ignored). Legal page types are `standard`, `discounted`, `out_of_stock`, `membership`, and `multipack`. Multiple rows per type are useful as spares: once a bucket reaches its cap, remaining rows are skipped without another prompt.
 
+**Choosing `page_type` for a page with several prices.** A product page's prices form one path, from the highest reference price down to the lowest price a customer can get:
+
+```
+list_price (Was/RRP)  →  price (ordinary discount)  →  membership_price (member discount)
+```
+
+Each step is a further reduction on top of the previous one, so a member can get the ordinary discount *and* the member discount. Declare the page by the **end of its path** — the lowest price it shows:
+
+| What the page shows | Path ends at | Declare |
+|---|---|---|
+| out of stock | — | `out_of_stock` (always wins, whatever prices are shown) |
+| a gated member price (with or without a Was price) | `membership_price` | `membership` |
+| a Was/RRP price above the current price, no member price | `price` | `discounted` |
+| a single pack at one ordinary price | `price` | `standard` |
+| none of the above, but a multi-pack quantity | — | `multipack` |
+
+So a page with a struck-through Was price **and** a member price is a `membership` page, not a `discounted` one. This is the same order the system uses to classify extracted results (`out_of_stock > membership > discounted > multipack > standard`); if you declare a different type, cold start prints `MISMATCH` and still stores your declared type, which leaves the other bucket short of its sample. A page only counts as `membership` when the member price is visibly gated behind a loyalty programme and lower than the ordinary price; a plain "Was £X Now £Y" markdown is `discounted`.
+
+If every discounted page on a site also shows a member price, there may be no pure `discounted` example to find; set `discounted: {cold_start_required: false}` for that site in [sites.yaml](sites.yaml) instead of forcing a wrong declaration.
+
 Which types are *required* is site-aware. The global fallback in `config.py` makes the first four mandatory and `multipack` optional, but a site declared in [sites.yaml](sites.yaml) overrides it per page type — and a row whose type is declared `available: false` for that site is **rejected during input validation**, before any paid call. If cold start complains about a missing or unavailable page type, fix the site's profile in `sites.yaml` (or the global fallback in `config.py`), not the spreadsheet. See [Site profiles](#site-profiles-sitesyaml).
 
 The CLI validates coverage before paid calls, reuses matching non-stale golden HTML snapshots when possible, and then prompts interactively (`y` / `n` / `q`) for each usable extraction. The review panel derives its fields from `ProductData`, summarizes lists/long strings, and warns when a declared bucket's critical field is empty.
 
-- `y` — accept this case for the current round
+- `y` — confirm all displayed fields as the latest expected answer for this URL
 - `n` — reject it, optionally identify incorrect fields, enter correct values, and add a free-text hint
 - `q` — abort the whole run without writing the parser or any goldens
 
-After a failing review round, `c` (or legacy alias `y`) repairs again, `s` saves the current parser plus that round's accepted goldens as a partial result, and `q` abandons without writes. The model ladder is a warm-up schedule: its final model/temperature repeats with thinking enabled until review succeeds, the human stops, or the safety cap is reached. Every round reruns every URL so a repair cannot silently regress an accepted case; unchanged accepted outputs are reused without prompting. Repair prompts contain only the preceding round's failures plus a compact resolved/regression ledger. Fetch failures do not block persistence because the parser had no opportunity to prove itself, but can leave a coverage shortfall. A declared/extracted type disagreement is shown as `MISMATCH`; accepting still stores the declared type. Exit codes are `0` for complete coverage, `1` for input/abort/no seed, and `2` for incomplete coverage or a partial save.
+The session keeps your latest confirmed values for every URL. A later output that matches
+all 11 comparison fields passes automatically (`matches confirmed expectation; accepted
+automatically`). Changed fields show `!! expected X, got Y` beside the field name before
+review. Answering `y` replaces the old expectation, so a reasonable page change can be
+confirmed. Rejecting with corrections confirms the other displayed fields; rejecting without
+fields leaves the case unconfirmed and it will be asked again. Free-text hints accumulate
+for the URL throughout the session.
+
+Enter prices with a decimal point or comma (`3.31` / `3,31`), `true` / `false` for stock,
+a JSON list for images, and a JSON object for variant. `-`, `none`, `null`, or `n/a` clears
+a field. Invalid values are asked again. If a corrected price cannot be found anywhere in
+the fetched HTML, cold start warns that region/login differences may be involved and asks
+whether to retain it (`仍然保留？[y/N]`). Declining leaves the rejection unresolved; it does
+not confirm the current wrong value.
+
+After a failing review round, `c` (or legacy alias `y`) repairs again, `s` saves the best
+parser plus only its own outputs matching the latest confirmed expectations, and `q`
+abandons without writes. Selection prioritizes fully matching pages, then weighted field
+matches, and respects each golden bucket's cap. Regressing candidates are retained for an
+automatic merge retry and are not presented for review during the first two consecutive
+regressions. After that, the highest scoring retained version is reviewed. Repair prompts
+carry the expected output table, correct/wrong value snippets (including embedded script
+state), accumulated hints, and the last three code changes. The first generation uses a
+representative real URL from every supplied page type. Each generation prints its prompt
+character count.
+
+The model ladder is a warm-up schedule: its final model/temperature repeats with thinking
+enabled. Every generation attempt counts against `cold_start_max_repair_rounds`, including
+automatic retries and empty replies. At the cap, save the best confirmed results with `s`
+or quit with `q`; two consecutive unusable replies abort without writes. Fetch failures do
+not block persistence but can leave a coverage shortfall. A declared/extracted type
+disagreement is shown as `MISMATCH`; accepting still stores the declared type. Identical
+URL/type rows are reviewed once; conflicting types for the same URL must be fixed in the
+workbook. No database migration or new setup is required. Exit codes are `0` for complete
+coverage, `1` for input/abort/no seed, and `2` for incomplete coverage or a partial save.
 
 ### Re-cold-starting an existing site
 
@@ -110,6 +164,7 @@ src/scraping/
 ├── sites.yaml                      site → page-type availability + cold-start profile (M23)
 ├── site_profile.py                 fail-open sites.yaml loader + policy accessors
 ├── coldstart.py                    Cold-start CLI
+├── coldstart_ledger.py             Session expectations, scores, regression/change records
 ├── models/                         ProductData, enums, InvalidTargetResult
 ├── validation/                     gate1 (Pydantic) + gate2 (feasible_check)
 ├── scrapers/
@@ -122,6 +177,7 @@ src/scraping/
 ├── repair/
 │   ├── sandbox.py                  Subprocess + AST whitelist + timeout
 │   ├── agent.py                    Repair ladder (driven by repair_model_ladder)
+│   ├── evidence.py                 Raw HTML/script value snippets for human corrections
 │   ├── prepass.py                  Price-aware context + promotion detector (M14/M15/M23)
 │   ├── prompts.py                  Prompt builders (JSON-LD-aware HTML excerpts)
 │   ├── json_healer.py              Restricted JSON remap (D25 red line)

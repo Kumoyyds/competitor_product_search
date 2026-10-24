@@ -104,6 +104,7 @@ _SKIP_JSONLD_PATHS: set[str] = {"shippingrate", "shipping_rate", "shippingdetail
 
 # URL product-id extraction — per site; new sites add a line here
 _URL_PID_PATTERNS: dict[str, str] = {
+    "joybuy_de": r"/dp/[^/?#]+/(\d+)(?:[/?#]|$)",
     "argos": r"/product/([A-Za-z0-9]+)",
     "amazon": r"/dp/([A-Z0-9]{10})",
     "tesco": r"/(?:shop|groceries)/[^/]+/products/(\d+)",
@@ -642,6 +643,8 @@ def _resolve_site(url: str) -> str:
 
     host = urlparse(url).hostname or ""
     host_lower = host.lower()
+    if host_lower in {"joybuy.de", "www.joybuy.de"}:
+        return "joybuy_de"
     if "argos" in host_lower:
         return "argos"
     if "amazon" in host_lower:
